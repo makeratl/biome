@@ -2,6 +2,7 @@
 // Structure: Quarter-Finals (4) → Semi-Finals (2) → Final (1) = 7 matches
 
 import { postResult } from './rankings.js';
+import { CONFIG } from './config.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -18,9 +19,13 @@ export class TournamentManager {
         document.getElementById('btn-t-stats-close')?.addEventListener('click', () => this._toggleStats(false));
     }
 
-    async start(models) {
+    async start(models, mode = 'standard') {
         if (this.running) return;
         this.running = true;
+        this.mode = mode;
+        this.totalRounds = mode === 'lightning'
+            ? CONFIG.GAME.LIGHTNING_ROUNDS
+            : CONFIG.GAME.TOTAL_ROUNDS;
 
         // Shuffle for random seeding
         const seeded = [...models].sort(() => Math.random() - 0.5);
@@ -30,7 +35,8 @@ export class TournamentManager {
         document.getElementById('btn-t-stats')?.classList.remove('t-stats-hidden');
         this._renderStats();
 
-        this._renderBracket('Tournament begins!');
+        const modeLabel = mode === 'lightning' ? 'LIGHTNING' : 'STANDARD';
+        this._renderBracket(`Tournament begins! [${modeLabel} — ${this.totalRounds} rounds]`);
         this._show('t-bracket');
         await this._sleep(4000);
 
@@ -83,7 +89,7 @@ export class TournamentManager {
 
         // Run game
         this._hideAll();
-        this.game.resetForMatch();
+        this.game.resetForMatch(this.totalRounds);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
         const promise = this.game.runFullGame();
@@ -105,6 +111,7 @@ export class TournamentManager {
             p1_score: scores[1].finalScore,
             p2_score: scores[2].finalScore,
             winner: match.winner,
+            mode: this.mode,
         });
 
         // Update stats panel

@@ -146,6 +146,7 @@ export const CONFIG = {
     // Game
     GAME: {
         TOTAL_ROUNDS: 20,
+        LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
     },
 };

@@ -978,6 +978,64 @@ body {
 /* ── Tournament Stats Panel ──────────────────────────────── */
 .t-stats-hidden { display: none !important; }
 
+/* ── Tournament Mode Select ──────────────────── */
+
+#t-mode-select {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+}
+
+.t-mode-buttons {
+    display: flex;
+    gap: 16px;
+}
+
+.t-mode-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 140px;
+    padding: 16px 24px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    color: rgba(255,255,255,0.8);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.t-mode-btn:hover {
+    background: rgba(255,255,255,0.1);
+    border-color: rgba(255,255,255,0.25);
+}
+
+.t-mode-name {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+.t-mode-desc {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+}
+
+.t-mode-cancel {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.35);
+    font-size: 12px;
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.t-mode-cancel:hover { color: rgba(255,255,255,0.6); }
+
 #btn-t-stats {
     position: fixed;
     bottom: 18px;

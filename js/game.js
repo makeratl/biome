@@ -827,7 +827,7 @@ class Game {
 
     // ── Tournament support ────────────────────────────────────
 
-    resetForMatch() {
+    resetForMatch(rounds) {
         // Clear all organisms
         this.grid.forEach(cell => { cell.organisms = []; });
 
@@ -838,6 +838,7 @@ class Game {
         // Reset turn state
         this.turns.round = 0;
         this.turns.phase = 'SETUP';
+        this.turns.totalRounds = rounds || CONFIG.GAME.TOTAL_ROUNDS;
         this.turns.players[1] = { ap: 0, actions: [] };
         this.turns.players[2] = { ap: 0, actions: [] };
 
@@ -872,6 +873,9 @@ class Game {
     }
 
     async _startTournament() {
+        const mode = await this._pickTournamentMode();
+        if (!mode) return;
+
         const models = await listOllamaModels();
         const eligible = models
             .filter(m => !m.name.match(/embed|nomic|mxbai|moondream|coder/i))
@@ -886,7 +890,35 @@ class Game {
         while (eligible.length < 8) eligible.push(eligible[Math.floor(Math.random() * eligible.length)]);
         const field = eligible.slice(0, 8);
 
-        this.tournament.start(field);
+        this.tournament.start(field, mode);
+    }
+
+    _pickTournamentMode() {
+        return new Promise(resolve => {
+            const overlay = document.getElementById('tournament-overlay');
+            const screen   = document.getElementById('t-mode-select');
+            overlay.classList.remove('t-hidden');
+            overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+            screen.classList.remove('t-hidden');
+
+            const standardBtn  = document.getElementById('btn-mode-standard');
+            const lightningBtn = document.getElementById('btn-mode-lightning');
+            const cancelBtn    = document.getElementById('btn-mode-cancel');
+
+            const cleanup = () => {
+                standardBtn.removeEventListener('click', onStandard);
+                lightningBtn.removeEventListener('click', onLightning);
+                cancelBtn.removeEventListener('click', onCancel);
+            };
+
+            const onStandard  = () => { cleanup(); resolve('standard'); };
+            const onLightning = () => { cleanup(); resolve('lightning'); };
+            const onCancel    = () => { cleanup(); overlay.classList.add('t-hidden'); resolve(null); };
+
+            standardBtn.addEventListener('click', onStandard);
+            lightningBtn.addEventListener('click', onLightning);
+            cancelBtn.addEventListener('click', onCancel);
+        });
     }
 }
 

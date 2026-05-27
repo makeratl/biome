@@ -120,6 +120,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'p1_score': body.get('p1_score', 0),
             'p2_score': body.get('p2_score', 0),
             'winner': body['winner'],
+            'mode': body.get('mode', 'standard'),
         }
         log = _load_log()
         log.append(entry)
