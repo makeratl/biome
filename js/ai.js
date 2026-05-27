@@ -640,3 +640,61 @@ export async function listOllamaModels() {
         return [];
     }
 }
+
+// Pull a model via Ollama. Returns a promise that resolves when done.
+export async function pullModel(modelName, onProgress) {
+    try {
+        const resp = await fetch('/ollama/api/pull', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: modelName, stream: true }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.text();
+            throw new Error(`Pull failed: ${resp.status} ${err}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let lastStatus = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = decoder.decode(value, { stream: true });
+            for (const line of text.split('\n')) {
+                if (!line.trim()) continue;
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj.status) lastStatus = obj.status;
+                    if (onProgress) onProgress(obj.status, obj.completed, obj.total);
+                } catch { /* skip malformed lines */ }
+            }
+        }
+        return { success: true, status: lastStatus };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+// Human-readable model sizes
+export function formatModelSize(bytes) {
+    if (!bytes) return '';
+    const gb = bytes / (1024 * 1024 * 1024);
+    if (gb >= 1) return `${gb.toFixed(1)} GB`;
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(0)} MB`;
+}
+
+// Recommended models curated for Biome — good instruction following + JSON mode
+export const RECOMMENDED_MODELS = [
+    { name: 'qwen2.5:3b',       desc: 'Fast, small — good for quick matches',       size: '~2 GB' },
+    { name: 'qwen2.5:7b',       desc: 'Balanced — best size/performance ratio',      size: '~5 GB' },
+    { name: 'qwen2.5:14b',      desc: 'Strong strategy — the default model',         size: '~9 GB' },
+    { name: 'llama3.1:8b',      desc: 'Popular general-purpose model',               size: '~5 GB' },
+    { name: 'gemma2:9b',        desc: 'Google model, good instruction following',    size: '~5 GB' },
+    { name: 'mistral:7b',       desc: 'Fast responses, decent strategy',             size: '~4 GB' },
+    { name: 'phi3:medium',      desc: 'Microsoft model, compact but capable',        size: '~8 GB' },
+    { name: 'deepseek-r1:7b',   desc: 'Reasoning model — slower but thorough',       size: '~5 GB' },
+];

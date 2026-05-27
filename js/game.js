@@ -7,7 +7,7 @@ import { Renderer } from './renderer.js';
 import { Simulation } from './simulation.js';
 import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
-import { AIPlayer, listOllamaModels } from './ai.js';
+import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
 
 class Game {
@@ -25,8 +25,8 @@ class Game {
         this._scoreHistory = []; // [{ round, p1, p2 }, ...]
         this._matchResolve = null; // set during tournament games
         this.tournament = new TournamentManager(this);
-
         this._init();
+
     }
 
     _init() {
@@ -34,6 +34,7 @@ class Game {
         this.renderer.render();
         this._buildSpeciesPalette();
         this._bindEvents();
+        this._initModelConfig();
         this._updateWorldInfo();
         this._scoreHistory = [];
         this._updateCensus();
@@ -670,12 +671,12 @@ class Game {
         ].filter(Boolean);
         if (selects.length === 0) return;
 
-        const models = await listOllamaModels();
+        this._installedModels = await listOllamaModels();
 
         for (const select of selects) {
             select.innerHTML = '';
 
-            if (models.length === 0) {
+            if (this._installedModels.length === 0) {
                 const opt = document.createElement('option');
                 opt.value = '';
                 opt.textContent = 'No models found';
@@ -683,23 +684,143 @@ class Game {
                 continue;
             }
 
-            for (const m of models) {
+            for (const m of this._installedModels) {
                 const opt = document.createElement('option');
                 opt.value = m.name;
-                opt.textContent = m.name;
+                const size = formatModelSize(m.size);
+                opt.textContent = size ? `${m.name}  (${size})` : m.name;
                 select.appendChild(opt);
             }
         }
 
         // Set defaults — prefer cloud models, pick two different ones
-        if (models.length > 0) {
-            const cloud = models.filter(m => m.name.includes('cloud'));
-            const p1Default = cloud[0] || models[0];
-            const p2Default = cloud[1] || cloud[0] || models[Math.min(1, models.length - 1)];
+        if (this._installedModels.length > 0) {
+            const cloud = this._installedModels.filter(m => m.name.includes('cloud'));
+            const p1Default = cloud[0] || this._installedModels[0];
+            const p2Default = cloud[1] || cloud[0] || this._installedModels[Math.min(1, this._installedModels.length - 1)];
 
             if (selects[0]) selects[0].value = p1Default.name;
             if (selects[1] && p2Default.name !== p1Default.name) selects[1].value = p2Default.name;
-            else if (selects[1]) selects[1].value = models[Math.min(1, models.length - 1)].name;
+            else if (selects[1]) selects[1].value = this._installedModels[Math.min(1, this._installedModels.length - 1)].name;
+        }
+    }
+
+    // ── Model Configuration Panel ───────────────────────────
+
+    _initModelConfig() {
+        const btn = document.getElementById('btn-model-config');
+        const panel = document.getElementById('model-config-panel');
+        const closeBtn = document.getElementById('btn-mcp-close');
+        if (!btn || !panel) return;
+
+        btn.addEventListener('click', () => {
+            const visible = panel.style.display !== 'none';
+            panel.style.display = visible ? 'none' : 'block';
+            if (!visible) this._refreshModelConfig();
+        });
+
+        closeBtn.addEventListener('click', () => {
+            panel.style.display = 'none';
+        });
+    }
+
+    async _refreshModelConfig() {
+        const installedDiv = document.getElementById('mcp-installed');
+        const recommendedDiv = document.getElementById('mcp-recommended');
+        const statusDiv = document.getElementById('mcp-status');
+        if (!installedDiv || !recommendedDiv) return;
+
+        statusDiv.textContent = 'Checking models...';
+        this._installedModels = await listOllamaModels();
+        const installedNames = new Set(this._installedModels.map(m => m.name.split(':')[0]));
+
+        // Installed models list
+        installedDiv.innerHTML = '';
+        if (this._installedModels.length === 0) {
+            installedDiv.innerHTML = '<div class="mcp-model-item"><span class="mcp-model-name" style="color:#666;">No models installed</span></div>';
+        } else {
+            for (const m of this._installedModels) {
+                const item = document.createElement('div');
+                item.className = 'mcp-model-item';
+                const size = formatModelSize(m.size);
+                item.innerHTML = `
+                    <span class="mcp-model-name">${m.name}</span>
+                    <span class="mcp-model-size">${size}</span>
+                    <span class="mcp-model-tag mcp-tag-installed">installed</span>
+                `;
+                installedDiv.appendChild(item);
+            }
+        }
+
+        // Recommended models list
+        recommendedDiv.innerHTML = '';
+        for (const rec of RECOMMENDED_MODELS) {
+            const baseName = rec.name.split(':')[0];
+            const isInstalled = installedNames.has(baseName);
+            const item = document.createElement('div');
+            item.className = 'mcp-model-item';
+
+            if (isInstalled) {
+                item.innerHTML = `
+                    <span class="mcp-model-name" style="color:#6a6;">${rec.name}</span>
+                    <span class="mcp-model-size">${rec.size}</span>
+                    <span class="mcp-model-tag mcp-tag-installed">installed</span>
+                `;
+            } else {
+                const pullBtn = document.createElement('button');
+                pullBtn.className = 'mcp-pull-btn';
+                pullBtn.textContent = 'Install';
+                pullBtn.addEventListener('click', () => this._pullModel(rec.name, pullBtn));
+                item.innerHTML = `
+                    <span class="mcp-model-name">${rec.name}</span>
+                    <span class="mcp-model-size" title="${rec.desc}">${rec.size}</span>
+                    <span class="mcp-model-tag mcp-tag-recommended" title="${rec.desc}">rec</span>
+                `;
+                item.appendChild(pullBtn);
+            }
+            recommendedDiv.appendChild(item);
+        }
+
+        statusDiv.textContent = '';
+    }
+
+    async _pullModel(modelName, btn) {
+        const statusDiv = document.getElementById('mcp-status');
+        btn.disabled = true;
+        btn.textContent = 'Pulling...';
+        const originalHtml = btn.closest('.mcp-model-item').innerHTML;
+
+        // Replace tag with pulling indicator
+        const tag = btn.closest('.mcp-model-item').querySelector('.mcp-tag-recommended');
+        if (tag) {
+            tag.className = 'mcp-model-tag mcp-tag-pulling';
+            tag.textContent = 'pulling';
+        }
+
+        const result = await pullModel(modelName, (status, completed, total) => {
+            if (status === 'downloading' && total) {
+                const pct = Math.round((completed / total) * 100);
+                btn.textContent = `${pct}%`;
+                statusDiv.textContent = `Downloading ${modelName}: ${pct}%`;
+            } else {
+                statusDiv.textContent = `${modelName}: ${status}`;
+            }
+        });
+
+        if (result.success) {
+            statusDiv.textContent = `${modelName} installed!`;
+            // Refresh everything — dropdown + config panel
+            await this._populateModelDropdown();
+            await this._refreshModelConfig();
+        } else {
+            statusDiv.textContent = `Failed: ${result.error}`;
+            btn.disabled = false;
+            btn.textContent = 'Install';
+            const pullingTag = btn.closest('.mcp-model-item')?.querySelector('.mcp-tag-pulling');
+            if (pullingTag) {
+                pullingTag.className = 'mcp-model-tag mcp-tag-recommended';
+                pullingTag.textContent = 'rec';
+            }
         }
     }
 

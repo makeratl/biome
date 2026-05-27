@@ -285,6 +285,123 @@ body {
     background: rgba(200, 168, 110, 0.1);
 }
 
+.btn-model-config {
+    width: 100%;
+    margin-top: 4px;
+    font-size: 10px;
+    padding: 3px 8px;
+    background: transparent;
+    color: #7777aa;
+    border: 1px solid #2a2a4e;
+    cursor: pointer;
+}
+.btn-model-config:hover {
+    color: #9999cc;
+    border-color: #4444aa;
+}
+
+.model-config-panel {
+    margin-top: 4px;
+    padding: 6px;
+    background: #0e0e1a;
+    border: 1px solid #2a2a4e;
+    border-radius: 4px;
+    font-size: 10px;
+    color: #c8c8e0;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.mcp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.mcp-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.mcp-close:hover { color: #ccc; }
+.mcp-section { margin-bottom: 6px; }
+.mcp-label {
+    font-weight: 600;
+    color: #aaa;
+    margin-bottom: 3px;
+}
+.mcp-hint {
+    font-size: 9px;
+    color: #666;
+    margin-bottom: 3px;
+}
+.mcp-model-list { display: flex; flex-direction: column; gap: 2px; }
+.mcp-model-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 6px;
+    background: #141428;
+    border-radius: 3px;
+    gap: 4px;
+}
+.mcp-model-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mcp-model-size {
+    font-size: 9px;
+    color: #666;
+    white-space: nowrap;
+}
+.mcp-model-tag {
+    font-size: 8px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    white-space: nowrap;
+}
+.mcp-tag-installed {
+    background: #1a3a1a;
+    color: #6a6;
+}
+.mcp-tag-recommended {
+    background: #3a2a1a;
+    color: #c8a86e;
+}
+.mcp-tag-pulling {
+    background: #1a2a3a;
+    color: #6ac;
+}
+.mcp-pull-btn {
+    font-size: 9px;
+    padding: 1px 6px;
+    background: #1a2a4e;
+    color: #88aacc;
+    border: 1px solid #2a3a5e;
+    border-radius: 2px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.mcp-pull-btn:hover {
+    background: #2a3a6e;
+    color: #aaccff;
+}
+.mcp-pull-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.mcp-status {
+    font-size: 9px;
+    color: #888;
+    margin-top: 4px;
+    min-height: 14px;
+}
+
 .player-indicator.ai-thinking {
     animation: pulse-think 1s ease-in-out infinite;
 }

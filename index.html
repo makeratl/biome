@@ -44,6 +44,25 @@
                     <button id="btn-ai-p2" class="btn ai-toggle" data-player="2">P2: Human</button>
                     <select id="ai-model-p2" class="ai-select" data-player="2"></select>
                 </div>
+                <button id="btn-model-config" class="btn btn-model-config">⚙ Models</button>
+            </div>
+
+            <!-- Model Configuration Panel -->
+            <div id="model-config-panel" class="model-config-panel" style="display:none;">
+                <div class="mcp-header">
+                    <span>Model Configuration</span>
+                    <button id="btn-mcp-close" class="mcp-close">×</button>
+                </div>
+                <div class="mcp-section">
+                    <div class="mcp-label">Installed Models</div>
+                    <div id="mcp-installed" class="mcp-model-list"></div>
+                </div>
+                <div class="mcp-section">
+                    <div class="mcp-label">Recommended Models</div>
+                    <div class="mcp-hint">Click to download via Ollama</div>
+                    <div id="mcp-recommended" class="mcp-model-list"></div>
+                </div>
+                <div id="mcp-status" class="mcp-status"></div>
             </div>
 
         </div>

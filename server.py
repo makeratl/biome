@@ -11,7 +11,13 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
 
     def do_GET(self):
         # Proxy Ollama API calls
@@ -21,11 +27,40 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
-        # Proxy Ollama API calls
+        # Proxy Ollama API calls (including /api/pull for model installation)
         if self.path.startswith('/ollama/'):
-            self._proxy_ollama(self.path[8:], is_post=True)
+            is_pull = '/api/pull' in self.path
+            if is_pull:
+                self._proxy_ollama_stream(self.path[8:], is_post=True)
+            else:
+                self._proxy_ollama(self.path[8:], is_post=True)
             return
         super().do_POST()
+
+    def _proxy_ollama_stream(self, path, is_post=False):
+        """Stream proxy for pull requests — sends NDJSON lines as they arrive."""
+        url = f'http://localhost:11434/{path}'
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length) if content_length else b''
+            req = urllib.request.Request(url, data=body, method='POST')
+            req.add_header('Content-Type', self.headers.get('Content-Type', 'application/json'))
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-ndjson')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+
+            with urllib.request.urlopen(req, timeout=600) as response:
+                for line in response:
+                    self.wfile.write(line)
+                    self.wfile.flush()
+        except Exception as e:
+            self.send_response(502)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
 
     def _proxy_ollama(self, path, is_post=False):
         url = f'http://localhost:11434/{path}'
