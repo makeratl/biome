@@ -82,23 +82,46 @@ Biome uses **Ollama** to run LLMs as AI opponents. The AI system:
 
 Click the **P1: Human** / **P2: Human** buttons in the sidebar to toggle AI control. A dropdown appears with all models available in your local Ollama instance.
 
-The default model is `qwen2.5:14b`. To change it, edit `js/ai.js`:
+The default model is `qwen2.5:14b`. Click the **⚙ Models** button under the AI Players section to open the model configuration panel, where you can:
+
+- **See installed models** with file sizes
+- **Browse recommended models** curated for Biome (good JSON mode + instruction following)
+- **Install models with one click** — downloads via Ollama with real-time progress
+
+### Recommended Models
+
+These work well for Biome's structured JSON decision-making:
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `qwen2.5:3b` | ~2 GB | Fast, good for quick matches |
+| `qwen2.5:7b` | ~5 GB | Best size/performance ratio |
+| `qwen2.5:14b` | ~9 GB | Strong strategy, the default |
+| `llama3.1:8b` | ~5 GB | Popular general-purpose model |
+| `gemma2:9b` | ~5 GB | Good instruction following |
+| `mistral:7b` | ~4 GB | Fast responses |
+| `phi3:medium` | ~8 GB | Compact but capable |
+| `deepseek-r1:7b` | ~5 GB | Reasoning model, slower but thorough |
+
+All install directly from the config panel — no terminal needed.
+
+### Manual Configuration
+
+To hardcode a default model, edit `js/ai.js`:
 
 ```js
 this.model = options.model || 'qwen2.5:14b';
 ```
 
-Any Ollama-compatible model works. Recommended characteristics:
+Any Ollama-compatible model works. Look for:
 
 - **JSON mode support** — models that handle `format: "json"` produce more reliable moves
 - **Instruction following** — the AI must follow a specific JSON schema in its response
 - **Context window** — the prompt is ~2-3KB per turn, so even small models work
 
-Tested with: `qwen2.5:14b`, `llama3:8b`, `mistral:7b`, `gemma2:9b`, `phi3:medium`
-
 ### Cloud Models
 
-The AI module detects cloud-hosted Ollama models (via `.local` or `.internal` domain patterns) and increases token budgets accordingly. If you proxy a cloud model through your local Ollama instance, it should work automatically.
+The AI module detects cloud-hosted Ollama models and increases token budgets accordingly. If you proxy a cloud model through your local Ollama instance, it should work automatically.
 
 ## Tournament Mode
 
