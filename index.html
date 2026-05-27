@@ -32,6 +32,7 @@
                 <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
                 <button id="btn-new-game" class="btn" data-action="new-game" style="margin-top:6px;">New Game</button>
                 <button id="btn-tournament" class="btn btn-tournament" style="margin-top:6px;">⚔ Tournament</button>
+                <button id="btn-rankings" class="btn btn-rankings" style="margin-top:6px;">🏆 Rankings</button>
             </div>
 
             <div class="panel-section">
@@ -196,6 +197,16 @@
             <button id="btn-t-stats-close" class="tsp-close">×</button>
         </div>
         <div id="tsp-content" class="tsp-content"></div>
+    </div>
+
+    <!-- Rankings panel (side drawer) -->
+    <div id="rankings-panel" class="rankings-hidden">
+        <div class="rk-header">
+            <span>ELO Rankings</span>
+            <button id="btn-rankings-close" class="rk-close">×</button>
+        </div>
+        <div id="rk-leaderboard" class="rk-content"></div>
+        <div id="rk-history" class="rk-content" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:8px;padding-top:8px;"></div>
     </div>
 
 </body>

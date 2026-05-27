@@ -9,6 +9,7 @@ import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
+import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel } from './rankings.js';
 
 class Game {
     constructor() {
@@ -891,4 +892,29 @@ class Game {
 
 window.addEventListener('DOMContentLoaded', () => {
     window.game = new Game();
+    setupRankings();
 });
+
+async function setupRankings() {
+    const btn = document.getElementById('btn-rankings');
+    const panel = document.getElementById('rankings-panel');
+    const closeBtn = document.getElementById('btn-rankings-close');
+    const lbEl = document.getElementById('rk-leaderboard');
+    const histEl = document.getElementById('rk-history');
+    if (!btn || !panel) return;
+
+    let open = false;
+    const toggle = async (force) => {
+        open = force !== undefined ? force : !open;
+        if (open) {
+            panel.classList.remove('rankings-hidden');
+            const [rankings, history] = await Promise.all([fetchRankings(), fetchHistory()]);
+            renderRankingsPanel(lbEl, rankings);
+            renderHistoryPanel(histEl, history);
+        } else {
+            panel.classList.add('rankings-hidden');
+        }
+    };
+    btn.addEventListener('click', () => toggle());
+    closeBtn?.addEventListener('click', () => toggle(false));
+}

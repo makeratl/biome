@@ -1,11 +1,14 @@
 // Tournament mode — pits all available models against each other
 // Structure: Quarter-Finals (4) → Semi-Finals (2) → Final (1) = 7 matches
 
+import { postResult } from './rankings.js';
+
 export class TournamentManager {
     constructor(game) {
         this.game = game;
         this.bracket = null;
         this.running = false;
+        this.tournamentId = crypto.randomUUID().slice(0, 8);
         this._statsOpen = false;
         this._setupStatsToggle();
     }
@@ -91,6 +94,18 @@ export class TournamentManager {
         match.scores = scores;
         match.scoreHistory = [...this.game._scoreHistory];
         match.winner = scores[1].finalScore >= scores[2].finalScore ? match.p1 : match.p2;
+
+        // Log result to server
+        const isP1Winner = match.winner === match.p1;
+        postResult({
+            tournament_id: this.tournamentId,
+            round: match.id,
+            p1: match.p1,
+            p2: match.p2,
+            p1_score: scores[1].finalScore,
+            p2_score: scores[2].finalScore,
+            winner: match.winner,
+        });
 
         // Update stats panel
         this._renderStats();
