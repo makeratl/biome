@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="game-header">
+        <div class="game-title">BIOME</div>
+        <div class="header-center">
+            <div id="current-player" class="player-indicator p1">Player 1</div>
+            <div id="round-info" class="round-info">Round 1 / 15</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <div id="fog-indicator" class="fog-indicator" style="display:none;"></div>
+            <div id="ap-display" class="ap-display">3 AP remaining</div>
+        </div>
+    </header>
+
+    <div class="game-layout">
+        <!-- Left Panel -->
+        <div class="panel panel-left">
+            <div class="panel-section">
+                <h3>Species</h3>
+                <div id="species-palette"></div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Actions</h3>
+                <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
+                <button id="btn-new-game" class="btn" data-action="new-game" style="margin-top:6px;">New Game</button>
+                <button id="btn-tournament" class="btn btn-tournament" style="margin-top:6px;">⚔ Tournament</button>
+            </div>
+
+            <div class="panel-section">
+                <h3>AI Players</h3>
+                <div class="ai-player-row">
+                    <button id="btn-ai-p1" class="btn ai-toggle" data-player="1">P1: Human</button>
+                    <select id="ai-model-p1" class="ai-select" data-player="1"></select>
+                </div>
+                <div class="ai-player-row">
+                    <button id="btn-ai-p2" class="btn ai-toggle" data-player="2">P2: Human</button>
+                    <select id="ai-model-p2" class="ai-select" data-player="2"></select>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Canvas -->
+        <div class="canvas-container">
+            <canvas id="game-canvas"></canvas>
+
+            <!-- Live scoreboard overlay -->
+            <div id="scoreboard-overlay">
+                <div class="sb-player p1">
+                    <span class="sb-name" id="sb-name-p1">P1</span>
+                    <span class="sb-score" id="sb-score-p1">—</span>
+                </div>
+                <div class="sb-middle">
+                    <span class="sb-round" id="sb-round">Round — / —</span>
+                    <span class="sb-lead" id="sb-lead"></span>
+                </div>
+                <div class="sb-player p2">
+                    <span class="sb-score" id="sb-score-p2">—</span>
+                    <span class="sb-name" id="sb-name-p2">P2</span>
+                </div>
+            </div>
+
+            <!-- Score history chart -->
+            <div id="score-chart-overlay">
+                <div class="chart-label">Score Timeline</div>
+                <canvas id="score-chart" width="280" height="72"></canvas>
+            </div>
+
+            <!-- AI commentary overlays -->
+            <div id="ai-overlay-p1" class="ai-overlay p1">
+                <div class="ai-overlay-label">P1</div>
+                <div id="ai-banter-p1" class="ai-banter-text"></div>
+                <div id="ai-strategy-p1" class="ai-strategy-text"></div>
+            </div>
+            <div id="ai-overlay-p2" class="ai-overlay p2">
+                <div class="ai-overlay-label">P2</div>
+                <div id="ai-banter-p2" class="ai-banter-text"></div>
+                <div id="ai-strategy-p2" class="ai-strategy-text"></div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="panel panel-right">
+            <div class="panel-section">
+                <h3>Census</h3>
+                <div id="census-content"></div>
+            </div>
+
+            <div class="panel-section">
+                <h3>World</h3>
+                <div id="info-content"></div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Cell</h3>
+                <div id="cell-info">
+                    <div style="font-size: 11px; color: #555;">Hover over the map</div>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Log</h3>
+                <div id="action-log" class="action-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Overlay -->
+    <div id="game-over-overlay" class="game-over-overlay" style="display:none;">
+        <div class="game-over-card">
+            <h2>Game Over</h2>
+            <div class="winner"></div>
+            <div class="final-score"></div>
+            <button id="btn-play-again" class="btn btn-primary" style="margin-top:16px;">Play Again</button>
+        </div>
+    </div>
+
+    <script type="module" src="js/game.js"></script>
+    <!-- Tournament overlay -->
+    <div id="tournament-overlay" class="t-hidden">
+
+        <!-- Bracket view -->
+        <div class="t-screen" id="t-bracket">
+            <div class="t-header">
+                <div class="t-title">BIOME CHAMPIONSHIP</div>
+                <div class="t-subtitle" id="t-bracket-status">Seeding bracket...</div>
+            </div>
+            <div class="bracket-grid" id="bracket-grid"></div>
+        </div>
+
+        <!-- Match intro -->
+        <div class="t-screen t-hidden" id="t-match-intro">
+            <div class="t-match-label" id="t-match-label">ROUND 1 — MATCH 1</div>
+            <div class="t-vs-row">
+                <div class="t-model t-m-p1" id="t-intro-p1">—</div>
+                <div class="t-vs">VS</div>
+                <div class="t-model t-m-p2" id="t-intro-p2">—</div>
+            </div>
+            <div class="t-intro-note" id="t-intro-note">Match beginning...</div>
+        </div>
+
+        <!-- Match result -->
+        <div class="t-screen t-hidden" id="t-match-result">
+            <div class="t-match-label" id="t-result-label">RESULT</div>
+            <div class="t-result-winner-label">WINNER</div>
+            <div class="t-result-winner" id="t-result-winner">—</div>
+            <div class="t-result-scores" id="t-result-scores"></div>
+            <div class="t-result-next" id="t-result-next"></div>
+        </div>
+
+        <!-- Champion -->
+        <div class="t-screen t-hidden" id="t-champion">
+            <div class="t-champ-pre">BIOME CHAMPIONSHIP WINNER</div>
+            <div class="t-champ-crown">👑</div>
+            <div class="t-champ-name" id="t-champ-name">—</div>
+            <div class="t-champ-record" id="t-champ-record"></div>
+            <div id="t-champ-actions" class="t-champ-actions"></div>
+        </div>
+
+    </div>
+
+    <!-- Tournament stats toggle button (shown during tournament) -->
+    <button id="btn-t-stats" class="btn-t-stats-toggle t-stats-hidden">📊 Stats</button>
+
+    <!-- Tournament stats panel (side drawer) -->
+    <div id="t-stats-panel" class="t-stats-hidden">
+        <div class="tsp-header">
+            <span>Tournament Results</span>
+            <button id="btn-t-stats-close" class="tsp-close">×</button>
+        </div>
+        <div id="tsp-content" class="tsp-content"></div>
+    </div>
+
+</body>
+</html>
