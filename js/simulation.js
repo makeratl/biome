@@ -86,8 +86,9 @@ export class Simulation {
     _stepHerbivores() {
         const grid = this.grid;
         const moves = [];
+        const cells = this._shuffledCells();
 
-        grid.forEach((cell) => {
+        for (const cell of cells) {
             const herbivores = cell.organisms.filter(o => {
                 const t = CONFIG.SPECIES[o.species]?.type;
                 return t === 'herbivore' && !o.dead;
@@ -146,7 +147,7 @@ export class Simulation {
                     }
                 }
             }
-        });
+        }
 
         // Execute moves
         for (const { org, from, to } of moves) {
@@ -163,8 +164,9 @@ export class Simulation {
     _stepPredators() {
         const grid = this.grid;
         const moves = [];
+        const cells = this._shuffledCells();
 
-        grid.forEach((cell) => {
+        for (const cell of cells) {
             const predators = cell.organisms.filter(o =>
                 CONFIG.SPECIES[o.species]?.type === 'predator' && !o.dead
             );
@@ -225,7 +227,7 @@ export class Simulation {
                     }
                 }
             }
-        });
+        }
 
         for (const { org, from, to } of moves) {
             const idx = from.organisms.indexOf(org);
@@ -236,6 +238,15 @@ export class Simulation {
                 org.row = to.row;
             }
         }
+    }
+
+    _shuffledCells() {
+        const cells = this.grid.allCells();
+        for (let i = cells.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [cells[i], cells[j]] = [cells[j], cells[i]];
+        }
+        return cells;
     }
 
     _findFoodCells(origin, range, diet, player, preferEnemy) {

@@ -131,28 +131,32 @@ export class AIPlayer {
         const plantSpots = [], herbSpots = [], predSpots = [];
 
         grid.forEach(cell => {
-            if (cell.terrain === 'WATER' || cell.organisms.length > 0) return;
+            if (cell.terrain === 'WATER') return;
 
-            // Plant score
-            let ps = cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1);
-            ps += nearby(cell, ownPlants, 3) * 0.08;
-            ps -= nearby(cell, enemyHerbs, 4) * 0.15;
-            plantSpots.push({ cell, score: ps });
+            const plantsHere = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
 
-            // Herbivore score — near ANY plants (enemy preferred, own plants also viable)
-            const ep = nearby(cell, enemyPlants, 5);
-            const op = nearby(cell, ownPlants, 5);
-            const anyPlants = ep + op;
-            const danger = nearby(cell, enemyPreds, 4);
-            // Enemy plants score higher, own plants still valid (herbivore energy counts ×2)
-            const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0);
-            herbSpots.push({ cell, score: herbScore, nearEnemyPlants: ep, nearOwnPlants: op, nearPreds: danger });
+            // Plant candidates: skip cells at plant cap (2)
+            if (plantsHere < 2) {
+                let ps = cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1);
+                ps += nearby(cell, ownPlants, 3) * 0.08;
+                ps -= nearby(cell, enemyHerbs, 4) * 0.15;
+                plantSpots.push({ cell, score: ps });
+            }
 
-            // Predator score — near ANY herbivores (enemy preferred, own also valid for trophic bonus)
-            const eh = nearby(cell, enemyHerbs, 5);
-            const oh = nearby(cell, ownHerbs, 5);
-            const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0);
-            predSpots.push({ cell, score: predScore, nearEnemyHerbs: eh, nearOwnHerbs: oh });
+            // Herbivore/predator candidates: any non-water cell (they can share with plants)
+            if (cell.organisms.length === 0 || plantsHere > 0) {
+                const ep = nearby(cell, enemyPlants, 5);
+                const op = nearby(cell, ownPlants, 5);
+                const anyPlants = ep + op;
+                const danger = nearby(cell, enemyPreds, 4);
+                const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0);
+                herbSpots.push({ cell, score: herbScore, nearEnemyPlants: ep, nearOwnPlants: op, nearPreds: danger });
+
+                const eh = nearby(cell, enemyHerbs, 5);
+                const oh = nearby(cell, ownHerbs, 5);
+                const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0);
+                predSpots.push({ cell, score: predScore, nearEnemyHerbs: eh, nearOwnHerbs: oh });
+            }
         });
 
         plantSpots.sort((a,b) => b.score - a.score);
@@ -411,15 +415,32 @@ JSON format:
         const content = data.message.content?.trim() || '';
         const thinking = data.message.thinking?.trim() || '';
 
-        // Try to extract valid JSON from a string, scanning right-to-left so we
-        // get the model's final answer rather than mid-thought JSON fragments
+        // Try to extract valid JSON from a string. Approaches, in order:
+        // 1. Direct parse (model obeyed "respond ONLY with JSON")
+        // 2. Strip markdown code fences (```json ... ``` or ``` ... ```)
+        // 3. Brace-matching scan right-to-left (for models that wrap JSON in prose)
         const extractJSON = (str) => {
-            const matches = [...str.matchAll(/\{/g)].map(m => m.index).reverse();
-            for (const start of matches) {
-                const slice = str.slice(start);
-                const end = slice.lastIndexOf('}');
-                if (end === -1) continue;
-                try { return JSON.parse(slice.slice(0, end + 1)); } catch { continue; }
+            // Try direct parse first
+            try { return JSON.parse(str); } catch {}
+
+            // Strip markdown code fences
+            const fenced = str.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+            if (fenced) {
+                try { return JSON.parse(fenced[1].trim()); } catch {}
+            }
+
+            // Right-to-left brace scan — get the model's final JSON output
+            const opens = [...str.matchAll(/\{/g)].map(m => m.index).reverse();
+            for (const start of opens) {
+                // Find the matching closing brace by tracking depth
+                let depth = 0;
+                for (let i = start; i < str.length; i++) {
+                    if (str[i] === '{') depth++;
+                    else if (str[i] === '}') depth--;
+                    if (depth === 0) {
+                        try { return JSON.parse(str.slice(start, i + 1)); } catch { break; }
+                    }
+                }
             }
             return null;
         };
@@ -455,8 +476,16 @@ JSON format:
                 continue;
             }
 
-            tm.spendAP(template.apCost);
             const cell = cand.cell;
+            if (template.type === 'plant') {
+                const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
+                if (existingPlants >= 2) {
+                    results.push({ ok: false, msg: `Cell (${cell.col},${cell.row}) already has max plants` });
+                    continue;
+                }
+            }
+
+            tm.spendAP(template.apCost);
             const org = createOrganism(species, this.player, cell.col, cell.row);
             org._placedRound = tm.round;
             cell.organisms.push(org);
@@ -538,7 +567,9 @@ JSON format:
 
         let spots = [];
         grid.forEach(cell => {
-            if (cell.terrain === 'WATER' || cell.organisms.length > 0) return;
+            if (cell.terrain === 'WATER') return;
+            const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
+            if (existingPlants >= 2) return;
             if (usedCells.has(`${cell.col},${cell.row}`)) return;
             spots.push({ cell, score: cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1) });
         });
@@ -580,10 +611,13 @@ JSON format:
 
         for (const c of plants) {
             if (tm.players[this.player].ap < 1) break;
+            const existingPlants = c.cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
+            if (existingPlants >= 2) continue;
             tm.spendAP(1);
             const org = createOrganism('GRASS', this.player, c.cell.col, c.cell.row);
             org._placedRound = tm.round;
             c.cell.organisms.push(org);
+            tm.recordAction({ type: 'place', species: 'GRASS', col: c.cell.col, row: c.cell.row });
             results.push({ ok: true, msg: `Fallback: Grass at (${c.cell.col},${c.cell.row})` });
         }
 
