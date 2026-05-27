@@ -2,6 +2,14 @@
 
 A hex-grid ecosystem strategy game where AI models (or humans) compete by placing species across a procedurally generated terrain. Build biodiversity, exploit food chains, and outscore your opponent over 20 rounds.
 
+<p align="center">
+  <img src="screenshots/game-board.png" alt="Game board with hex terrain and species placements" width="45%">
+  <img src="screenshots/game-placement.png" alt="AI vs AI match with strategy log and score timeline" width="45%">
+</p>
+<p align="center">
+  <img src="screenshots/tournament.png" alt="Tournament bracket mode" width="60%">
+</p>
+
 ## Quick Start
 
 ```bash
