@@ -17,6 +17,29 @@ export class TournamentManager {
     _setupStatsToggle() {
         document.getElementById('btn-t-stats')?.addEventListener('click', () => this._toggleStats());
         document.getElementById('btn-t-stats-close')?.addEventListener('click', () => this._toggleStats(false));
+        document.getElementById('btn-lb-close')?.addEventListener('click', () => this._toggleStats(false));
+        document.getElementById('btn-lb-expand')?.addEventListener('click', () => this._showExpandedBracket());
+        document.getElementById('btn-be-close')?.addEventListener('click', () => this._hideExpandedBracket());
+    }
+
+    _showExpandedBracket() {
+        if (!this.bracket) return;
+        const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        const status = `${modeLabel} — ${this.totalRounds} rounds`;
+        document.getElementById('be-status').textContent = status;
+        this._renderBracketInto(document.getElementById('be-grid'));
+        document.getElementById('bracket-expanded')?.classList.remove('bracket-expanded-hidden');
+        // Hide the mini live-bracket while expanded view is up
+        document.getElementById('live-bracket')?.classList.add('live-bracket-hidden');
+    }
+
+    _hideExpandedBracket() {
+        document.getElementById('bracket-expanded')?.classList.add('bracket-expanded-hidden');
+        // Reopen the mini if Stats is still toggled open
+        if (this._statsOpen) {
+            document.getElementById('live-bracket')?.classList.remove('live-bracket-hidden');
+            this._renderLiveBracket();
+        }
     }
 
     async start(models, mode = 'standard') {
@@ -184,10 +207,12 @@ export class TournamentManager {
         this._statsOpen = force !== undefined ? force : !this._statsOpen;
         const sidePanel = document.getElementById('t-stats-panel');
         const liveBracket = document.getElementById('live-bracket');
-        const gameRunning = this.running && this.game.simulating;
+        const expanded = document.getElementById('bracket-expanded');
 
         if (this._statsOpen) {
-            if (gameRunning) {
+            // During an active tournament the floating mini bracket is the default;
+            // after the tournament ends the side panel still has the full results view.
+            if (this.running) {
                 liveBracket?.classList.remove('live-bracket-hidden');
                 this._renderLiveBracket();
             } else {
@@ -197,6 +222,7 @@ export class TournamentManager {
         } else {
             sidePanel?.classList.add('t-stats-hidden');
             liveBracket?.classList.add('live-bracket-hidden');
+            expanded?.classList.add('bracket-expanded-hidden');
         }
     }
 
@@ -310,6 +336,11 @@ export class TournamentManager {
         if (liveBracketEl && !liveBracketEl.classList.contains('live-bracket-hidden')) {
             this._renderLiveBracket();
         }
+        // Keep expanded bracket in sync if visible
+        const expandedEl = document.getElementById('bracket-expanded');
+        if (expandedEl && !expandedEl.classList.contains('bracket-expanded-hidden')) {
+            this._renderBracketInto(document.getElementById('be-grid'));
+        }
     }
 
     _drawMiniChart(canvas, history) {
@@ -357,18 +388,17 @@ export class TournamentManager {
 
     _renderBracket(statusText) {
         document.getElementById('t-bracket-status').textContent = statusText;
-        const grid = document.getElementById('bracket-grid');
-        grid.innerHTML = '';
+        this._renderBracketInto(document.getElementById('bracket-grid'));
+    }
 
-        // Quarter-Finals column
+    _renderBracketInto(grid) {
+        if (!grid || !this.bracket) return;
+        grid.innerHTML = '';
         const qf    = this._makeCol('Quarter-Finals', this.bracket.slice(0, 4));
         const conn1 = this._makeConnectorCol(['→ SF1', '→ SF1', '→ SF2', '→ SF2']);
-        // Semi-Finals column
         const sf    = this._makeCol('Semi-Finals', this.bracket.slice(4, 6), 'semi');
         const conn2 = this._makeConnectorCol(['', '→ Final', '']);
-        // Final column
         const fi    = this._makeCol('Final', [this.bracket[6]], 'final');
-
         [qf, conn1, sf, conn2, fi].forEach(el => grid.appendChild(el));
     }
 
@@ -437,6 +467,7 @@ export class TournamentManager {
         const overlay = document.getElementById('tournament-overlay');
         overlay.classList.remove('t-hidden');
         overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+        document.getElementById('t-bracket')?.classList.remove('t-bracket-manual');
         document.getElementById(screenId)?.classList.remove('t-hidden');
     }
 

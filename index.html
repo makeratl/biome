@@ -95,24 +95,39 @@
             </div>
 
             <!-- AI commentary overlays -->
-            <div id="ai-overlay-p1" class="ai-overlay left">
+            <div id="ai-overlay-p1" class="ai-overlay p1">
                 <div class="ai-overlay-label">P1</div>
-                <div class="ai-banter" id="ai-banter-p1"></div>
-                <div class="ai-strategy" id="ai-strategy-p1"></div>
+                <div id="ai-banter-p1" class="ai-banter-text"></div>
+                <div id="ai-strategy-p1" class="ai-strategy-text"></div>
             </div>
-            <div id="ai-overlay-p2" class="ai-overlay right">
+            <div id="ai-overlay-p2" class="ai-overlay p2">
                 <div class="ai-overlay-label">P2</div>
-                <div class="ai-banter" id="ai-banter-p2"></div>
-                <div class="ai-strategy" id="ai-strategy-p2"></div>
+                <div id="ai-banter-p2" class="ai-banter-text"></div>
+                <div id="ai-strategy-p2" class="ai-strategy-text"></div>
             </div>
 
             <!-- Live bracket overlay -->
             <div id="live-bracket" class="live-bracket-hidden">
                 <div class="lb-header">
                     <span id="lb-title">Bracket</span>
-                    <button id="btn-lb-close" class="lb-close">&times;</button>
+                    <div class="lb-actions">
+                        <button id="btn-lb-expand" class="lb-action" title="Expand bracket">⛶</button>
+                        <button id="btn-lb-close" class="lb-close" title="Close">&times;</button>
+                    </div>
                 </div>
                 <div id="lb-content" class="lb-content"></div>
+            </div>
+
+            <!-- Expanded bracket overlay (semi-transparent, sits over canvas) -->
+            <div id="bracket-expanded" class="bracket-expanded-hidden">
+                <div class="be-header">
+                    <div class="be-titles">
+                        <div class="be-title">BIOME CHAMPIONSHIP</div>
+                        <div id="be-status" class="be-status"></div>
+                    </div>
+                    <button id="btn-be-close" class="be-close" title="Close">&times;</button>
+                </div>
+                <div id="be-grid" class="bracket-grid"></div>
             </div>
         </div>
 
@@ -222,7 +237,7 @@
     <div id="t-stats-panel" class="t-stats-hidden">
         <div class="tsp-header">
             <span>Tournament Results</span>
-            <button id="btn-t-stats-close" class="tsp-close">×</button>
+            <button id="btn-t-stats-close" class="tsp-close" title="Close">×</button>
         </div>
         <div id="tsp-content" class="tsp-content"></div>
     </div>

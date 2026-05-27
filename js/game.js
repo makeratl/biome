@@ -873,6 +873,7 @@ class Game {
     }
 
     async _startTournament() {
+        if (this.tournament?.running) return;
         const mode = await this._pickTournamentMode();
         if (!mode) return;
 
@@ -911,8 +912,9 @@ class Game {
                 cancelBtn.removeEventListener('click', onCancel);
             };
 
-            const onStandard  = () => { cleanup(); overlay.classList.add('t-hidden'); resolve('standard'); };
-            const onLightning = () => { cleanup(); overlay.classList.add('t-hidden'); resolve('lightning'); };
+            const pick = (mode) => { cleanup(); screen.classList.add('t-hidden'); resolve(mode); };
+            const onStandard  = () => pick('standard');
+            const onLightning = () => pick('lightning');
             const onCancel    = () => { cleanup(); overlay.classList.add('t-hidden'); resolve(null); };
 
             standardBtn.addEventListener('click', onStandard);
