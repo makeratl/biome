@@ -911,8 +911,8 @@ class Game {
                 cancelBtn.removeEventListener('click', onCancel);
             };
 
-            const onStandard  = () => { cleanup(); resolve('standard'); };
-            const onLightning = () => { cleanup(); resolve('lightning'); };
+            const onStandard  = () => { cleanup(); overlay.classList.add('t-hidden'); resolve('standard'); };
+            const onLightning = () => { cleanup(); overlay.classList.add('t-hidden'); resolve('lightning'); };
             const onCancel    = () => { cleanup(); overlay.classList.add('t-hidden'); resolve(null); };
 
             standardBtn.addEventListener('click', onStandard);
