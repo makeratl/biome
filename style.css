@@ -1036,6 +1036,121 @@ body {
 
 .t-mode-cancel:hover { color: rgba(255,255,255,0.6); }
 
+/* ── Live Bracket Overlay ──────────────────── */
+
+.live-bracket-hidden { display: none !important; }
+
+#live-bracket {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 180px;
+    background: rgba(18, 24, 42, 0.78);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    z-index: 20;
+    padding: 10px 12px;
+    animation: lb-fadein 0.2s ease;
+}
+
+@keyframes lb-fadein {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.lb-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+#lb-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+}
+
+.lb-close {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.35);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.lb-close:hover { color: rgba(255,255,255,0.65); }
+
+.lb-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.lb-section {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.22);
+    padding: 4px 0 2px;
+}
+
+.lb-match {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 4px;
+    padding: 3px 0;
+    border-radius: 3px;
+}
+
+.lb-match.lb-live {
+    background: rgba(255,255,255,0.04);
+}
+
+.lb-p {
+    font-size: 10px;
+    color: rgba(255,255,255,0.55);
+    width: calc(50% - 20px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lb-p.lb-win  { color: hsl(140, 50%, 60%); font-weight: 600; }
+.lb-p.lb-lose { color: rgba(255,255,255,0.25); }
+
+.lb-badge {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: hsl(140, 45%, 55%);
+    background: rgba(140, 220, 140, 0.1);
+    padding: 1px 5px;
+    border-radius: 3px;
+    width: 100%;
+    text-align: center;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.lb-badge.lb-playing {
+    color: hsl(30, 80%, 60%);
+    background: rgba(255, 160, 40, 0.12);
+    animation: lb-pulse 1.6s ease infinite;
+}
+
+@keyframes lb-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.5; }
+}
+
 #btn-t-stats {
     position: fixed;
     bottom: 18px;

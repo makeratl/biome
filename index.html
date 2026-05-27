@@ -95,10 +95,24 @@
             </div>
 
             <!-- AI commentary overlays -->
-            <div id="ai-overlay-p1" class="ai-overlay p1">
+            <div id="ai-overlay-p1" class="ai-overlay left">
                 <div class="ai-overlay-label">P1</div>
-                <div id="ai-banter-p1" class="ai-banter-text"></div>
-                <div id="ai-strategy-p1" class="ai-strategy-text"></div>
+                <div class="ai-banter" id="ai-banter-p1"></div>
+                <div class="ai-strategy" id="ai-strategy-p1"></div>
+            </div>
+            <div id="ai-overlay-p2" class="ai-overlay right">
+                <div class="ai-overlay-label">P2</div>
+                <div class="ai-banter" id="ai-banter-p2"></div>
+                <div class="ai-strategy" id="ai-strategy-p2"></div>
+            </div>
+
+            <!-- Live bracket overlay -->
+            <div id="live-bracket" class="live-bracket-hidden">
+                <div class="lb-header">
+                    <span id="lb-title">Bracket</span>
+                    <button id="btn-lb-close" class="lb-close">&times;</button>
+                </div>
+                <div id="lb-content" class="lb-content"></div>
             </div>
             <div id="ai-overlay-p2" class="ai-overlay p2">
                 <div class="ai-overlay-label">P2</div>

@@ -182,13 +182,53 @@ export class TournamentManager {
 
     _toggleStats(force) {
         this._statsOpen = force !== undefined ? force : !this._statsOpen;
-        const panel = document.getElementById('t-stats-panel');
+        const sidePanel = document.getElementById('t-stats-panel');
+        const liveBracket = document.getElementById('live-bracket');
+        const gameRunning = this.running && this.game.simulating;
+
         if (this._statsOpen) {
-            panel?.classList.remove('t-stats-hidden');
-            this._renderStats();
+            if (gameRunning) {
+                liveBracket?.classList.remove('live-bracket-hidden');
+                this._renderLiveBracket();
+            } else {
+                sidePanel?.classList.remove('t-stats-hidden');
+                this._renderStats();
+            }
         } else {
-            panel?.classList.add('t-stats-hidden');
+            sidePanel?.classList.add('t-stats-hidden');
+            liveBracket?.classList.add('live-bracket-hidden');
         }
+    }
+
+    _renderLiveBracket() {
+        const el = document.getElementById('lb-content');
+        if (!el || !this.bracket) return;
+
+        const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        document.getElementById('lb-title').textContent = `${modeLabel} Bracket`;
+        document.getElementById('btn-lb-close').onclick = () => this._toggleStats(false);
+
+        const sections = [
+            { label: 'QF', ids: [0, 1, 2, 3] },
+            { label: 'SF', ids: [4, 5] },
+            { label: 'Final', ids: [6] },
+        ];
+
+        let html = '';
+        for (const sec of sections) {
+            html += `<div class="lb-section">${sec.label}</div>`;
+            for (const id of sec.ids) {
+                const m = this.bracket[id];
+                const done = !!m.winner;
+                const isLive = !done && m.p1 && m.p2;
+                html += `<div class="lb-match ${done ? 'lb-done' : ''} ${isLive ? 'lb-live' : ''}">
+                    <div class="lb-p ${m.winner === m.p1 ? 'lb-win' : done ? 'lb-lose' : ''}">${m.p1 ? this._short(m.p1) : '—'}</div>
+                    <div class="lb-p ${m.winner === m.p2 ? 'lb-win' : done ? 'lb-lose' : ''}">${m.p2 ? this._short(m.p2) : '—'}</div>
+                    ${done ? `<div class="lb-badge">${this._short(m.winner)}</div>` : isLive ? '<div class="lb-badge lb-playing">LIVE</div>' : ''}
+                </div>`;
+            }
+        }
+        el.innerHTML = html;
     }
 
     _renderStats() {
@@ -263,6 +303,12 @@ export class TournamentManager {
             if (!m.scoreHistory?.length) continue;
             const canvas = content.querySelector(`canvas[data-match-id="${m.id}"]`);
             if (canvas) this._drawMiniChart(canvas, m.scoreHistory);
+        }
+
+        // Keep live bracket in sync if visible
+        const liveBracketEl = document.getElementById('live-bracket');
+        if (liveBracketEl && !liveBracketEl.classList.contains('live-bracket-hidden')) {
+            this._renderLiveBracket();
         }
     }
 
