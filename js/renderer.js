@@ -375,6 +375,78 @@ export class Renderer {
         this.drawTerrain();
         this.drawOrganisms();
         this.drawPlacementHighlights();
+        this._drawBursts();
+    }
+
+    // ── Placement burst (animated ring expanding from a cell) ──
+    _ensureBursts() {
+        if (!this._bursts) {
+            this._bursts = [];
+            this._burstRafId = null;
+        }
+    }
+
+    placementBurst(cell, player) {
+        if (!cell) return;
+        this._ensureBursts();
+        const { x, y } = this.grid.hexToPixel(cell.col, cell.row);
+        const cx = x + this.offsetX;
+        const cy = y + this.offsetY;
+        const c = (player === 1 ? CONFIG.PLAYER_1 : CONFIG.PLAYER_2).PRIMARY;
+        this._bursts.push({
+            cx, cy,
+            color: c,
+            startedAt: performance.now(),
+            duration: 480,
+        });
+        this._startBurstLoop();
+    }
+
+    _startBurstLoop() {
+        if (this._burstRafId) return;
+        const tick = () => {
+            const now = performance.now();
+            this._bursts = this._bursts.filter(b => now - b.startedAt < b.duration);
+            this.render();
+            if (this._bursts.length > 0) {
+                this._burstRafId = requestAnimationFrame(tick);
+            } else {
+                this._burstRafId = null;
+            }
+        };
+        this._burstRafId = requestAnimationFrame(tick);
+    }
+
+    _drawBursts() {
+        if (!this._bursts || this._bursts.length === 0) return;
+        const ctx = this.ctx;
+        const now = performance.now();
+        const baseSize = CONFIG.HEX_SIZE;
+
+        for (const b of this._bursts) {
+            const t = Math.min(1, (now - b.startedAt) / b.duration);
+            // ease-out: fast start, slow end
+            const eased = 1 - Math.pow(1 - t, 2.5);
+            const radius = baseSize * (0.85 + eased * 1.55);
+            const alpha = (1 - t) * 0.85;
+
+            ctx.save();
+            ctx.shadowColor = `hsl(${b.color.h}, ${b.color.s}%, ${b.color.l}%)`;
+            ctx.shadowBlur = 12 * (1 - t * 0.6);
+            ctx.strokeStyle = `hsla(${b.color.h}, ${b.color.s}%, ${Math.min(100, b.color.l + 18)}%, ${alpha})`;
+            ctx.lineWidth = 2.5 * (1 - t * 0.4);
+            ctx.beginPath();
+            ctx.arc(b.cx, b.cy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // inner glow ring
+            ctx.strokeStyle = `hsla(${b.color.h}, ${b.color.s}%, ${b.color.l}%, ${alpha * 0.4})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(b.cx, b.cy, radius * 0.55, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
     }
 
     // Get cell from canvas click coordinates

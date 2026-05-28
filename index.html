@@ -8,14 +8,16 @@
 </head>
 <body>
     <header class="game-header">
-        <div class="game-title">BIOME</div>
-        <div class="header-center">
-            <div id="current-player" class="player-indicator p1">Player 1</div>
-            <div id="round-info" class="round-info">Round 1 / 15</div>
+        <div class="game-title">
+            <span class="gt-glyph">◈</span>
+            <span class="gt-word">BIOME</span>
+            <span class="gt-glyph">◈</span>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-            <div id="fog-indicator" class="fog-indicator" style="display:none;"></div>
-            <div id="ap-display" class="ap-display">3 AP remaining</div>
+        <div class="header-spacer"></div>
+        <div class="header-actions">
+            <button id="mute-toggle" class="mute-toggle" title="Toggle sound" aria-label="Toggle sound">
+                <span class="mt-icon">🔊</span>
+            </button>
         </div>
     </header>
 
@@ -94,6 +96,13 @@
         <div class="canvas-container">
             <canvas id="game-canvas"></canvas>
 
+            <!-- AP chip (visible only during human turns) -->
+            <div id="ap-chip" class="ap-chip" style="display:none;">
+                <span class="ap-chip-label" id="ap-chip-label">P1</span>
+                <span class="ap-chip-value" id="ap-chip-value">0</span>
+                <span class="ap-chip-suffix">AP</span>
+            </div>
+
             <!-- Live scoreboard overlay -->
             <div id="scoreboard-overlay">
                 <div class="sb-player p1">
@@ -103,6 +112,7 @@
                 <div class="sb-middle">
                     <span class="sb-round" id="sb-round">Round — / —</span>
                     <span class="sb-lead" id="sb-lead"></span>
+                    <span id="sb-live" class="sb-live" style="display:none;"><span class="sb-live-dot"></span>LIVE</span>
                 </div>
                 <div class="sb-player p2">
                     <span class="sb-score" id="sb-score-p2">—</span>
@@ -118,14 +128,42 @@
 
             <!-- AI commentary overlays -->
             <div id="ai-overlay-p1" class="ai-overlay p1">
-                <div class="ai-overlay-label">P1</div>
-                <div id="ai-banter-p1" class="ai-banter-text"></div>
-                <div id="ai-strategy-p1" class="ai-strategy-text"></div>
+                <div class="aic-header">
+                    <div class="aic-avatar" id="aic-avatar-p1">P1</div>
+                    <div class="aic-name-block">
+                        <div class="aic-name" id="aic-name-p1">Player 1</div>
+                        <div class="aic-status" id="aic-status-p1">Waiting</div>
+                    </div>
+                </div>
+                <div class="aic-banter-wrap">
+                    <div class="aic-particles" aria-hidden="true">
+                        <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div id="ai-banter-p1" class="ai-banter-text"></div>
+                </div>
+                <button class="aic-reason-toggle" id="aic-reason-toggle-p1" type="button" aria-expanded="false">
+                    <span class="aic-chevron">▸</span><span>reasoning</span>
+                </button>
+                <div id="ai-strategy-p1" class="ai-strategy-text aic-reason-collapsed"></div>
             </div>
             <div id="ai-overlay-p2" class="ai-overlay p2">
-                <div class="ai-overlay-label">P2</div>
-                <div id="ai-banter-p2" class="ai-banter-text"></div>
-                <div id="ai-strategy-p2" class="ai-strategy-text"></div>
+                <div class="aic-header">
+                    <div class="aic-avatar" id="aic-avatar-p2">P2</div>
+                    <div class="aic-name-block">
+                        <div class="aic-name" id="aic-name-p2">Player 2</div>
+                        <div class="aic-status" id="aic-status-p2">Waiting</div>
+                    </div>
+                </div>
+                <div class="aic-banter-wrap">
+                    <div class="aic-particles" aria-hidden="true">
+                        <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div id="ai-banter-p2" class="ai-banter-text"></div>
+                </div>
+                <button class="aic-reason-toggle" id="aic-reason-toggle-p2" type="button" aria-expanded="false">
+                    <span class="aic-chevron">▸</span><span>reasoning</span>
+                </button>
+                <div id="ai-strategy-p2" class="ai-strategy-text aic-reason-collapsed"></div>
             </div>
 
             <!-- Live bracket overlay -->
@@ -138,6 +176,25 @@
                     </div>
                 </div>
                 <div id="lb-content" class="lb-content"></div>
+            </div>
+
+            <!-- Round transition card (briefly fades in/out between rounds) -->
+            <div id="round-transition" class="rt-hidden">
+                <div class="rt-label">ROUND</div>
+                <div id="rt-number" class="rt-number">—</div>
+                <div id="rt-subline" class="rt-subline"></div>
+            </div>
+
+            <!-- Dramatic callout overlay (FIRST PREDATOR, DOMINANCE, etc.) -->
+            <div id="callout" class="co-hidden">
+                <div id="co-text" class="co-text"></div>
+                <div id="co-subtitle" class="co-subtitle"></div>
+            </div>
+
+            <!-- Round-end recap card -->
+            <div id="recap-card" class="recap-hidden">
+                <div class="rc-header" id="rc-header">Round Recap</div>
+                <div class="rc-body" id="rc-body"></div>
             </div>
 
             <!-- Expanded bracket overlay (semi-transparent, sits over canvas) -->
@@ -192,6 +249,19 @@
     <script type="module" src="js/game.js"></script>
     <!-- Tournament overlay -->
     <div id="tournament-overlay" class="t-hidden">
+
+        <!-- Pre-match VS screen (Solo/Watch) -->
+        <div class="t-screen t-hidden" id="match-prematch">
+            <div class="t-header">
+                <div class="t-subtitle">MATCH BEGINS</div>
+            </div>
+            <div class="prematch-row">
+                <div id="prematch-p1-card" class="player-card p1"></div>
+                <div class="prematch-vs">VS</div>
+                <div id="prematch-p2-card" class="player-card p2"></div>
+            </div>
+            <div class="prematch-hint">Click anywhere to skip</div>
+        </div>
 
         <!-- First-load launcher welcome -->
         <div class="t-screen t-hidden" id="launcher-welcome">

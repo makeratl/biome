@@ -492,7 +492,7 @@ JSON format:
             org._placedRound = tm.round;
             cell.organisms.push(org);
             tm.recordAction({ type: 'place', species, col: cell.col, row: cell.row });
-            results.push({ ok: true, msg: `${template.name} at (${cell.col},${cell.row}) in ${this._regionOf(cell.col, cell.row)}` });
+            results.push({ ok: true, cell, species, msg: `${template.name} at (${cell.col},${cell.row}) in ${this._regionOf(cell.col, cell.row)}` });
         }
 
         return results;
@@ -599,7 +599,7 @@ JSON format:
             org._placedRound = tm.round;
             s.cell.organisms.push(org);
             tm.recordAction({ type: 'place', species: 'GRASS', col: s.cell.col, row: s.cell.row });
-            results.push({ ok: true, msg: `Auto: Grass at (${s.cell.col},${s.cell.row}) in ${this._regionOf(s.cell.col, s.cell.row)}` });
+            results.push({ ok: true, cell: s.cell, species: 'GRASS', msg: `Auto: Grass at (${s.cell.col},${s.cell.row}) in ${this._regionOf(s.cell.col, s.cell.row)}` });
         }
 
         return results;
@@ -620,7 +620,7 @@ JSON format:
             org._placedRound = tm.round;
             c.cell.organisms.push(org);
             tm.recordAction({ type: 'place', species: 'GRASS', col: c.cell.col, row: c.cell.row });
-            results.push({ ok: true, msg: `Fallback: Grass at (${c.cell.col},${c.cell.row})` });
+            results.push({ ok: true, cell: c.cell, species: 'GRASS', msg: `Fallback: Grass at (${c.cell.col},${c.cell.row})` });
         }
 
         this.game.renderer.render();

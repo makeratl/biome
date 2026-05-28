@@ -10,6 +10,7 @@ import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel } from './rankings.js';
+import { playSound, setMuted, isMuted } from './sound.js';
 
 class Game {
     constructor() {
@@ -38,6 +39,8 @@ class Game {
         this._initModelConfig();
         this._initMatchSection();
         this._initLauncher();
+        this._initMuteToggle();
+        this._initAICards();
         this._updateWorldInfo();
         this._scoreHistory = [];
         this._updateCensus();
@@ -47,6 +50,106 @@ class Game {
         this._openLauncherWelcome();
 
         console.log(`Biome initialized — seed: ${this.seed}`);
+    }
+
+    _playSound(key) {
+        try { playSound(key); } catch (_) { /* audio not ready */ }
+    }
+
+    _initMuteToggle() {
+        const btn = document.getElementById('mute-toggle');
+        if (!btn) return;
+        const icon = btn.querySelector('.mt-icon');
+        const refresh = () => {
+            const muted = isMuted();
+            btn.classList.toggle('muted', muted);
+            if (icon) icon.textContent = muted ? '🔇' : '🔊';
+        };
+        refresh();
+        btn.addEventListener('click', () => {
+            setMuted(!isMuted());
+            refresh();
+        });
+    }
+
+    // ── AI Commentary Cards ──────────────────────────────────
+
+    _initAICards() {
+        for (const p of [1, 2]) {
+            const toggle = document.getElementById(`aic-reason-toggle-p${p}`);
+            const strategy = document.getElementById(`ai-strategy-p${p}`);
+            if (!toggle || !strategy) continue;
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const collapsed = strategy.classList.toggle('aic-reason-collapsed');
+                toggle.setAttribute('aria-expanded', String(!collapsed));
+            });
+            // Hide toggle by default until reasoning text exists
+            toggle.style.display = 'none';
+        }
+        // Initialize identity for whatever players are currently configured
+        for (const p of [1, 2]) this._setAICardIdentity(p);
+    }
+
+    _setAICardIdentity(playerNum) {
+        const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
+        const nameEl = document.getElementById(`aic-name-p${playerNum}`);
+        const statusEl = document.getElementById(`aic-status-p${playerNum}`);
+        if (!avatarEl || !nameEl) return;
+
+        const ai = this.aiPlayers[playerNum];
+        if (ai) {
+            avatarEl.textContent = this._modelInitials(ai.model);
+            nameEl.textContent = this._prettyModelName(ai.model);
+            if (statusEl) {
+                // Show rank/place status (persistent — fetched async below)
+                statusEl.textContent = '— ELO · — W —L';
+                statusEl.className = 'aic-status';
+            }
+            // Async populate rank/place
+            this._updateAIRankStatus(playerNum);
+        } else {
+            avatarEl.textContent = `P${playerNum}`;
+            nameEl.textContent = `Player ${playerNum}`;
+            if (statusEl) {
+                statusEl.textContent = 'Human';
+                statusEl.className = 'aic-status';
+            }
+        }
+    }
+
+    async _updateAIRankStatus(playerNum) {
+        const ai = this.aiPlayers[playerNum];
+        const statusEl = document.getElementById(`aic-status-p${playerNum}`);
+        if (!ai || !statusEl) return;
+        const r = await this._fetchRanking(ai.model);
+        // Make sure the AI for this slot didn't change mid-fetch
+        if (this.aiPlayers[playerNum]?.model !== ai.model) return;
+        if (r) {
+            const rankPrefix = r.rank ? `#${r.rank} · ` : '';
+            statusEl.textContent = `${rankPrefix}${Math.round(r.elo)} ELO · ${r.wins}W ${r.losses}L`;
+        } else {
+            statusEl.textContent = 'Unranked';
+        }
+    }
+
+    _resetAICard(playerNum) {
+        const bEl = document.getElementById(`ai-banter-p${playerNum}`);
+        const sEl = document.getElementById(`ai-strategy-p${playerNum}`);
+        const toggle = document.getElementById(`aic-reason-toggle-p${playerNum}`);
+        if (bEl) {
+            bEl.textContent = '';
+            bEl.classList.remove('entering', 'thinking');
+        }
+        if (sEl) {
+            sEl.textContent = '';
+            sEl.classList.add('aic-reason-collapsed');
+        }
+        if (toggle) {
+            toggle.style.display = 'none';
+            toggle.setAttribute('aria-expanded', 'false');
+        }
+        this._setAICardIdentity(playerNum);
     }
 
     _buildSpeciesPalette() {
@@ -99,6 +202,10 @@ class Game {
     _onPhaseChange(phase) {
         const aiVsAi = this._isAIvsAI();
 
+        // LIVE badge: visible whenever the match is actively progressing
+        const liveStates = [PHASE.PLAYER_1_TURN, PHASE.PLAYER_2_TURN, PHASE.SIMULATING, PHASE.ROUND_END];
+        this._setLiveBadge(liveStates.includes(phase));
+
         if (phase === PHASE.PLAYER_1_TURN) {
             this.renderer.clearFog();
             // In AI vs AI, highlight P1's placements this round
@@ -134,6 +241,8 @@ class Game {
             this._updateCensus();
             this._log(aiVsAi ? 'Both AI turns complete — simulating...' : 'All placements revealed!');
             this._updateTurnUI();
+            // Snapshot census BEFORE simulation, to compute deltas for recap
+            this._preSimSnapshot = this._snapshotCensus();
             // Clear highlights after a longer pause in AI vs AI so spectator can study
             const revealDelay = aiVsAi ? 2500 : 800;
             setTimeout(() => {
@@ -143,8 +252,22 @@ class Game {
             return;
         } else if (phase === PHASE.ROUND_END) {
             this.renderer.clearHighlightRound();
-            // Brief pause then auto-advance
-            setTimeout(() => this.turns.nextRound(), 600);
+            // Detect milestones (FIRST PREDATOR, DOMINANCE, COMEBACK, etc.)
+            this._detectMilestones();
+            // Show recap card with biomass + species deltas (if any milestone fired, defer slightly)
+            const calloutsFiring = this._calloutBusy;
+            const recapDelay = calloutsFiring ? 1100 : 200;
+            if (this._preSimSnapshot) {
+                setTimeout(() => this._showRecap(this._preSimSnapshot), recapDelay);
+            }
+            // Show round transition card, then advance
+            const nextRound = this.turns.round + 1;
+            if (nextRound <= this.turns.totalRounds) {
+                setTimeout(() => this._showRoundTransition(nextRound), 3500);
+                setTimeout(() => this.turns.nextRound(), 4700);
+            } else {
+                setTimeout(() => this.turns.nextRound(), 3500);
+            }
         } else if (phase === PHASE.GAME_OVER) {
             this.renderer.clearHighlightRound();
             this._showGameOver();
@@ -209,6 +332,8 @@ class Game {
         cell.organisms.push(org);
 
         this.renderer.render();
+        this.renderer.placementBurst(cell, player);
+        this._playSound('place');
         this._updateCensus();
         this._updateTurnUI();
         this._log(`P${player} placed ${template.name} at (${cell.col}, ${cell.row})`);
@@ -236,10 +361,15 @@ class Game {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    _log(msg) {
+    _log(msg, opts = {}) {
         const log = document.getElementById('action-log');
         const entry = document.createElement('div');
-        entry.className = 'entry';
+        // Heuristic player tagging when caller didn't specify
+        let cls = 'entry';
+        if (opts.player === 1 || /^P1 /.test(msg)) cls += ' p1';
+        else if (opts.player === 2 || /^P2 /.test(msg)) cls += ' p2';
+        else cls += ' system';
+        entry.className = cls;
         entry.textContent = msg;
         log.insertBefore(entry, log.firstChild);
         while (log.children.length > 60) log.removeChild(log.lastChild);
@@ -256,45 +386,22 @@ class Game {
 
     _updateTurnUI() {
         const player = this.turns.currentPlayer;
-        const phase = this.turns.phase;
 
-        // Player indicator
-        const playerEl = document.getElementById('current-player');
-        if (player && this._aiThinking) {
-            const model = this.aiPlayers[player]?.model || 'AI';
-            playerEl.textContent = `P${player} ${model} thinking...`;
-            playerEl.className = `player-indicator p${player} ai-thinking`;
-        } else if (player) {
-            const ai = this.aiPlayers[player];
-            playerEl.textContent = ai ? `P${player} (${ai.model})` : `Player ${player}`;
-            playerEl.className = `player-indicator p${player}`;
-        } else if (phase === PHASE.SIMULATING) {
-            playerEl.textContent = 'Simulating';
-            playerEl.className = 'player-indicator sim';
-        } else if (phase === PHASE.GAME_OVER) {
-            playerEl.textContent = 'Game Over';
-            playerEl.className = 'player-indicator';
-        } else {
-            // SETUP / pre-match
-            playerEl.textContent = 'Ready';
-            playerEl.className = 'player-indicator';
-        }
-
-        // Round and AP
-        const roundEl = document.getElementById('round-info');
-        if (this.turns.round > 0) {
-            roundEl.textContent = `Round ${this.turns.round} / ${this.turns.totalRounds}`;
-            roundEl.style.visibility = '';
-        } else {
-            roundEl.style.visibility = 'hidden';
-        }
-
-        const apEl = document.getElementById('ap-display');
-        if (player) {
-            apEl.textContent = `${this.turns.currentAP} AP remaining`;
-            apEl.style.display = '';
-        } else {
-            apEl.style.display = 'none';
+        // AP chip — only visible during a HUMAN player's turn (no AI for that player)
+        const apChip = document.getElementById('ap-chip');
+        const apLabel = document.getElementById('ap-chip-label');
+        const apValue = document.getElementById('ap-chip-value');
+        if (apChip && apLabel && apValue) {
+            const isHumanTurn = player && this.turns.isPlayerTurn() && !this.aiPlayers[player];
+            if (isHumanTurn) {
+                apChip.style.display = '';
+                apChip.classList.toggle('p2', player === 2);
+                apChip.classList.toggle('depleted', this.turns.currentAP <= 0);
+                apLabel.textContent = `P${player}`;
+                apValue.textContent = this.turns.currentAP;
+            } else {
+                apChip.style.display = 'none';
+            }
         }
 
         // End turn button
@@ -304,20 +411,6 @@ class Game {
             btn.textContent = `End P${player} Turn`;
         } else {
             btn.textContent = 'End Turn';
-        }
-
-        // Fog / highlight indicator
-        const fogEl = document.getElementById('fog-indicator');
-        if (fogEl) {
-            if (this.renderer._fogPlayer > 0) {
-                fogEl.textContent = `P${this.renderer._fogPlayer} placements hidden`;
-                fogEl.style.display = '';
-            } else if (this.renderer._highlightRound >= 0) {
-                fogEl.textContent = `Round ${this.renderer._highlightRound} — new placements highlighted`;
-                fogEl.style.display = '';
-            } else {
-                fogEl.style.display = 'none';
-            }
         }
     }
 
@@ -367,8 +460,6 @@ class Game {
             ? this.aiPlayers[2].model.replace(/:.*$/, '').split('/').pop()
             : 'Player 2';
 
-        const fmt = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
-
         const nameEl1 = document.getElementById('sb-name-p1');
         const nameEl2 = document.getElementById('sb-name-p2');
         const scoreEl1 = document.getElementById('sb-score-p1');
@@ -380,23 +471,34 @@ class Game {
 
         nameEl1.textContent = p1Short;
         nameEl2.textContent = p2Short;
-        scoreEl1.textContent = fmt(s1.finalScore);
-        scoreEl2.textContent = fmt(s2.finalScore);
+
+        // Animated ticker for score changes (rather than snap)
+        this._animateScoreTo(scoreEl1, s1.finalScore, 1);
+        this._animateScoreTo(scoreEl2, s2.finalScore, 2);
+
         roundEl.textContent = `Round ${round} / ${total}`;
 
-        scoreEl1.className = 'sb-score' + (s1.finalScore > s2.finalScore ? ' winning' : '');
-        scoreEl2.className = 'sb-score' + (s2.finalScore > s1.finalScore ? ' winning' : '');
+        scoreEl1.classList.toggle('winning', s1.finalScore > s2.finalScore);
+        scoreEl2.classList.toggle('winning', s2.finalScore > s1.finalScore);
 
         const diff = Math.abs(s1.finalScore - s2.finalScore);
+        const fmtLead = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
         if (diff === 0) {
             leadEl.textContent = 'Tied';
             leadEl.className = 'sb-lead tied';
-        } else if (s1.finalScore > s2.finalScore) {
-            leadEl.textContent = `+${fmt(diff)}`;
-            leadEl.className = 'sb-lead p1';
+            leadEl.style.setProperty('--lead-intensity', '0');
         } else {
-            leadEl.textContent = `+${fmt(diff)}`;
-            leadEl.className = 'sb-lead p2';
+            // Intensity 0..1 based on margin vs leader's score (capped)
+            const leader = Math.max(s1.finalScore, s2.finalScore);
+            const intensity = leader > 0 ? Math.min(1, diff / leader / 0.4) : 0;
+            leadEl.style.setProperty('--lead-intensity', intensity.toFixed(2));
+            if (s1.finalScore > s2.finalScore) {
+                leadEl.textContent = `+${fmtLead(diff)}`;
+                leadEl.className = 'sb-lead p1';
+            } else {
+                leadEl.textContent = `+${fmtLead(diff)}`;
+                leadEl.className = 'sb-lead p2';
+            }
         }
 
         // Record history (one entry per round, overwrite if same round)
@@ -408,6 +510,346 @@ class Game {
             last.p2 = s2.finalScore;
         }
         this._drawScoreChart();
+    }
+
+    _animateScoreTo(el, target, player) {
+        if (!el) return;
+        const fmt = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(Math.round(n));
+        // Parse current displayed value (may be "—" on first render)
+        const parseDisplay = (s) => {
+            if (!s || s === '—') return 0;
+            if (s.endsWith('k')) return parseFloat(s) * 1000;
+            return parseFloat(s) || 0;
+        };
+        const from = el._lastNumeric != null ? el._lastNumeric : parseDisplay(el.textContent);
+        const to = target;
+        if (from === to) {
+            el.textContent = fmt(to);
+            el._lastNumeric = to;
+            return;
+        }
+        // Cancel any in-flight animation
+        if (el._tickerRaf) cancelAnimationFrame(el._tickerRaf);
+
+        const duration = 600;
+        const t0 = performance.now();
+        const easeOut = t => 1 - Math.pow(1 - t, 3);
+
+        const step = (now) => {
+            const t = Math.min(1, (now - t0) / duration);
+            const v = from + (to - from) * easeOut(t);
+            el.textContent = fmt(v);
+            if (t < 1) {
+                el._tickerRaf = requestAnimationFrame(step);
+            } else {
+                el._lastNumeric = to;
+                el._tickerRaf = null;
+            }
+        };
+        el._tickerRaf = requestAnimationFrame(step);
+
+        // Trigger flash + score sound
+        el.classList.remove('score-flash');
+        // Re-trigger animation by forcing reflow
+        void el.offsetWidth;
+        el.classList.add('score-flash');
+        setTimeout(() => el.classList.remove('score-flash'), 520);
+        this._playSound?.('score');
+    }
+
+    _setLiveBadge(visible) {
+        const el = document.getElementById('sb-live');
+        if (el) el.style.display = visible ? '' : 'none';
+    }
+
+    // ── Dramatic callouts (broadcast moments) ────────────────
+
+    _resetMilestones() {
+        this._milestones = {
+            firstPredator: { 1: false, 2: false },
+            firstTrophic:  { 1: false, 2: false },
+            dominance:     { 1: false, 2: false },
+            comeback:      false,
+            extinction:    { 1: {}, 2: {} },
+            finalRound:    false,
+            decisive:      false,
+            // Track last lead-leader to detect comebacks
+            lastLeader:    0,
+            biggestDeficit: { 1: 0, 2: 0 },
+        };
+        this._calloutQueue = [];
+        this._calloutBusy = false;
+    }
+
+    _dispatchCallout({ text, subtitle = '', tone = 'neutral' }) {
+        this._calloutQueue = this._calloutQueue || [];
+        this._calloutQueue.push({ text, subtitle, tone });
+        if (!this._calloutBusy) this._drainCallouts();
+    }
+
+    _drainCallouts() {
+        if (!this._calloutQueue || this._calloutQueue.length === 0) {
+            this._calloutBusy = false;
+            return;
+        }
+        this._calloutBusy = true;
+        const { text, subtitle, tone } = this._calloutQueue.shift();
+
+        const el = document.getElementById('callout');
+        const tEl = document.getElementById('co-text');
+        const sEl = document.getElementById('co-subtitle');
+        if (!el || !tEl) { this._calloutBusy = false; return; }
+
+        tEl.textContent = text;
+        sEl.textContent = subtitle || '';
+        sEl.style.display = subtitle ? '' : 'none';
+
+        el.className = 'co-hidden'; // reset
+        void el.offsetWidth;
+        el.className = `tone-${tone}`;
+        this._playSound('callout');
+
+        // Animation runs ~2.4s; queue next after a short gap
+        clearTimeout(this._coTimer);
+        this._coTimer = setTimeout(() => {
+            el.className = 'co-hidden';
+            setTimeout(() => this._drainCallouts(), 220);
+        }, 2400);
+    }
+
+    _detectMilestones() {
+        if (!this._milestones) this._resetMilestones();
+        const ms = this._milestones;
+        const census = this.simulation.census();
+        const scores = this.simulation.finalScore();
+        const round = this.turns.round;
+        const total = this.turns.totalRounds;
+
+        // FINAL ROUND callout (just once, when round reaches last)
+        if (!ms.finalRound && round === total) {
+            ms.finalRound = true;
+            this._dispatchCallout({ text: 'FINAL ROUND', tone: 'gold' });
+        }
+
+        // Track who's currently leading
+        const leadDiff = scores[1].finalScore - scores[2].finalScore;
+        const currentLeader = leadDiff > 0 ? 1 : (leadDiff < 0 ? 2 : 0);
+
+        // FIRST PREDATOR per player
+        for (const p of [1, 2]) {
+            if (!ms.firstPredator[p] && census[p].predators > 0) {
+                ms.firstPredator[p] = true;
+                this._dispatchCallout({
+                    text: 'FIRST PREDATOR',
+                    subtitle: this._playerTag(p),
+                    tone: `p${p}`,
+                });
+            }
+            if (!ms.firstTrophic[p] && census[p].plants > 0 && census[p].herbivores > 0 && census[p].predators > 0) {
+                ms.firstTrophic[p] = true;
+                this._dispatchCallout({
+                    text: 'TROPHIC CHAIN',
+                    subtitle: `${this._playerTag(p)} · plant → herbivore → predator`,
+                    tone: `p${p}`,
+                });
+            }
+        }
+
+        // DOMINANCE — one player has ≥60% of total biomass
+        const totalBiomass = census[1].biomass + census[2].biomass;
+        if (totalBiomass > 200) {
+            for (const p of [1, 2]) {
+                const share = census[p].biomass / totalBiomass;
+                if (!ms.dominance[p] && share >= 0.6) {
+                    ms.dominance[p] = true;
+                    this._dispatchCallout({
+                        text: 'ECOSYSTEM DOMINANCE',
+                        subtitle: `${this._playerTag(p)} · ${Math.round(share * 100)}% biomass`,
+                        tone: `p${p}`,
+                    });
+                }
+                // Reset dominance flag if they slip back under 50% (so a re-take can fire again)
+                if (ms.dominance[p] && share < 0.5) ms.dominance[p] = false;
+            }
+        }
+
+        // COMEBACK — swing from significant deficit to lead
+        const totalScore = Math.max(1, scores[1].finalScore + scores[2].finalScore);
+        for (const p of [1, 2]) {
+            const myScore = scores[p].finalScore;
+            const enemyScore = scores[p === 1 ? 2 : 1].finalScore;
+            const deficit = enemyScore - myScore;
+            ms.biggestDeficit[p] = Math.max(ms.biggestDeficit[p], deficit);
+            // Comeback fires if you were down by >25% of current total and now lead
+            if (!ms.comeback && ms.biggestDeficit[p] > totalScore * 0.25 && myScore > enemyScore) {
+                ms.comeback = true;
+                this._dispatchCallout({
+                    text: 'COMEBACK',
+                    subtitle: this._playerTag(p),
+                    tone: `p${p}`,
+                });
+            }
+        }
+
+        // EXTINCTION — player had a species, now has none
+        const speciesByPlayer = { 1: {}, 2: {} };
+        this.grid.forEach(cell => {
+            for (const org of cell.organisms) {
+                speciesByPlayer[org.player][org.species] = (speciesByPlayer[org.player][org.species] || 0) + 1;
+            }
+        });
+        for (const p of [1, 2]) {
+            const prev = ms.extinction[p];
+            // Mark species we've seen alive at any point
+            for (const key in speciesByPlayer[p]) {
+                if (!prev[key]) prev[key] = 'alive';
+            }
+            // Detect newly-extinct species
+            for (const key in prev) {
+                if (prev[key] === 'alive' && !speciesByPlayer[p][key]) {
+                    prev[key] = 'extinct';
+                    const flavor = CONFIG.SPECIES[key]?.name || key;
+                    this._dispatchCallout({
+                        text: `EXTINCT: ${flavor.toUpperCase()}`,
+                        subtitle: this._playerTag(p),
+                        tone: 'alert',
+                    });
+                }
+            }
+        }
+
+        // DECISIVE — final 3 rounds, score gap > 30%
+        if (!ms.decisive && round >= total - 2 && totalScore > 1000) {
+            const gap = Math.abs(leadDiff) / totalScore;
+            if (gap > 0.3) {
+                ms.decisive = true;
+                const leader = leadDiff > 0 ? 1 : 2;
+                this._dispatchCallout({
+                    text: 'DECISIVE',
+                    subtitle: this._playerTag(leader),
+                    tone: `p${leader}`,
+                });
+            }
+        }
+
+        ms.lastLeader = currentLeader;
+    }
+
+    _playerTag(p) {
+        const ai = this.aiPlayers[p];
+        if (!ai) return `Player ${p}`;
+        const short = ai.model.replace(/:.*$/, '').split('/').pop();
+        return `P${p} · ${short}`;
+    }
+
+    // ── Round-end recap card ──────────────────────────────────
+
+    _showRecap(prevSnapshot) {
+        const census = this.simulation.census();
+        const lines = [];
+
+        for (const p of [1, 2]) {
+            const before = prevSnapshot[p];
+            const after = census[p];
+            const biomassDelta = Math.round(after.biomass - before.biomass);
+            if (biomassDelta !== 0) {
+                lines.push({
+                    player: p,
+                    tag: this._playerTag(p),
+                    label: 'biomass',
+                    delta: biomassDelta,
+                });
+            }
+            // Species change deltas
+            for (const sp of ['GRASS', 'SHRUB', 'TREE', 'GRAZER', 'BROWSER', 'PREDATOR']) {
+                const dBefore = before.bySpecies?.[sp] || 0;
+                const dAfter = after.bySpecies?.[sp] || 0;
+                const diff = dAfter - dBefore;
+                if (diff !== 0 && Math.abs(diff) >= 2) {
+                    const flavor = CONFIG.SPECIES[sp]?.name || sp;
+                    lines.push({
+                        player: p,
+                        tag: this._playerTag(p),
+                        label: flavor,
+                        delta: diff,
+                    });
+                }
+            }
+        }
+
+        if (lines.length === 0) return; // nothing notable
+
+        const el = document.getElementById('recap-card');
+        const hEl = document.getElementById('rc-header');
+        const bEl = document.getElementById('rc-body');
+        if (!el || !bEl) return;
+
+        hEl.textContent = `Round ${this.turns.round} Recap`;
+
+        // Sort by biggest delta magnitude, cap to 6 lines
+        lines.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+        const top = lines.slice(0, 6);
+        bEl.innerHTML = top.map(l => {
+            const sign = l.delta > 0 ? '+' : '';
+            const dir = l.delta > 0 ? 'up' : 'down';
+            return `<div class="rc-line rc-p${l.player}">
+                <span class="rc-tag">P${l.player}</span>
+                <span style="flex:1;text-align:left;margin-left:6px;">${l.label}</span>
+                <span class="rc-delta ${dir}">${sign}${l.delta}</span>
+            </div>`;
+        }).join('');
+
+        el.className = 'recap-hidden';
+        void el.offsetWidth;
+        el.className = '';
+
+        clearTimeout(this._recapTimer);
+        this._recapTimer = setTimeout(() => el.classList.add('recap-hidden'), 3200);
+    }
+
+    _snapshotCensus() {
+        const census = this.simulation.census();
+        return {
+            1: { biomass: census[1].biomass, bySpecies: { ...census[1].bySpecies } },
+            2: { biomass: census[2].biomass, bySpecies: { ...census[2].bySpecies } },
+        };
+    }
+
+    _showRoundTransition(nextRound) {
+        const overlay = document.getElementById('round-transition');
+        const numEl = document.getElementById('rt-number');
+        const subEl = document.getElementById('rt-subline');
+        if (!overlay || !numEl) return;
+
+        numEl.textContent = nextRound;
+
+        // Subline shows current leader (if any meaningful margin)
+        const scores = this.simulation.finalScore();
+        const diff = scores[1].finalScore - scores[2].finalScore;
+        const total = Math.max(1, Math.max(scores[1].finalScore, scores[2].finalScore));
+        const margin = Math.abs(diff) / total;
+        subEl.className = 'rt-subline';
+        if (margin > 0.08 && diff > 0) {
+            subEl.textContent = 'P1 leading';
+            subEl.classList.add('p1');
+        } else if (margin > 0.08 && diff < 0) {
+            subEl.textContent = 'P2 leading';
+            subEl.classList.add('p2');
+        } else if (scores[1].finalScore > 0 || scores[2].finalScore > 0) {
+            subEl.textContent = 'Neck and neck';
+        } else {
+            subEl.textContent = '';
+        }
+
+        // Restart the animation by toggling class off/on
+        overlay.classList.add('rt-hidden');
+        void overlay.offsetWidth;
+        overlay.classList.remove('rt-hidden');
+        this._playSound('round');
+
+        // Auto-hide after the animation completes
+        clearTimeout(this._rtHideTimer);
+        this._rtHideTimer = setTimeout(() => overlay.classList.add('rt-hidden'), 1500);
     }
 
     _drawScoreChart() {
@@ -492,16 +934,29 @@ class Game {
                 .map(k => `<div class="info-row sub"><span>${CONFIG.SPECIES[k].name}</span><span>${bySpecies[k]}</span></div>`)
                 .join('');
 
+        // Compute per-category max across both players for magnitude bars
+        const maxes = {
+            plants: Math.max(census[1].plants, census[2].plants, 1),
+            herbivores: Math.max(census[1].herbivores, census[2].herbivores, 1),
+            predators: Math.max(census[1].predators, census[2].predators, 1),
+            biomass: Math.max(census[1].biomass, census[2].biomass, 1),
+        };
+
+        const barRow = (label, value, max) => {
+            const pct = Math.round((value / max) * 100);
+            return `<div class="info-row bar-row" style="--bar-pct:${pct}%"><span>${label}</span><span>${value}</span></div>`;
+        };
+
         const playerBlock = (label, c, side) => `
             <div class="census-player ${side}">
                 <div class="census-label">${label}</div>
-                <div class="info-row"><span>Plants</span><span>${c.plants}</span></div>
+                ${barRow('Plants', c.plants, maxes.plants)}
                 ${subRows(c.bySpecies, 'plant')}
-                <div class="info-row"><span>Herbivores</span><span>${c.herbivores}</span></div>
+                ${barRow('Herbivores', c.herbivores, maxes.herbivores)}
                 ${subRows(c.bySpecies, 'herbivore')}
-                <div class="info-row"><span>Predators</span><span>${c.predators}</span></div>
+                ${barRow('Predators', c.predators, maxes.predators)}
                 ${subRows(c.bySpecies, 'predator')}
-                <div class="info-row biomass"><span>Biomass</span><span>${Math.round(c.biomass)}</span></div>
+                <div class="info-row bar-row biomass" style="--bar-pct:${Math.round((c.biomass / maxes.biomass) * 100)}%"><span>Biomass</span><span>${Math.round(c.biomass)}</span></div>
             </div>`;
 
         el.innerHTML = playerBlock(p1Label, census[1], 'p1') + playerBlock(p2Label, census[2], 'p2');
@@ -543,6 +998,7 @@ class Game {
         const overlay = document.getElementById('game-over-overlay');
         overlay.style.display = 'flex';
         overlay.querySelector('.winner').textContent = winnerLabel;
+        this._playSound('victory');
         overlay.querySelector('.final-score').innerHTML =
             breakdown(p1Label, s1, 'final-stmt-p1') + breakdown(p2Label, s2, 'final-stmt-p2');
 
@@ -587,18 +1043,26 @@ class Game {
         this._aiThinking = true;
         this._log(`P${playerNum} AI (${ai.model}) thinking...`);
 
-        // Update overlay label with model name
-        const labelEl = document.querySelector(`#ai-overlay-p${playerNum} .ai-overlay-label`);
-        if (labelEl) {
-            const short = ai.model.replace(/:latest$/, '');
-            labelEl.textContent = short;
-        }
+        // Make sure card identity is set (rank/place stays visible permanently)
+        this._setAICardIdentity(playerNum);
 
-        // Show thinking state in commentary panel
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         const sEl = document.getElementById(`ai-strategy-p${playerNum}`);
-        if (bEl) bEl.textContent = 'Thinking...';
-        if (sEl) sEl.textContent = '';
+        const toggle = document.getElementById(`aic-reason-toggle-p${playerNum}`);
+        // Clear previous banter and mark as thinking — placeholder renders "thinking…"
+        if (bEl) {
+            bEl.textContent = '';
+            bEl.classList.add('thinking');
+            bEl.classList.remove('entering');
+        }
+        if (sEl) {
+            sEl.textContent = '';
+            sEl.classList.add('aic-reason-collapsed');
+        }
+        if (toggle) {
+            toggle.style.display = 'none';
+            toggle.setAttribute('aria-expanded', 'false');
+        }
 
         this._updateTurnUI();
 
@@ -609,10 +1073,22 @@ class Game {
 
         this._aiThinking = false;
 
-        // Update commentary panels — keep previous text if LLM returns nothing
-        if (bEl && result.banter) bEl.textContent = `"${result.banter}"`;
-        else if (bEl) bEl.textContent = '';  // clear "Thinking..."
-        if (sEl && result.reasoning) sEl.textContent = result.reasoning;
+        // Banter container is no longer "thinking" — placeholder/text takes over
+        if (bEl) bEl.classList.remove('thinking');
+        if (bEl && result.banter) {
+            bEl.textContent = result.banter;
+            bEl.classList.remove('entering');
+            void bEl.offsetWidth;
+            bEl.classList.add('entering');
+        } else if (bEl) {
+            bEl.textContent = '';
+        }
+        if (sEl && result.reasoning) {
+            sEl.textContent = result.reasoning;
+            // Reasoning stays collapsed by default but the toggle becomes available
+            if (toggle) toggle.style.display = '';
+        }
+        // Status stays as rank/place — no temporary overwrite
 
         // Log banter to action log too
         if (result.banter) {
@@ -626,13 +1102,23 @@ class Game {
         const okActions = result.actions.filter(a => a.ok);
         const species = {};
         for (const a of okActions) {
-            const match = a.msg.match(/^(?:Auto: )?(\w+) at/);
+            const match = a.msg.match(/^(?:Auto: |Fallback: )?(\w+) at/);
             if (match) species[match[1]] = (species[match[1]] || 0) + 1;
         }
         const summary = Object.entries(species).map(([s, n]) => `${n}× ${s}`).join(', ');
         if (summary) this._log(`P${playerNum} placed: ${summary}`);
 
         this.renderer.render();
+
+        // Burst + sound staggered for each successful placement
+        for (let i = 0; i < okActions.length; i++) {
+            const a = okActions[i];
+            if (!a.cell) continue;
+            setTimeout(() => {
+                this.renderer.placementBurst(a.cell, playerNum);
+                this._playSound('place');
+            }, i * 140);
+        }
         this._updateCensus();
         this._updateTurnUI();
 
@@ -645,11 +1131,13 @@ class Game {
     setAI(playerNum, model) {
         this.aiPlayers[playerNum] = new AIPlayer(this, playerNum, { model });
         this._log(`P${playerNum} is now AI (${model})`);
+        this._setAICardIdentity(playerNum);
     }
 
     removeAI(playerNum) {
         delete this.aiPlayers[playerNum];
         this._log(`P${playerNum} is now Human`);
+        this._setAICardIdentity(playerNum);
     }
 
     async _populateModelPickers() {
@@ -687,18 +1175,33 @@ class Game {
             }
         }
 
-        // Set sensible defaults: prefer cloud models, pick two different ones for Watch
+        // Set sensible defaults: prefer cloud models, pick two truly different ones for Watch
         if (this._installedModels.length === 0) return;
-        const cloud = this._installedModels.filter(m => m.name.includes('cloud'));
-        const first = cloud[0] || this._installedModels[0];
-        const second = cloud[1] || (this._installedModels[1] || first);
+        const installed = this._installedModels;
+        const cloud = installed.filter(m => m.name.includes('cloud'));
+        const first = cloud[0] || installed[0];
+        // Find ANY model with a different name than first; fall back to first only if none exists
+        const second =
+            cloud.find(m => m.name !== first.name)
+            || installed.find(m => m.name !== first.name)
+            || first;
 
         const soloP2 = document.getElementById('match-model-p2-solo');
         const watchP1 = document.getElementById('match-model-p1-watch');
         const watchP2 = document.getElementById('match-model-p2-watch');
-        if (soloP2 && !soloP2.value) soloP2.value = first.name;
-        if (watchP1 && !watchP1.value) watchP1.value = first.name;
-        if (watchP2 && !watchP2.value) watchP2.value = second.name;
+        // Apply defaults only when user hasn't manually chosen (browser auto-selects
+        // the first option on populate, so we can't rely on .value to detect intent)
+        if (soloP2 && !soloP2._userSet) soloP2.value = first.name;
+        if (watchP1 && !watchP1._userSet) watchP1.value = first.name;
+        if (watchP2 && !watchP2._userSet) watchP2.value = second.name;
+    }
+
+    _pickDifferentModel(excludeName) {
+        if (!this._installedModels || this._installedModels.length === 0) return null;
+        const cloud = this._installedModels.filter(m => m.name.includes('cloud') && m.name !== excludeName);
+        if (cloud.length > 0) return cloud[0].name;
+        const other = this._installedModels.find(m => m.name !== excludeName);
+        return other ? other.name : excludeName;
     }
 
     // ── Match section (sidebar mode-switcher) ────────────────
@@ -718,6 +1221,13 @@ class Game {
         document.getElementById('btn-match-expand')?.addEventListener('click', () => {
             this._expandMatchSection();
         });
+
+        // Track user changes to model pickers — distinguishes user choice from
+        // the browser's auto-selected-first-option default
+        for (const id of ['match-model-p2-solo', 'match-model-p1-watch', 'match-model-p2-watch']) {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', () => { el._userSet = true; });
+        }
 
         this._populateModelPickers();
     }
@@ -756,12 +1266,26 @@ class Game {
         } else if (this._matchMode === 'watch') {
             cfg.p1Model = document.getElementById('match-model-p1-watch').value;
             cfg.p2Model = document.getElementById('match-model-p2-watch').value;
+            // Enforce different models — auto-swap P2 if both equal and alternatives exist
+            if (cfg.p1Model && cfg.p1Model === cfg.p2Model) {
+                const alt = this._pickDifferentModel(cfg.p1Model);
+                if (alt && alt !== cfg.p1Model) {
+                    cfg.p2Model = alt;
+                    const watchP2 = document.getElementById('match-model-p2-watch');
+                    if (watchP2) watchP2.value = alt;
+                }
+            }
         }
         this._startMatch(cfg);
     }
 
-    _startMatch(config) {
+    async _startMatch(config) {
         this._lastMatchConfig = config;
+
+        // Trading-card VS screen before play begins (Solo + Watch only)
+        if (config.mode === 'solo' || config.mode === 'watch') {
+            try { await this._showPrematch(config); } catch (_) { /* ignore */ }
+        }
 
         // Reset world: fresh seed, terrain, simulation, turn manager
         this.seed = Math.floor(Math.random() * 100000);
@@ -793,20 +1317,16 @@ class Game {
             }
         }
 
-        // Clear overlays
-        ['p1', 'p2'].forEach(p => {
-            const b = document.getElementById(`ai-banter-${p}`);
-            const s = document.getElementById(`ai-strategy-${p}`);
-            const lbl = document.querySelector(`#ai-overlay-${p} .ai-overlay-label`);
-            if (b) b.textContent = '';
-            if (s) s.textContent = '';
-            if (lbl) lbl.textContent = p.toUpperCase();
-        });
+        // Clear AI cards (banter, reasoning, identity)
+        this._resetAICard(1);
+        this._resetAICard(2);
         const log = document.getElementById('action-log');
         if (log) log.innerHTML = '';
 
         this._collapseMatchSection();
         this._updateCensus();
+        this._resetMilestones();
+        this._playSound('match-start');
         this.turns.startGame();
 
         console.log(`Match started: mode=${config.mode}, p1=${config.p1Model || 'human'}, p2=${config.p2Model || 'human'}`);
@@ -855,6 +1375,139 @@ class Game {
             filtered.unshift(model);
             localStorage.setItem(key, JSON.stringify(filtered.slice(0, 4)));
         } catch (_) { /* localStorage unavailable */ }
+    }
+
+    // ── Player Cards (trading-card identity) ─────────────────
+
+    _modelInitials(model) {
+        if (!model) return 'AI';
+        const clean = model.replace(/:.*$/, '').split('/').pop().replace(/[^a-z0-9]/gi, '');
+        if (/^\d/.test(clean)) return clean.slice(0, 2).toUpperCase();
+        // Take first letter of name + first letter after first digit OR first 2 letters
+        const m = clean.match(/^([a-z]+)/i);
+        if (m && m[1].length >= 2) return m[1].slice(0, 2).toUpperCase();
+        return clean.slice(0, 2).toUpperCase();
+    }
+
+    _prettyModelName(model) {
+        if (!model) return 'Human';
+        // qwen2.5:14b → Qwen 2.5 14B, deepseek-v3.1:671b-cloud → Deepseek V3.1 (cloud)
+        const [base, tag] = model.split(':');
+        const niceBase = base.split(/[-_]/).map(p => {
+            // Keep version numbers as-is, capitalize letters
+            if (/\d/.test(p)) return p.charAt(0).toUpperCase() + p.slice(1);
+            return p.charAt(0).toUpperCase() + p.slice(1);
+        }).join(' ');
+        if (!tag) return niceBase;
+        const niceTag = tag.replace('-cloud', '').toUpperCase();
+        const cloudTag = tag.includes('cloud') ? ' · Cloud' : '';
+        return `${niceBase} ${niceTag}${cloudTag}`.replace(/\s+/g, ' ').trim();
+    }
+
+    async _fetchRanking(model) {
+        try {
+            // Rankings come back as { fullName: { elo, wins, losses } } in leaderboard order.
+            // Refetch each call so the displayed ELO reflects recent match results.
+            const rankings = await fetchRankings();
+            if (!rankings || !model) return null;
+
+            const norm = (m) => m
+                ? m.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '')
+                : '';
+            const target = norm(model);
+
+            let rank = 0;
+            for (const [name, stats] of Object.entries(rankings)) {
+                rank++;
+                if (norm(name) === target) {
+                    return { model: name, elo: stats.elo, wins: stats.wins, losses: stats.losses, rank };
+                }
+            }
+            return null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async _renderPlayerCard(target, opts) {
+        const el = typeof target === 'string' ? document.getElementById(target) : target;
+        if (!el) return;
+        const { model, player, isHuman = false, compact = false } = opts;
+        el.classList.toggle('compact', compact);
+
+        let initials, displayName, role, meta;
+        if (isHuman) {
+            initials = 'YOU';
+            displayName = 'Player';
+            role = `Player ${player}`;
+            meta = 'Human';
+        } else {
+            initials = this._modelInitials(model);
+            displayName = this._prettyModelName(model);
+            role = `Player ${player}`;
+            meta = model.includes('cloud') ? 'Cloud Model' : 'Local Model';
+        }
+
+        // Initial render without ELO data, then update once fetched
+        el.innerHTML = `
+            <div class="pc-role">${role}</div>
+            <div class="pc-avatar">${initials}</div>
+            <div class="pc-name">${displayName}</div>
+            ${isHuman ? '' : `
+                <div class="pc-stats">
+                    <div class="pc-stat elo"><span class="pc-stat-value" data-elo>—</span><span class="pc-stat-label">ELO</span></div>
+                    <div class="pc-stat wins"><span class="pc-stat-value" data-wins>—</span><span class="pc-stat-label">Wins</span></div>
+                    <div class="pc-stat losses"><span class="pc-stat-value" data-losses>—</span><span class="pc-stat-label">Loss</span></div>
+                </div>
+            `}
+            <div class="pc-meta">${meta}</div>
+        `;
+
+        if (!isHuman && model) {
+            const r = await this._fetchRanking(model);
+            if (r) {
+                const eloEl = el.querySelector('[data-elo]');
+                const winsEl = el.querySelector('[data-wins]');
+                const lossEl = el.querySelector('[data-losses]');
+                if (eloEl) eloEl.textContent = Math.round(r.elo);
+                if (winsEl) winsEl.textContent = r.wins;
+                if (lossEl) lossEl.textContent = r.losses;
+            }
+        }
+    }
+
+    async _showPrematch(config) {
+        const overlay = document.getElementById('tournament-overlay');
+        const screen = document.getElementById('match-prematch');
+        if (!overlay || !screen) return;
+
+        // Hide other screens, show prematch
+        overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+        screen.classList.remove('t-hidden');
+        overlay.classList.remove('t-hidden');
+
+        // Render cards
+        const p1Opts = config.mode === 'solo'
+            ? { player: 1, isHuman: true }
+            : { player: 1, model: config.p1Model };
+        const p2Opts = { player: 2, model: config.p2Model };
+        await Promise.all([
+            this._renderPlayerCard('prematch-p1-card', p1Opts),
+            this._renderPlayerCard('prematch-p2-card', p2Opts),
+        ]);
+
+        // Auto-dismiss + skip-on-click
+        return new Promise(resolve => {
+            const close = () => {
+                overlay.removeEventListener('click', close);
+                clearTimeout(timer);
+                screen.classList.add('t-hidden');
+                overlay.classList.add('t-hidden');
+                resolve();
+            };
+            const timer = setTimeout(close, 2800);
+            overlay.addEventListener('click', close);
+        });
     }
 
     // ── Launcher overlay (first load) ────────────────────────
@@ -1033,15 +1686,9 @@ class Game {
         this._scoreHistory = [];
         this.simulating = false;
 
-        // Clear overlays
-        ['p1','p2'].forEach(p => {
-            const b = document.getElementById(`ai-banter-${p}`);
-            const s = document.getElementById(`ai-strategy-${p}`);
-            const lbl = document.querySelector(`#ai-overlay-${p} .ai-overlay-label`);
-            if (b) b.textContent = '';
-            if (s) s.textContent = '';
-            if (lbl) lbl.textContent = p.toUpperCase();
-        });
+        // Clear AI cards
+        this._resetAICard(1);
+        this._resetAICard(2);
         const log = document.getElementById('action-log');
         if (log) log.innerHTML = '';
 
