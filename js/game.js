@@ -1211,40 +1211,46 @@ class Game {
         const overlay = document.getElementById('round-transition');
         const numEl = document.getElementById('rt-number');
         const subEl = document.getElementById('rt-subline');
+        const labelEl = overlay?.querySelector('.rt-label');
         if (!overlay || !numEl) return Promise.resolve();
 
         numEl.textContent = isFinalRound ? 'FINAL' : nextRound;
+        if (labelEl) labelEl.textContent = isFinalRound ? 'CHAMPIONSHIP' : 'ROUND';
 
         // Subline shows current leader (if any meaningful margin)
         const scores = this.simulation.finalScore();
         const diff = scores[1].finalScore - scores[2].finalScore;
         const total = Math.max(1, Math.max(scores[1].finalScore, scores[2].finalScore));
         const margin = Math.abs(diff) / total;
+        const prefix = isFinalRound ? 'Last round · ' : '';
         subEl.className = 'rt-subline';
         if (margin > 0.08 && diff > 0) {
-            subEl.textContent = 'P1 leading';
+            subEl.textContent = `${prefix}${isFinalRound ? 'P1 leads' : 'P1 leading'}`;
             subEl.classList.add('p1');
         } else if (margin > 0.08 && diff < 0) {
-            subEl.textContent = 'P2 leading';
+            subEl.textContent = `${prefix}${isFinalRound ? 'P2 leads' : 'P2 leading'}`;
             subEl.classList.add('p2');
         } else if (scores[1].finalScore > 0 || scores[2].finalScore > 0) {
-            subEl.textContent = 'Neck and neck';
+            subEl.textContent = `${prefix}Neck and neck`;
         } else {
-            subEl.textContent = '';
+            subEl.textContent = isFinalRound ? 'Last round' : '';
         }
 
-        // Restart the animation by toggling class off/on
+        // Restart the animation by toggling class off/on (and apply/remove rt-final modifier)
+        overlay.classList.toggle('rt-final', isFinalRound);
         overlay.classList.add('rt-hidden');
         void overlay.offsetWidth;
         overlay.classList.remove('rt-hidden');
         this._playSound('round');
 
+        // Final round holds longer so the moment lands — 2.5s instead of 1.5s
+        const holdMs = isFinalRound ? 2500 : 1500;
         return new Promise(resolve => {
             clearTimeout(this._rtHideTimer);
             this._rtHideTimer = setTimeout(() => {
                 overlay.classList.add('rt-hidden');
                 resolve();
-            }, 1500);
+            }, holdMs);
         });
     }
 

@@ -2453,8 +2453,10 @@ body {
 #tournament-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(4, 4, 16, 0.94);
-    backdrop-filter: blur(8px);
+    /* Backdrop lightened so the live canvas stays visible behind tournament screens — the moment of a match
+       feels like a culmination over the game world, not a teleport into a separate modal. */
+    background: rgba(4, 4, 16, 0.45);
+    backdrop-filter: blur(2px);
     z-index: 1000;
     display: flex;
     align-items: center;
@@ -3108,6 +3110,32 @@ body {
     28%  { transform: scale(1.0); }
     72%  { opacity: 1; transform: scale(1.0); }
     100% { opacity: 0; transform: scale(1.08); }
+}
+
+/* Final-round transition card — distinct from per-round cards so the moment lands.
+   rt-anim stretched to 2500ms so the hold reads longer; shimmer pulses the glow during it. */
+#round-transition.rt-final > * {
+    animation-duration: 2500ms;
+}
+#round-transition.rt-final .rt-label {
+    color: hsl(45, 90%, 72%);
+    text-shadow: 0 0 18px rgba(255, 200, 60, 0.55);
+    letter-spacing: 0.55em;
+}
+#round-transition.rt-final .rt-number {
+    font-size: 132px;
+    filter: drop-shadow(0 0 28px rgba(255, 200, 60, 0.55)) drop-shadow(0 4px 32px rgba(200, 168, 60, 0.45));
+    /* rt-anim drives opacity+scale across the full 2500ms; shimmer only touches filter so they don't fight */
+    animation: rt-anim 2500ms ease forwards, rt-final-shimmer 1.4s ease-in-out 700ms infinite alternate;
+}
+#round-transition.rt-final .rt-subline {
+    color: hsl(45, 60%, 78%);
+    letter-spacing: 0.14em;
+}
+
+@keyframes rt-final-shimmer {
+    0%   { filter: drop-shadow(0 0 28px rgba(255, 200, 60, 0.55)) drop-shadow(0 4px 32px rgba(200, 168, 60, 0.45)); }
+    100% { filter: drop-shadow(0 0 48px rgba(255, 220, 110, 0.95)) drop-shadow(0 4px 36px rgba(255, 190, 80, 0.70)); }
 }
 
 /* Expanded bracket overlay — semi-transparent, sits inside the canvas */
