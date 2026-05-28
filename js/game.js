@@ -40,16 +40,258 @@ class Game {
         this._initMatchSection();
         this._initLauncher();
         this._initMuteToggle();
+        this._initGearMenu();
+        this._initActivityTicker();
+        this._initEcoBiomeTabs();
         this._initAICards();
         this._updateWorldInfo();
         this._scoreHistory = [];
         this._updateCensus();
+        this._renderWorldSnapshot();
         this._updateTurnUI();
 
         // Show launcher overlay on first load — game does NOT auto-start
         this._openLauncherWelcome();
 
         console.log(`Biome initialized — seed: ${this.seed}`);
+    }
+
+    // ── Activity Ticker (bottom-edge log feed) ──────────────
+
+    _initActivityTicker() {
+        this._tickerHistory = [];      // {ts, msg, cls}
+        this._tickerVisible = false;
+        this._tickerQueue = [];
+        this._tickerActive = false;
+
+        const ticker = document.getElementById('activity-ticker');
+        if (ticker) {
+            ticker.addEventListener('click', () => this._openActivityLog());
+        }
+        const closeBtn = document.getElementById('btn-alm-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => this._closeActivityLog());
+        const backdrop = document.querySelector('#activity-log-modal .alm-backdrop');
+        if (backdrop) backdrop.addEventListener('click', () => this._closeActivityLog());
+    }
+
+    _pushTickerEntry({ msg, cls }) {
+        const ticker = document.getElementById('activity-ticker');
+        if (!ticker) return;
+        ticker.classList.remove('at-hidden');
+
+        const rail = document.getElementById('at-rail');
+        if (!rail) return;
+
+        // Insert at the right side; older entries fade out
+        const entry = document.createElement('span');
+        entry.className = `at-entry ${cls || 'system'}`;
+        entry.innerHTML = `<span class="at-text">${msg}</span>`;
+        rail.appendChild(entry);
+
+        // Trim — keep only the latest 3 visible
+        while (rail.children.length > 3) {
+            rail.removeChild(rail.firstChild);
+        }
+
+        // Auto-fade after a hold
+        setTimeout(() => {
+            entry.classList.add('fading');
+            setTimeout(() => {
+                if (entry.parentNode) entry.parentNode.removeChild(entry);
+                if (rail.children.length === 0) ticker.classList.add('at-hidden');
+            }, 450);
+        }, 4000);
+    }
+
+    _openActivityLog() {
+        const modal = document.getElementById('activity-log-modal');
+        const body = document.getElementById('alm-body');
+        if (!modal || !body) return;
+        body.innerHTML = '';
+        // Render reverse-chronological (newest at top): flex column-reverse gives this
+        for (const e of this._tickerHistory) {
+            const div = document.createElement('div');
+            div.className = `alm-entry ${e.cls || 'system'}`;
+            const t = new Date(e.ts);
+            const time = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+            div.innerHTML = `<span class="alm-time">${time}</span>${e.msg}`;
+            body.appendChild(div);
+        }
+        modal.classList.remove('alm-hidden');
+    }
+
+    _closeActivityLog() {
+        document.getElementById('activity-log-modal')?.classList.add('alm-hidden');
+    }
+
+    // ── Cell tooltip (follows cursor on canvas hover) ───────
+
+    _showCellTooltip(cell, mouseX, mouseY) {
+        const tip = document.getElementById('cell-tooltip');
+        if (!tip) return;
+        const terrainEl = document.getElementById('ct-terrain');
+        const orgsEl = document.getElementById('ct-organisms');
+        const posEl = document.getElementById('ct-position');
+
+        const TERRAIN_LABEL = {
+            WATER:     { name: 'Water',     icon: '🌊', cls: 'water' },
+            FERTILE:   { name: 'Fertile',   icon: '🌱', cls: 'fertile' },
+            GRASSLAND: { name: 'Grassland', icon: '🌾', cls: 'grassland' },
+            ROCKY:     { name: 'Rocky',     icon: '⛰', cls: 'rocky' },
+        };
+        const meta = TERRAIN_LABEL[cell.terrain] || { name: cell.terrain, icon: '◇', cls: '' };
+        if (terrainEl) {
+            terrainEl.className = `ct-terrain ${meta.cls}`;
+            terrainEl.innerHTML = `<span class="ct-t-icon">${meta.icon}</span><span>${meta.name}</span>`;
+        }
+
+        const visible = cell.organisms.filter(o => !this.renderer.isHidden(o));
+        if (orgsEl) {
+            orgsEl.innerHTML = visible.map(o => {
+                const t = CONFIG.SPECIES[o.species];
+                return `<div class="ct-org-row">
+                    <span class="ct-org-dot p${o.player}"></span>
+                    <span class="ct-org-name">${t?.name || o.species}</span>
+                    <span class="ct-org-energy">${Math.round(o.energy)}E</span>
+                </div>`;
+            }).join('');
+        }
+
+        if (posEl) posEl.textContent = `(${cell.col}, ${cell.row})`;
+
+        // Position near cursor, flip near edges
+        tip.classList.remove('ct-hidden');
+        const tw = tip.offsetWidth || 180;
+        const th = tip.offsetHeight || 70;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let x = mouseX + 14;
+        let y = mouseY + 14;
+        if (x + tw > vw - 8) x = mouseX - tw - 14;
+        if (y + th > vh - 8) y = mouseY - th - 14;
+        tip.style.left = `${x}px`;
+        tip.style.top = `${y}px`;
+    }
+
+    _hideCellTooltip() {
+        document.getElementById('cell-tooltip')?.classList.add('ct-hidden');
+    }
+
+    // ── Gear Menu (top-right floating, replaces sidebar buttons) ─
+
+    _initGearMenu() {
+        const btn = document.getElementById('btn-gear');
+        const dropdown = document.getElementById('gear-dropdown');
+        if (!btn || !dropdown) return;
+
+        const setOpen = (open) => {
+            btn.setAttribute('aria-expanded', String(open));
+            dropdown.classList.toggle('gm-hidden', !open);
+        };
+        setOpen(false);
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = dropdown.classList.contains('gm-hidden');
+            setOpen(open);
+        });
+
+        // Close on outside click
+        document.addEventListener('click', (e) => {
+            if (dropdown.classList.contains('gm-hidden')) return;
+            if (e.target.closest('#gear-menu')) return;
+            setOpen(false);
+        });
+
+        // Dropdown item actions
+        for (const item of dropdown.querySelectorAll('.gm-item')) {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                setOpen(false);
+                const action = item.dataset.gm;
+                if (action === 'new-match') {
+                    this._openLauncherWelcome();
+                } else if (action === 'manage-models') {
+                    this._openModelConfigModal();
+                } else if (action === 'rankings') {
+                    const rkBtn = document.getElementById('btn-rankings');
+                    if (rkBtn) rkBtn.click();
+                } else if (action === 'tournament-stats') {
+                    this.tournament._toggleStats(true);
+                }
+            });
+        }
+    }
+
+    /** Kept for compatibility with prior call sites. Bracket now lives in the
+     *  panel tab so the right stack no longer needs to hide during tournaments. */
+    _refreshRightStackVisibility() {
+        const sc = document.getElementById('score-chart-overlay');
+        const bt = document.getElementById('biomass-tower');
+        if (sc) sc.classList.remove('sc-hidden');
+        if (bt) bt.style.display = '';
+    }
+
+    _initEcoBiomeTabs() {
+        const tabs = document.querySelectorAll('#biomass-tower .bt-tab');
+        for (const tab of tabs) {
+            tab.addEventListener('click', () => this._activateBtTab(tab.dataset.btTab));
+        }
+
+        // Bracket "expand" button (mirrors the old floating expand action)
+        const expandBtn = document.getElementById('bt-bracket-expand');
+        if (expandBtn) {
+            expandBtn.addEventListener('click', () => {
+                this.tournament?._showExpandedBracket?.();
+            });
+        }
+    }
+
+    _activateBtTab(target) {
+        if (!target) return;
+        const tabs = document.querySelectorAll('#biomass-tower .bt-tab');
+        for (const t of tabs) {
+            const isActive = t.dataset.btTab === target;
+            t.classList.toggle('active', isActive);
+            t.setAttribute('aria-selected', String(isActive));
+        }
+        for (const view of document.querySelectorAll('#biomass-tower .bt-view')) {
+            view.classList.toggle('bt-view-hidden', view.dataset.btView !== target);
+        }
+    }
+
+    /** Called by TournamentManager when tournament starts/ends or progresses.
+     *  Toggles bracket tab availability + auto-switches when starting. */
+    setBracketAvailable({ available, live = false, autoSwitch = false, title }) {
+        const panel = document.getElementById('biomass-tower');
+        if (!panel) return;
+        panel.classList.toggle('bt-has-bracket', !!available);
+        panel.classList.toggle('bt-tournament-live', !!live);
+
+        if (title) {
+            const t = document.getElementById('bt-bracket-title');
+            if (t) t.textContent = title;
+        }
+
+        if (available && autoSwitch) {
+            this._activateBtTab('bracket');
+        } else if (!available) {
+            // Tournament ended — if currently on bracket tab, fall back to ECO
+            const bracketTab = document.querySelector('#biomass-tower .bt-tab[data-bt-tab="bracket"]');
+            if (bracketTab?.classList.contains('active')) this._activateBtTab('eco');
+        }
+    }
+
+    _openModelConfigModal() {
+        const modal = document.getElementById('model-config-modal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        this._refreshModelConfig();
+    }
+
+    _closeModelConfigModal() {
+        const modal = document.getElementById('model-config-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     _playSound(key) {
@@ -154,43 +396,145 @@ class Game {
 
     _buildSpeciesPalette() {
         const palette = document.getElementById('species-palette');
-        palette.innerHTML = '';
+        if (palette) palette.innerHTML = '';
+
+        const dockTiles = document.getElementById('sd-tiles');
+        if (dockTiles) dockTiles.innerHTML = '';
 
         const species = getAllSpecies();
-        for (const sp of species) {
-            const card = document.createElement('div');
-            card.className = 'species-card';
-            card.dataset.species = sp.key;
-            const subLabel = sp.role.toLowerCase() === sp.type ? sp.type : `${sp.role} · ${sp.type}`;
-            card.innerHTML = `
-                <div class="name">${sp.name}</div>
-                <div class="type">${subLabel}</div>
-                <div class="cost">${sp.apCost} AP</div>
-            `;
-            card.title = `${sp.name} (${sp.role}) — ${sp.type}`;
-            card.addEventListener('click', () => this._selectSpecies(sp.key, card));
-            palette.appendChild(card);
-        }
+        species.forEach((sp, i) => {
+            const hotkey = i + 1; // 1..N keyboard shortcut
+
+            // Legacy palette card (still rendered for any compat needs; hidden)
+            if (palette) {
+                const card = document.createElement('div');
+                card.className = 'species-card';
+                card.dataset.species = sp.key;
+                const subLabel = sp.role.toLowerCase() === sp.type ? sp.type : `${sp.role} · ${sp.type}`;
+                card.innerHTML = `
+                    <div class="name">${sp.name}</div>
+                    <div class="type">${subLabel}</div>
+                    <div class="cost">${sp.apCost} AP</div>
+                `;
+                card.addEventListener('click', () => this._selectSpecies(sp.key));
+                palette.appendChild(card);
+            }
+
+            // New canvas-integrated hex dock tile
+            if (dockTiles) {
+                const tile = document.createElement('button');
+                tile.type = 'button';
+                tile.className = 'species-tile';
+                tile.dataset.species = sp.key;
+                tile.dataset.hotkey = String(hotkey);
+                const glyph = this._speciesGlyph(sp.key);
+                tile.innerHTML = `
+                    <span class="st-hotkey">${hotkey <= 9 ? hotkey : ''}</span>
+                    <span class="st-cost">${sp.apCost}</span>
+                    <span class="st-glyph">${glyph}</span>
+                    <span class="st-name">${sp.name}</span>
+                    <div class="st-popover">
+                        <div class="st-pop-name">${sp.name}</div>
+                        <div class="st-pop-role type-${sp.type}">${sp.role} · ${sp.type}</div>
+                        <dl class="st-pop-stats">
+                            <dt>AP</dt><dd>${sp.apCost}</dd>
+                            <dt>Energy</dt><dd>${sp.energy} / ${sp.maxEnergy}</dd>
+                            ${sp.diet ? `<dt>Diet</dt><dd>${sp.diet.join(', ')}</dd>` : ''}
+                        </dl>
+                    </div>
+                `;
+                tile.addEventListener('click', () => this._selectSpecies(sp.key));
+                dockTiles.appendChild(tile);
+            }
+        });
+
+        this._refreshSpeciesDockState();
     }
 
-    _selectSpecies(key, card) {
-        document.querySelectorAll('.species-card.selected').forEach(c => c.classList.remove('selected'));
+    _speciesGlyph(key) {
+        // Local glyph map (config doesn't carry one). Easy to swap to SVG later.
+        const GLYPHS = {
+            GRASS: '🌿',
+            SHRUB: '🌵',
+            TREE: '🌲',
+            GRAZER: '🐇',
+            BROWSER: '🦌',
+            PREDATOR: '🐺',
+        };
+        return GLYPHS[key] || '◆';
+    }
 
+    _selectSpecies(key) {
         if (this.selectedSpecies === key) {
             this.selectedSpecies = null;
         } else {
             this.selectedSpecies = key;
-            card.classList.add('selected');
         }
+        // Sync visual selection across both legacy palette + dock
+        document.querySelectorAll('.species-card.selected').forEach(c => c.classList.remove('selected'));
+        document.querySelectorAll('.species-tile.selected').forEach(c => c.classList.remove('selected'));
+        if (this.selectedSpecies) {
+            const sel = `[data-species="${this.selectedSpecies}"]`;
+            document.querySelectorAll(`.species-card${sel}`).forEach(c => c.classList.add('selected'));
+            document.querySelectorAll(`.species-tile${sel}`).forEach(c => c.classList.add('selected'));
+        }
+    }
+
+    /**
+     * Show/hide species dock + update tile affordances based on current turn.
+     */
+    _refreshSpeciesDockState() {
+        const dock = document.getElementById('species-dock');
+        if (!dock) return;
+        const player = this.turns && this.turns.currentPlayer;
+        const isHuman = !!player && this.turns.isPlayerTurn() && !this.aiPlayers[player];
+        dock.classList.toggle('sd-hidden', !isHuman);
+
+        const remainingAP = this.turns && this.turns.currentAP != null
+            ? this.turns.currentAP
+            : Infinity;
+        for (const tile of document.querySelectorAll('.species-tile')) {
+            const key = tile.dataset.species;
+            const sp = CONFIG.SPECIES[key];
+            const cant = sp && sp.apCost > remainingAP;
+            tile.classList.toggle('disabled', !!cant);
+        }
+
+        const endBtn = document.getElementById('sd-end-turn');
+        if (endBtn) endBtn.disabled = !isHuman;
     }
 
     _bindEvents() {
         this.canvas.addEventListener('mousemove', (e) => this._onHover(e));
+        this.canvas.addEventListener('mouseleave', () => this._hideCellTooltip());
         this.canvas.addEventListener('click', (e) => this._onClick(e));
 
-        document.getElementById('btn-end-turn').addEventListener('click', () => {
-            if (this.turns.isPlayerTurn()) {
-                this.turns.endTurn();
+        const endTurn = () => {
+            if (this.turns.isPlayerTurn()) this.turns.endTurn();
+        };
+
+        document.getElementById('btn-end-turn')?.addEventListener('click', endTurn);
+        document.getElementById('sd-end-turn')?.addEventListener('click', endTurn);
+
+        // Keyboard hotkeys: 1-9 select species tiles; Space ends turn.
+        document.addEventListener('keydown', (e) => {
+            // Don't hijack typing in inputs / textareas / select boxes
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+            if (e.key >= '1' && e.key <= '9') {
+                const tiles = document.querySelectorAll('#sd-tiles .species-tile');
+                const idx = parseInt(e.key, 10) - 1;
+                const tile = tiles[idx];
+                if (tile && !tile.classList.contains('disabled')) {
+                    tile.click();
+                    e.preventDefault();
+                }
+            } else if (e.key === ' ' || e.code === 'Space') {
+                if (this.turns.isPlayerTurn()) {
+                    endTurn();
+                    e.preventDefault();
+                }
             }
         });
     }
@@ -289,6 +633,9 @@ class Game {
             const color = canPlace ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)';
             this.renderer.highlightCell(cell, color);
             this._updateCellInfo(cell);
+            this._showCellTooltip(cell, e.clientX, e.clientY);
+        } else {
+            this._hideCellTooltip();
         }
     }
 
@@ -362,26 +709,42 @@ class Game {
     }
 
     _log(msg, opts = {}) {
+        // Legacy action-log (kept for any code that reads from it)
         const log = document.getElementById('action-log');
-        const entry = document.createElement('div');
-        // Heuristic player tagging when caller didn't specify
-        let cls = 'entry';
-        if (opts.player === 1 || /^P1 /.test(msg)) cls += ' p1';
-        else if (opts.player === 2 || /^P2 /.test(msg)) cls += ' p2';
-        else cls += ' system';
-        entry.className = cls;
-        entry.textContent = msg;
-        log.insertBefore(entry, log.firstChild);
-        while (log.children.length > 60) log.removeChild(log.lastChild);
+        let cls;
+        if (opts.player === 1 || /^P1 /.test(msg)) cls = 'p1';
+        else if (opts.player === 2 || /^P2 /.test(msg)) cls = 'p2';
+        else cls = 'system';
+
+        if (log) {
+            const entry = document.createElement('div');
+            entry.className = `entry ${cls}`;
+            entry.textContent = msg;
+            log.insertBefore(entry, log.firstChild);
+            while (log.children.length > 60) log.removeChild(log.lastChild);
+        }
+
+        // New canvas-integrated ticker + persistent history
+        this._tickerHistory = this._tickerHistory || [];
+        this._tickerHistory.unshift({ ts: Date.now(), msg, cls });
+        if (this._tickerHistory.length > 200) this._tickerHistory.length = 200;
+        this._pushTickerEntry({ msg, cls });
     }
 
     _logStyled(msg, className) {
         const log = document.getElementById('action-log');
-        const entry = document.createElement('div');
-        entry.className = `entry ${className}`;
-        entry.textContent = msg;
-        log.insertBefore(entry, log.firstChild);
-        while (log.children.length > 60) log.removeChild(log.lastChild);
+        if (log) {
+            const entry = document.createElement('div');
+            entry.className = `entry ${className}`;
+            entry.textContent = msg;
+            log.insertBefore(entry, log.firstChild);
+            while (log.children.length > 60) log.removeChild(log.lastChild);
+        }
+        this._tickerHistory = this._tickerHistory || [];
+        const cls = className.split(' ').find(c => c === 'p1' || c === 'p2') || 'system';
+        this._tickerHistory.unshift({ ts: Date.now(), msg, cls });
+        if (this._tickerHistory.length > 200) this._tickerHistory.length = 200;
+        this._pushTickerEntry({ msg, cls });
     }
 
     _updateTurnUI() {
@@ -404,14 +767,15 @@ class Game {
             }
         }
 
-        // End turn button
+        // End turn button (legacy, in hidden container)
         const btn = document.getElementById('btn-end-turn');
-        btn.disabled = !this.turns.isPlayerTurn();
-        if (player) {
-            btn.textContent = `End P${player} Turn`;
-        } else {
-            btn.textContent = 'End Turn';
+        if (btn) {
+            btn.disabled = !this.turns.isPlayerTurn();
+            btn.textContent = player ? `End P${player} Turn` : 'End Turn';
         }
+
+        // Species dock visibility + tile affordance update
+        this._refreshSpeciesDockState();
     }
 
     _updateWorldInfo() {
@@ -797,7 +1161,7 @@ class Game {
                 <span style="flex:1;text-align:left;margin-left:6px;">${l.label}</span>
                 <span class="rc-delta ${dir}">${sign}${l.delta}</span>
             </div>`;
-        }).join('');
+        }).join('') + this._renderTrophicChain(census);
 
         el.className = 'recap-hidden';
         void el.offsetWidth;
@@ -960,6 +1324,172 @@ class Game {
             </div>`;
 
         el.innerHTML = playerBlock(p1Label, census[1], 'p1') + playerBlock(p2Label, census[2], 'p2');
+
+        this._renderBiomassTower(census);
+    }
+
+    _renderBiomassTower(census) {
+        const tiers = [
+            { key: 'pred',  field: 'predators' },
+            { key: 'herb',  field: 'herbivores' },
+            { key: 'plant', field: 'plants' },
+        ];
+        for (const t of tiers) {
+            const v1 = census[1][t.field] || 0;
+            const v2 = census[2][t.field] || 0;
+            const max = Math.max(v1, v2, 1);
+            const fill1 = document.getElementById(`bt-fill-${t.key}-p1`);
+            const fill2 = document.getElementById(`bt-fill-${t.key}-p2`);
+            const c1 = document.getElementById(`bt-count-${t.key}-p1`);
+            const c2 = document.getElementById(`bt-count-${t.key}-p2`);
+            if (fill1) fill1.style.width = `${Math.round((v1 / max) * 100)}%`;
+            if (fill2) fill2.style.width = `${Math.round((v2 / max) * 100)}%`;
+            if (c1) c1.textContent = String(v1);
+            if (c2) c2.textContent = String(v2);
+        }
+
+        for (const p of [1, 2]) {
+            const c = census[p];
+            const state = this._ecosystemHealth(c);
+            const badge = document.getElementById(`bt-health-p${p}`);
+            if (!badge) continue;
+            badge.dataset.state = state.state;
+            const icon = badge.querySelector('.bt-h-icon');
+            if (icon) icon.textContent = state.icon;
+        }
+    }
+
+    _renderWorldSnapshot() {
+        const segContainer = document.getElementById('ws-segments');
+        const legend = document.getElementById('ws-legend');
+        const centerName = document.getElementById('ws-c-name');
+        const centerPct = document.getElementById('ws-c-pct');
+        if (!segContainer || !legend) return;
+
+        // Count terrain types on the current board
+        const counts = { WATER: 0, FERTILE: 0, GRASSLAND: 0, ROCKY: 0 };
+        let total = 0;
+        this.grid.forEach(cell => {
+            if (counts[cell.terrain] != null) {
+                counts[cell.terrain]++;
+                total++;
+            }
+        });
+        if (total === 0) return;
+
+        // Terrain metadata (HSL pulled from CONFIG.COLORS so it matches the canvas)
+        const TERRAIN_META = {
+            FERTILE:   { label: 'Fertile',   color: 'hsl(130, 50%, 45%)' },
+            GRASSLAND: { label: 'Grassland', color: 'hsl(80, 45%, 50%)' },
+            ROCKY:     { label: 'Rocky',     color: 'hsl(35, 25%, 55%)' },
+            WATER:     { label: 'Water',     color: 'hsl(215, 60%, 50%)' },
+        };
+
+        // Render donut segments (r=32, stroke-width=12, circumference = 2πr ≈ 201)
+        segContainer.innerHTML = '';
+        const r = 32;
+        const cir = 2 * Math.PI * r;
+        let offset = 0;
+        let dominant = null;
+        let dominantPct = 0;
+        for (const [key, meta] of Object.entries(TERRAIN_META)) {
+            const count = counts[key] || 0;
+            const pct = count / total;
+            if (pct > dominantPct) { dominantPct = pct; dominant = key; }
+            if (count === 0) continue;
+            const len = pct * cir;
+            const seg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            seg.setAttribute('class', `ws-seg ws-seg-${key.toLowerCase()}`);
+            seg.setAttribute('cx', '40');
+            seg.setAttribute('cy', '40');
+            seg.setAttribute('r', String(r));
+            seg.setAttribute('stroke', meta.color);
+            seg.setAttribute('stroke-dasharray', `${len} ${cir - len}`);
+            seg.setAttribute('stroke-dashoffset', String(-offset));
+            seg.dataset.terrain = key;
+            seg.addEventListener('mouseenter', () => this._wsFocusSegment(key, pct, meta.label));
+            seg.addEventListener('mouseleave', () => this._wsFocusSegment(dominant, dominantPct, TERRAIN_META[dominant].label));
+            segContainer.appendChild(seg);
+            offset += len;
+        }
+
+        // Legend rows
+        legend.innerHTML = '';
+        for (const [key, meta] of Object.entries(TERRAIN_META)) {
+            const count = counts[key] || 0;
+            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+            const row = document.createElement('div');
+            row.className = 'ws-leg-row';
+            row.innerHTML = `
+                <span class="ws-leg-dot" style="background:${meta.color}"></span>
+                <span>${meta.label}</span>
+                <span class="ws-leg-pct">${pct}%</span>
+            `;
+            legend.appendChild(row);
+        }
+
+        // Center label = dominant terrain by default
+        if (dominant && centerName && centerPct) {
+            centerName.textContent = TERRAIN_META[dominant].label;
+            centerPct.textContent = `${Math.round(dominantPct * 100)}%`;
+        }
+    }
+
+    _renderTrophicChain(census) {
+        const tiers = [
+            { key: 'plants',     icon: '🌿', label: 'Plants' },
+            { key: 'herbivores', icon: '🦌', label: 'Herbivores' },
+            { key: 'predators',  icon: '🦅', label: 'Predators' },
+        ];
+
+        const chainRow = (p) => {
+            const c = census[p] || {};
+            const nodes = tiers.map((t, i) => {
+                const present = (c[t.key] || 0) > 0;
+                const cls = present ? 'tc-on' : 'tc-off';
+                const connector = i > 0
+                    ? `<span class="tc-link ${present && (c[tiers[i-1].key] || 0) > 0 ? 'tc-active' : 'tc-broken'}"></span>`
+                    : '';
+                return connector + `<span class="tc-node ${cls}" title="${t.label}: ${c[t.key] || 0}">${t.icon}</span>`;
+            }).join('');
+            return `<div class="tc-row tc-p${p}"><span class="tc-row-tag">P${p}</span>${nodes}</div>`;
+        };
+
+        return `
+            <div class="trophic-chain">
+                <div class="tc-title">Trophic chain</div>
+                ${chainRow(1)}
+                ${chainRow(2)}
+            </div>
+        `;
+    }
+
+    _wsFocusSegment(terrain, pct, label) {
+        const centerName = document.getElementById('ws-c-name');
+        const centerPct = document.getElementById('ws-c-pct');
+        if (centerName) centerName.textContent = label || '—';
+        if (centerPct) centerPct.textContent = `${Math.round((pct || 0) * 100)}%`;
+        for (const seg of document.querySelectorAll('#ws-segments .ws-seg')) {
+            seg.classList.toggle('is-hovered', seg.dataset.terrain === terrain);
+        }
+    }
+
+    _ecosystemHealth(c) {
+        const total = (c.plants || 0) + (c.herbivores || 0) + (c.predators || 0);
+        if (total === 0) return { state: 'empty', icon: '–' };
+
+        const tiers = ['plants', 'herbivores', 'predators'].filter(t => (c[t] || 0) > 0).length;
+        if (tiers === 0) return { state: 'collapse', icon: '💀' };
+        if (tiers === 1) return { state: 'collapse', icon: '✕' };
+
+        // Check skew — >80% of biomass in one tier is unbalanced
+        const sharePlant = (c.plants || 0) / total;
+        const shareHerb  = (c.herbivores || 0) / total;
+        const sharePred  = (c.predators || 0) / total;
+        const maxShare = Math.max(sharePlant, shareHerb, sharePred);
+        if (tiers < 3 || maxShare > 0.8) return { state: 'warn', icon: '⚠' };
+
+        return { state: 'ok', icon: '✓' };
     }
 
     async _showGameOver() {
@@ -1282,8 +1812,9 @@ class Game {
     async _startMatch(config) {
         this._lastMatchConfig = config;
 
-        // Trading-card VS screen before play begins (Solo + Watch only)
+        // Solo/Watch matches clear any prior tournament state from the panel
         if (config.mode === 'solo' || config.mode === 'watch') {
+            this.setBracketAvailable({ available: false });
             try { await this._showPrematch(config); } catch (_) { /* ignore */ }
         }
 
@@ -1301,6 +1832,7 @@ class Game {
         generateTerrain(this.grid, this.seed);
         this.renderer.render();
         this._updateWorldInfo();
+        this._renderWorldSnapshot();
 
         // Configure AI players based on mode
         if (config.mode === 'solo' && config.p2Model) {
@@ -1333,29 +1865,14 @@ class Game {
     }
 
     _collapseMatchSection() {
-        for (const cfg of document.querySelectorAll('.match-config')) {
-            cfg.style.display = 'none';
-        }
-        const startBtn = document.getElementById('btn-start-match');
-        const manageBtn = document.getElementById('btn-manage-models');
-        const panel = document.getElementById('model-config-panel');
-        const summary = document.getElementById('match-summary');
-        if (startBtn) startBtn.style.display = 'none';
-        if (manageBtn) manageBtn.style.display = 'none';
-        if (panel) panel.style.display = 'none';
-        if (summary) {
-            summary.style.display = '';
-            const cfg = this._lastMatchConfig || {};
-            const label = this._matchModeLabel(cfg);
-            document.getElementById('ms-mode').textContent = label;
-        }
+        // Match-section lives inside the launcher overlay now; hide the overlay.
+        this._closeLauncherWelcome();
+        this._closeModelConfigModal();
     }
 
     _expandMatchSection() {
-        document.getElementById('match-summary').style.display = 'none';
-        document.getElementById('btn-start-match').style.display = '';
-        document.getElementById('btn-manage-models').style.display = '';
-        this._setMatchMode(this._matchMode);
+        // Re-open match setup with the previously-selected mode.
+        this._showLauncherSetup(this._matchMode || 'solo');
     }
 
     _matchModeLabel(cfg) {
@@ -1516,14 +2033,21 @@ class Game {
         for (const card of document.querySelectorAll('.launcher-mode-card')) {
             card.addEventListener('click', () => {
                 const mode = card.dataset.launcherMode;
-                this._closeLauncherWelcome();
-                this._setMatchMode(mode);
                 if (mode === 'tournament') {
-                    // Tournament cards immediately open the existing Standard/Lightning picker
+                    // Tournament jumps straight to Standard/Lightning picker
+                    this._closeLauncherWelcome();
+                    this._setMatchMode(mode);
                     this._startTournament();
+                } else {
+                    // Solo/Watch: show match setup sub-screen for model picking
+                    this._showLauncherSetup(mode);
                 }
-                // Solo/Watch: user picks model(s) in sidebar then clicks Start Match
             });
+        }
+
+        const backBtn = document.getElementById('btn-launcher-setup-back');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => this._openLauncherWelcome());
         }
     }
 
@@ -1538,29 +2062,41 @@ class Game {
 
     _closeLauncherWelcome() {
         const overlay = document.getElementById('tournament-overlay');
-        const screen = document.getElementById('launcher-welcome');
-        if (!overlay || !screen) return;
-        screen.classList.add('t-hidden');
+        if (!overlay) return;
+        overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
         overlay.classList.add('t-hidden');
+    }
+
+    _showLauncherSetup(mode) {
+        const overlay = document.getElementById('tournament-overlay');
+        const setup = document.getElementById('launcher-setup');
+        if (!overlay || !setup) return;
+        overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+        setup.classList.remove('t-hidden');
+        overlay.classList.remove('t-hidden');
+        this._setMatchMode(mode);
+
+        const title = document.getElementById('launcher-setup-title');
+        const sub = document.getElementById('launcher-setup-subtitle');
+        if (mode === 'watch') {
+            if (title) title.textContent = 'CONFIGURE WATCH';
+            if (sub) sub.textContent = 'Pick two AI models';
+        } else {
+            if (title) title.textContent = 'CONFIGURE MATCH';
+            if (sub) sub.textContent = 'Choose your opponent';
+        }
     }
 
     // ── Model Configuration Panel ───────────────────────────
 
     _initModelConfig() {
-        const btn = document.getElementById('btn-manage-models');
-        const panel = document.getElementById('model-config-panel');
+        // Manage Models is opened via the gear menu now; the panel lives in a
+        // body-level modal. Wire the close button + backdrop click.
         const closeBtn = document.getElementById('btn-mcp-close');
-        if (!btn || !panel) return;
+        if (closeBtn) closeBtn.addEventListener('click', () => this._closeModelConfigModal());
 
-        btn.addEventListener('click', () => {
-            const visible = panel.style.display !== 'none';
-            panel.style.display = visible ? 'none' : 'block';
-            if (!visible) this._refreshModelConfig();
-        });
-
-        closeBtn.addEventListener('click', () => {
-            panel.style.display = 'none';
-        });
+        const backdrop = document.querySelector('#model-config-modal .mcm-backdrop');
+        if (backdrop) backdrop.addEventListener('click', () => this._closeModelConfigModal());
     }
 
     async _refreshModelConfig() {

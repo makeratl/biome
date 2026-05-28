@@ -7,93 +7,37 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header class="game-header">
-        <div class="game-title">
-            <span class="gt-glyph">◈</span>
-            <span class="gt-word">BIOME</span>
-            <span class="gt-glyph">◈</span>
-        </div>
-        <div class="header-spacer"></div>
-        <div class="header-actions">
-            <button id="mute-toggle" class="mute-toggle" title="Toggle sound" aria-label="Toggle sound">
-                <span class="mt-icon">🔊</span>
-            </button>
-        </div>
-    </header>
-
     <div class="game-layout">
-        <!-- Left Panel -->
-        <div class="panel panel-left">
-            <div class="panel-section" id="match-section">
-                <h3>Match</h3>
-
-                <!-- Segmented mode switcher -->
-                <div class="match-mode-segments" role="tablist">
-                    <button class="match-mode-segment active" data-mode="solo" role="tab">Solo</button>
-                    <button class="match-mode-segment" data-mode="watch" role="tab">Watch</button>
-                    <button class="match-mode-segment" data-mode="tournament" role="tab">Tournament</button>
-                </div>
-
-                <!-- Collapsed summary (shown during running match) -->
-                <div id="match-summary" class="match-summary" style="display:none;">
-                    <div class="ms-mode" id="ms-mode">—</div>
-                    <button id="btn-match-expand" class="ms-expand" title="Change setup">⟲</button>
-                </div>
-
-                <!-- Mode-specific configuration -->
-                <div id="match-config-solo" class="match-config" data-mode="solo">
-                    <div class="mmp-label p2">Opponent</div>
-                    <select id="match-model-p2-solo" class="match-model-picker p2"></select>
-                </div>
-
-                <div id="match-config-watch" class="match-config" data-mode="watch" style="display:none;">
-                    <div class="mmp-label p1">Player 1</div>
-                    <select id="match-model-p1-watch" class="match-model-picker p1"></select>
-                    <div class="mmp-label p2" style="margin-top:8px;">Player 2</div>
-                    <select id="match-model-p2-watch" class="match-model-picker p2"></select>
-                </div>
-
-                <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
-                    <div class="mt-blurb">8 AI models compete in a single-elimination bracket.</div>
-                </div>
-
-                <button id="btn-start-match" class="btn btn-primary" style="margin-top:8px;">Start Match ▶</button>
-
-                <button id="btn-manage-models" class="btn-manage-models">⚙ Manage Models</button>
-
-                <!-- Model Configuration Drawer -->
-                <div id="model-config-panel" class="model-config-panel" style="display:none;">
-                    <div class="mcp-header">
-                        <span>Model Configuration</span>
-                        <button id="btn-mcp-close" class="mcp-close">×</button>
-                    </div>
-                    <div class="mcp-section">
-                        <div class="mcp-label">Installed Models</div>
-                        <div id="mcp-installed" class="mcp-model-list"></div>
-                    </div>
-                    <div class="mcp-section">
-                        <div class="mcp-label">Recommended Models</div>
-                        <div class="mcp-hint">Click to download via Ollama</div>
-                        <div id="mcp-recommended" class="mcp-model-list"></div>
-                    </div>
-                    <div id="mcp-status" class="mcp-status"></div>
-                </div>
-            </div>
-
-            <div class="panel-section">
-                <h3>Species</h3>
-                <div id="species-palette"></div>
-            </div>
-
-            <div class="panel-section">
-                <h3>Actions</h3>
-                <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
-                <button id="btn-rankings" class="btn btn-rankings" style="margin-top:6px;">🏆 Rankings</button>
-            </div>
-        </div>
-
-        <!-- Canvas -->
+        <!-- Canvas (full viewport) -->
         <div class="canvas-container">
+            <!-- Corner wordmark (replaces header bar) -->
+            <div id="corner-wordmark" class="corner-wordmark">
+                <span class="cw-glyph">⬡</span>
+                <span class="cw-word">BIOME</span>
+            </div>
+
+            <!-- Gear menu (top-right, replaces sidebar buttons) -->
+            <div id="gear-menu" class="gear-menu">
+                <button id="mute-toggle" class="mute-toggle gm-mute" title="Toggle sound" aria-label="Toggle sound">
+                    <span class="mt-icon">🔊</span>
+                </button>
+                <button id="btn-gear" class="gear-button" title="Menu" aria-label="Menu" aria-expanded="false">⚙</button>
+                <div id="gear-dropdown" class="gear-dropdown gm-hidden" role="menu">
+                    <button class="gm-item" data-gm="new-match" role="menuitem">
+                        <span class="gm-icon">▶</span><span>New Match</span>
+                    </button>
+                    <button class="gm-item" data-gm="manage-models" role="menuitem">
+                        <span class="gm-icon">⚙</span><span>Manage Models</span>
+                    </button>
+                    <button class="gm-item" data-gm="rankings" role="menuitem">
+                        <span class="gm-icon">🏆</span><span>Rankings</span>
+                    </button>
+                    <button class="gm-item" data-gm="tournament-stats" role="menuitem">
+                        <span class="gm-icon">📊</span><span>Tournament Stats</span>
+                    </button>
+                </div>
+            </div>
+
             <canvas id="game-canvas"></canvas>
 
             <!-- AP chip (visible only during human turns) -->
@@ -101,6 +45,85 @@
                 <span class="ap-chip-label" id="ap-chip-label">P1</span>
                 <span class="ap-chip-value" id="ap-chip-value">0</span>
                 <span class="ap-chip-suffix">AP</span>
+            </div>
+
+            <!-- Right-edge tabbed panel: Ecosystem (biomass pyramid) + Biome (terrain composition) -->
+            <div id="biomass-tower" class="biomass-tower" aria-label="Ecosystem & Biome">
+                <div class="bt-tabs" role="tablist">
+                    <button class="bt-tab active" data-bt-tab="eco" role="tab" aria-selected="true">
+                        <span class="bt-tab-icon">⛧</span><span>ECO</span>
+                    </button>
+                    <button class="bt-tab" data-bt-tab="biome" role="tab" aria-selected="false">
+                        <span class="bt-tab-icon">◉</span><span>BIOME</span>
+                    </button>
+                    <button class="bt-tab bt-tab-bracket" data-bt-tab="bracket" role="tab" aria-selected="false">
+                        <span class="bt-tab-icon">⚔</span><span>BRACKET</span>
+                        <span class="bt-tab-live" aria-hidden="true"></span>
+                    </button>
+                </div>
+
+                <!-- ECOSYSTEM view (biomass pyramid + health badges) -->
+                <div class="bt-view bt-view-eco" data-bt-view="eco">
+                    <div class="bt-row" data-tier="predator">
+                        <div class="bt-tier-icon">🦅</div>
+                        <div class="bt-tier-label">Predators</div>
+                        <div class="bt-bars">
+                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-pred-p1"></span><span class="bt-count" id="bt-count-pred-p1">0</span></div>
+                            <div class="bt-divider"></div>
+                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-pred-p2"></span><span class="bt-count" id="bt-count-pred-p2">0</span></div>
+                        </div>
+                    </div>
+                    <div class="bt-row" data-tier="herbivore">
+                        <div class="bt-tier-icon">🦌</div>
+                        <div class="bt-tier-label">Herbivores</div>
+                        <div class="bt-bars">
+                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-herb-p1"></span><span class="bt-count" id="bt-count-herb-p1">0</span></div>
+                            <div class="bt-divider"></div>
+                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-herb-p2"></span><span class="bt-count" id="bt-count-herb-p2">0</span></div>
+                        </div>
+                    </div>
+                    <div class="bt-row" data-tier="plant">
+                        <div class="bt-tier-icon">🌿</div>
+                        <div class="bt-tier-label">Plants</div>
+                        <div class="bt-bars">
+                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-plant-p1"></span><span class="bt-count" id="bt-count-plant-p1">0</span></div>
+                            <div class="bt-divider"></div>
+                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-plant-p2"></span><span class="bt-count" id="bt-count-plant-p2">0</span></div>
+                        </div>
+                    </div>
+                    <div class="bt-health-row">
+                        <div class="bt-health bt-health-p1" id="bt-health-p1" data-state="ok">
+                            <span class="bt-h-tag">P1</span><span class="bt-h-icon">✓</span>
+                        </div>
+                        <div class="bt-health bt-health-p2" id="bt-health-p2" data-state="ok">
+                            <span class="bt-h-tag">P2</span><span class="bt-h-icon">✓</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BRACKET view (tournament live bracket) -->
+                <div class="bt-view bt-view-bracket bt-view-hidden" data-bt-view="bracket">
+                    <div class="bt-bracket-header">
+                        <span id="bt-bracket-title">Bracket</span>
+                        <button id="bt-bracket-expand" class="bt-bracket-action" title="Expand bracket" type="button">⛶</button>
+                    </div>
+                    <div id="bt-bracket-content" class="bt-bracket-content"></div>
+                </div>
+
+                <!-- BIOME view (terrain composition donut + legend) -->
+                <div class="bt-view bt-view-biome bt-view-hidden" data-bt-view="biome">
+                    <div class="ws-chart-wrap">
+                        <svg class="ws-donut" id="ws-donut" viewBox="0 0 80 80" aria-hidden="true">
+                            <circle class="ws-track" cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12"/>
+                            <g id="ws-segments"></g>
+                        </svg>
+                        <div class="ws-center" id="ws-center">
+                            <div class="ws-c-name" id="ws-c-name">—</div>
+                            <div class="ws-c-pct" id="ws-c-pct"></div>
+                        </div>
+                    </div>
+                    <div class="ws-legend" id="ws-legend"></div>
+                </div>
             </div>
 
             <!-- Live scoreboard overlay -->
@@ -124,6 +147,39 @@
             <div id="score-chart-overlay">
                 <div class="chart-label">Score Timeline</div>
                 <canvas id="score-chart" width="280" height="72"></canvas>
+            </div>
+
+            <!-- Cell inspector tooltip (follows cursor on hex hover) -->
+            <div id="cell-tooltip" class="cell-tooltip ct-hidden" aria-hidden="true">
+                <div class="ct-terrain" id="ct-terrain"></div>
+                <div class="ct-organisms" id="ct-organisms"></div>
+                <div class="ct-position" id="ct-position"></div>
+            </div>
+
+            <!-- Activity ticker (bottom edge, slim broadcast feed) -->
+            <button id="activity-ticker" class="activity-ticker at-hidden" type="button" aria-label="Open log history">
+                <span class="at-rail" id="at-rail"></span>
+            </button>
+
+            <!-- Activity log history modal (opens on ticker click) -->
+            <div id="activity-log-modal" class="activity-log-modal alm-hidden">
+                <div class="alm-backdrop"></div>
+                <div class="alm-panel">
+                    <div class="alm-header">
+                        <span>Activity Log</span>
+                        <button id="btn-alm-close" class="alm-close" type="button">×</button>
+                    </div>
+                    <div class="alm-body" id="alm-body"></div>
+                </div>
+            </div>
+
+            <!-- Species action dock (human turns only) -->
+            <div id="species-dock" class="species-dock sd-hidden" aria-label="Species selection">
+                <div class="sd-tiles" id="sd-tiles"></div>
+                <button id="sd-end-turn" class="sd-end-turn" type="button">
+                    <span class="sd-et-label">END</span>
+                    <span class="sd-et-sub">TURN</span>
+                </button>
             </div>
 
             <!-- AI commentary overlays -->
@@ -209,30 +265,40 @@
                 <div id="be-grid" class="bracket-grid"></div>
             </div>
         </div>
+    </div>
 
-        <!-- Right Panel -->
-        <div class="panel panel-right">
-            <div class="panel-section">
-                <h3>Census</h3>
-                <div id="census-content"></div>
-            </div>
+    <!-- Legacy compatibility containers — DOM kept so existing code paths
+         (_updateCensus, _updateWorldInfo, _log, _onHover, species palette,
+         end-turn, btn-rankings) keep working. Replaced phase-by-phase. -->
+    <div id="legacy-data" aria-hidden="true">
+        <div id="census-content"></div>
+        <div id="info-content"></div>
+        <div id="cell-info"><div style="font-size: 11px; color: #555;">Hover over the map</div></div>
+        <div id="action-log" class="action-log"></div>
+        <div id="species-palette"></div>
+        <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
+        <button id="btn-rankings" class="btn btn-rankings">🏆 Rankings</button>
+        <button id="btn-manage-models" class="btn-manage-models">⚙ Manage Models</button>
+    </div>
 
-            <div class="panel-section">
-                <h3>World</h3>
-                <div id="info-content"></div>
+    <!-- Model Configuration Modal (opened from gear menu) -->
+    <div id="model-config-modal" class="model-config-modal" style="display:none;">
+        <div class="mcm-backdrop"></div>
+        <div id="model-config-panel" class="model-config-panel">
+            <div class="mcp-header">
+                <span>Model Configuration</span>
+                <button id="btn-mcp-close" class="mcp-close">×</button>
             </div>
-
-            <div class="panel-section">
-                <h3>Cell</h3>
-                <div id="cell-info">
-                    <div style="font-size: 11px; color: #555;">Hover over the map</div>
-                </div>
+            <div class="mcp-section">
+                <div class="mcp-label">Installed Models</div>
+                <div id="mcp-installed" class="mcp-model-list"></div>
             </div>
-
-            <div class="panel-section">
-                <h3>Log</h3>
-                <div id="action-log" class="action-log"></div>
+            <div class="mcp-section">
+                <div class="mcp-label">Recommended Models</div>
+                <div class="mcp-hint">Click to download via Ollama</div>
+                <div id="mcp-recommended" class="mcp-model-list"></div>
             </div>
+            <div id="mcp-status" class="mcp-status"></div>
         </div>
     </div>
 
@@ -265,26 +331,81 @@
 
         <!-- First-load launcher welcome -->
         <div class="t-screen t-hidden" id="launcher-welcome">
+            <div class="launcher-particles" aria-hidden="true">
+                <span class="lp"></span><span class="lp"></span><span class="lp"></span><span class="lp"></span>
+                <span class="lp"></span><span class="lp"></span><span class="lp"></span><span class="lp"></span>
+                <span class="lp"></span><span class="lp"></span><span class="lp"></span><span class="lp"></span>
+                <span class="lp"></span><span class="lp"></span><span class="lp"></span><span class="lp"></span>
+                <span class="lp"></span><span class="lp"></span><span class="lp"></span><span class="lp"></span>
+            </div>
             <div class="t-header">
-                <div class="t-title launcher-title">BIOME</div>
+                <div class="t-title launcher-title">
+                    <span class="lt-glyph">⬡</span>
+                    <span class="lt-word">BIOME</span>
+                    <span class="lt-glyph">⬡</span>
+                </div>
                 <div class="t-subtitle">Choose how you want to play</div>
             </div>
             <div class="launcher-mode-grid">
-                <button class="launcher-mode-card" data-launcher-mode="solo">
+                <button class="launcher-mode-card lm-stagger-1" data-launcher-mode="solo">
                     <div class="lmc-icon">▶</div>
                     <div class="lmc-name">PLAY</div>
                     <div class="lmc-desc">You vs AI</div>
                 </button>
-                <button class="launcher-mode-card watch" data-launcher-mode="watch">
+                <button class="launcher-mode-card watch lm-stagger-2" data-launcher-mode="watch">
                     <div class="lmc-icon">👁</div>
                     <div class="lmc-name">WATCH</div>
                     <div class="lmc-desc">AI vs AI</div>
                 </button>
-                <button class="launcher-mode-card tournament" data-launcher-mode="tournament">
+                <button class="launcher-mode-card tournament lm-stagger-3" data-launcher-mode="tournament">
                     <div class="lmc-icon">⚔</div>
                     <div class="lmc-name">TOURNAMENT</div>
                     <div class="lmc-desc">8-model bracket</div>
                 </button>
+            </div>
+        </div>
+
+        <!-- Match setup (Solo/Watch model pickers + Start button) -->
+        <div class="t-screen t-hidden" id="launcher-setup">
+            <div class="t-header">
+                <div class="t-title" id="launcher-setup-title">CONFIGURE MATCH</div>
+                <div class="t-subtitle" id="launcher-setup-subtitle">Choose your opponent</div>
+            </div>
+            <div class="launcher-setup-card" id="match-section">
+                <!-- Segmented mode switcher -->
+                <div class="match-mode-segments" role="tablist">
+                    <button class="match-mode-segment active" data-mode="solo" role="tab">Solo</button>
+                    <button class="match-mode-segment" data-mode="watch" role="tab">Watch</button>
+                    <button class="match-mode-segment" data-mode="tournament" role="tab">Tournament</button>
+                </div>
+
+                <!-- Collapsed summary (unused — kept for legacy code path) -->
+                <div id="match-summary" class="match-summary" style="display:none;">
+                    <div class="ms-mode" id="ms-mode">—</div>
+                    <button id="btn-match-expand" class="ms-expand" title="Change setup">⟲</button>
+                </div>
+
+                <!-- Mode-specific configuration -->
+                <div id="match-config-solo" class="match-config" data-mode="solo">
+                    <div class="mmp-label p2">Opponent</div>
+                    <select id="match-model-p2-solo" class="match-model-picker p2"></select>
+                </div>
+
+                <div id="match-config-watch" class="match-config" data-mode="watch" style="display:none;">
+                    <div class="mmp-label p1">Player 1</div>
+                    <select id="match-model-p1-watch" class="match-model-picker p1"></select>
+                    <div class="mmp-label p2" style="margin-top:8px;">Player 2</div>
+                    <select id="match-model-p2-watch" class="match-model-picker p2"></select>
+                </div>
+
+                <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
+                    <div class="mt-blurb">8 AI models compete in a single-elimination bracket.</div>
+                </div>
+
+                <div class="launcher-setup-actions">
+                    <button id="btn-launcher-setup-back" class="btn t-mode-cancel">← Back</button>
+                    <button id="btn-start-match" class="btn btn-primary">Start Match ▶</button>
+                </div>
             </div>
         </div>
 

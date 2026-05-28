@@ -40,6 +40,7 @@ export class TournamentManager {
             document.getElementById('live-bracket')?.classList.remove('live-bracket-hidden');
             this._renderLiveBracket();
         }
+        this.game._refreshRightStackVisibility?.();
     }
 
     async start(models, mode = 'standard') {
@@ -54,9 +55,17 @@ export class TournamentManager {
         const seeded = [...models].sort(() => Math.random() - 0.5);
         this.bracket = this._buildBracket(seeded);
 
-        // Show stats toggle button
-        document.getElementById('btn-t-stats')?.classList.remove('t-stats-hidden');
+        // Enable the BRACKET tab in the right panel and auto-switch to it.
+        // Stats menu is always accessible through the gear menu.
+        const panelLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        this.game.setBracketAvailable({
+            available: true,
+            live: true,
+            autoSwitch: true,
+            title: `${panelLabel} Bracket`,
+        });
         this._renderStats();
+        this._renderLiveBracket();
 
         const modeLabel = mode === 'lightning' ? 'LIGHTNING' : 'STANDARD';
         this._renderBracket(`Tournament begins! [${modeLabel} — ${this.totalRounds} rounds]`);
@@ -84,6 +93,13 @@ export class TournamentManager {
 
         this._showChampion(this.bracket[6].winner);
         this.running = false;
+        // Tournament finished — bracket stays available so user can review
+        // results, but the LIVE indicator stops pulsing.
+        this.game.setBracketAvailable({
+            available: true,
+            live: false,
+            title: `${this.mode === 'lightning' ? 'Lightning' : 'Standard'} Bracket — Final`,
+        });
     }
 
     _buildBracket(models) {
@@ -206,33 +222,24 @@ export class TournamentManager {
     _toggleStats(force) {
         this._statsOpen = force !== undefined ? force : !this._statsOpen;
         const sidePanel = document.getElementById('t-stats-panel');
-        const liveBracket = document.getElementById('live-bracket');
         const expanded = document.getElementById('bracket-expanded');
 
         if (this._statsOpen) {
-            // During an active tournament the floating mini bracket is the default;
-            // after the tournament ends the side panel still has the full results view.
-            if (this.running) {
-                liveBracket?.classList.remove('live-bracket-hidden');
-                this._renderLiveBracket();
-            } else {
-                sidePanel?.classList.remove('t-stats-hidden');
-                this._renderStats();
-            }
+            // The mini live bracket now lives in the right-panel BRACKET tab,
+            // so Stats always opens the detailed side panel (full match history,
+            // score charts, etc.). Works pre, during, and post tournament.
+            sidePanel?.classList.remove('t-stats-hidden');
+            this._renderStats();
         } else {
             sidePanel?.classList.add('t-stats-hidden');
-            liveBracket?.classList.add('live-bracket-hidden');
             expanded?.classList.add('bracket-expanded-hidden');
         }
     }
 
     _renderLiveBracket() {
-        const el = document.getElementById('lb-content');
-        if (!el || !this.bracket) return;
+        if (!this.bracket) return;
 
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
-        document.getElementById('lb-title').textContent = `${modeLabel} Bracket`;
-        document.getElementById('btn-lb-close').onclick = () => this._toggleStats(false);
 
         const sections = [
             { label: 'QF', ids: [0, 1, 2, 3] },
@@ -254,7 +261,17 @@ export class TournamentManager {
                 </div>`;
             }
         }
-        el.innerHTML = html;
+
+        // Render into the right-panel bracket tab
+        const panelContent = document.getElementById('bt-bracket-content');
+        if (panelContent) panelContent.innerHTML = html;
+
+        // Update the panel bracket title
+        this.game.setBracketAvailable({
+            available: true,
+            live: this.running,
+            title: `${modeLabel} Bracket`,
+        });
     }
 
     _renderStats() {
