@@ -2719,51 +2719,113 @@ body {
 
 .t-mode-buttons {
     display: flex;
-    gap: 16px;
+    gap: 20px;
 }
 
 .t-mode-btn {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
-    min-width: 140px;
-    padding: 16px 24px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px;
-    color: rgba(255,255,255,0.8);
+    justify-content: center;
+    gap: 2px;
+    min-width: 172px;
+    padding: 22px 28px 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px;
+    color: rgba(255,255,255,0.85);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    font-family: inherit;
+    transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .t-mode-btn:hover {
-    background: rgba(255,255,255,0.1);
-    border-color: rgba(255,255,255,0.25);
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025));
+    border-color: rgba(255,255,255,0.22);
+}
+
+.t-mode-btn:active {
+    transform: translateY(0);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+}
+
+.t-mode-rounds {
+    font-size: 44px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    transition: filter 0.18s ease;
+}
+
+.t-mode-rounds-label {
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: rgba(255,255,255,0.32);
+    text-transform: uppercase;
+    margin-bottom: 10px;
 }
 
 .t-mode-name {
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-}
-
-.t-mode-desc {
-    font-size: 11px;
-    color: rgba(255,255,255,0.4);
-}
-
-.t-mode-cancel {
-    background: none;
-    border: 1px solid rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.35);
     font-size: 12px;
-    padding: 6px 16px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.72);
+}
+
+/* Standard — cool cyan accent */
+.t-mode-btn.t-mode-standard .t-mode-rounds {
+    background: linear-gradient(135deg, hsl(190, 75%, 70%), hsl(210, 70%, 58%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.t-mode-btn.t-mode-standard:hover {
+    border-color: hsla(195, 70%, 60%, 0.42);
+    box-shadow: 0 6px 28px hsla(195, 70%, 55%, 0.18);
+}
+.t-mode-btn.t-mode-standard:hover .t-mode-rounds {
+    filter: drop-shadow(0 0 14px hsla(195, 75%, 60%, 0.55));
+}
+
+/* Lightning — gold accent, same palette family as the FINAL transition */
+.t-mode-btn.t-mode-lightning .t-mode-rounds {
+    background: linear-gradient(135deg, hsl(45, 100%, 72%), hsl(35, 100%, 60%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.t-mode-btn.t-mode-lightning:hover {
+    border-color: hsla(45, 90%, 60%, 0.45);
+    box-shadow: 0 6px 28px hsla(45, 90%, 55%, 0.22);
+}
+.t-mode-btn.t-mode-lightning:hover .t-mode-rounds {
+    filter: drop-shadow(0 0 14px hsla(45, 90%, 60%, 0.65));
+}
+
+/* Cancel — small ghost button, doesn't compete with the two real choices */
+.t-mode-cancel {
+    align-self: center;
+    background: none;
+    border: 1px solid rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.42);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 7px 22px;
     border-radius: 4px;
     cursor: pointer;
+    font-family: inherit;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
-.t-mode-cancel:hover { color: rgba(255,255,255,0.6); }
+.t-mode-cancel:hover {
+    color: rgba(255,255,255,0.78);
+    border-color: rgba(255,255,255,0.28);
+    background: rgba(255,255,255,0.03);
+}
 
 /* ── Live Bracket Overlay ──────────────────── */
 
