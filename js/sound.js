@@ -73,6 +73,11 @@ const BANK = {
         _tone({ type: 'sine', freq: 660, peak: 0.22, attack: 0.003, hold: 0.0, release: 0.18, delay: 0.04 });
         _tone({ type: 'sine', freq: 990, peak: 0.16, attack: 0.003, hold: 0.0, release: 0.12, delay: 0.08 });
     },
+    // Soft two-note chime for round recap card
+    recap() {
+        _tone({ type: 'sine', freq: 523, peak: 0.18, attack: 0.005, hold: 0.03, release: 0.18 });
+        _tone({ type: 'sine', freq: 784, peak: 0.12, attack: 0.005, hold: 0.03, release: 0.20, delay: 0.06 });
+    },
     // Dramatic stinger for callouts
     callout() {
         _tone({ type: 'sawtooth', freq: 110, freqEnd: 165, peak: 0.30, attack: 0.01, hold: 0.04, release: 0.40 });

@@ -546,8 +546,8 @@ class Game {
     _onPhaseChange(phase) {
         const aiVsAi = this._isAIvsAI();
 
-        // LIVE badge: visible whenever the match is actively progressing
-        const liveStates = [PHASE.PLAYER_1_TURN, PHASE.PLAYER_2_TURN, PHASE.SIMULATING, PHASE.ROUND_END];
+        // LIVE badge: visible while the match is actively progressing — clears at ROUND_END so summary overlays don't fight for attention
+        const liveStates = [PHASE.PLAYER_1_TURN, PHASE.PLAYER_2_TURN, PHASE.SIMULATING];
         this._setLiveBadge(liveStates.includes(phase));
 
         if (phase === PHASE.PLAYER_1_TURN) {
@@ -817,12 +817,8 @@ class Game {
         const round = this.turns.round;
         const total = this.turns.totalRounds;
 
-        const p1Short = this.aiPlayers[1]
-            ? this.aiPlayers[1].model.replace(/:.*$/, '').split('/').pop()
-            : 'Player 1';
-        const p2Short = this.aiPlayers[2]
-            ? this.aiPlayers[2].model.replace(/:.*$/, '').split('/').pop()
-            : 'Player 2';
+        const p1Short = this._playerTag(1, { withPrefix: false });
+        const p2Short = this._playerTag(2, { withPrefix: false });
 
         const nameEl1 = document.getElementById('sb-name-p1');
         const nameEl2 = document.getElementById('sb-name-p2');
@@ -1099,11 +1095,11 @@ class Game {
         ms.lastLeader = currentLeader;
     }
 
-    _playerTag(p) {
+    _playerTag(p, { withPrefix = true } = {}) {
         const ai = this.aiPlayers[p];
         if (!ai) return `Player ${p}`;
         const short = ai.model.replace(/:.*$/, '').split('/').pop();
-        return `P${p} · ${short}`;
+        return withPrefix ? `P${p} · ${short}` : short;
     }
 
     // ── Round-end recap card ──────────────────────────────────
@@ -1142,6 +1138,8 @@ class Game {
         }
 
         if (lines.length === 0) return; // nothing notable
+
+        this._playSound('recap');
 
         const el = document.getElementById('recap-card');
         const hEl = document.getElementById('rc-header');
