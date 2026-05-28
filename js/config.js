@@ -51,7 +51,8 @@ export const CONFIG = {
     // Species defaults
     SPECIES: {
         GRASS: {
-            name: 'Grass',
+            name: 'Sedgeweave',
+            role: 'Grass',
             type: 'plant',
             energy: 20,
             maxEnergy: 40,
@@ -62,7 +63,8 @@ export const CONFIG = {
             apCost: 1,
         },
         SHRUB: {
-            name: 'Shrub',
+            name: 'Thornbloom',
+            role: 'Shrub',
             type: 'plant',
             energy: 30,
             maxEnergy: 70,
@@ -73,7 +75,8 @@ export const CONFIG = {
             apCost: 1,
         },
         TREE: {
-            name: 'Tree',
+            name: 'Spirewood',
+            role: 'Tree',
             type: 'plant',
             energy: 50,
             maxEnergy: 120,
@@ -84,7 +87,8 @@ export const CONFIG = {
             apCost: 2,
         },
         GRAZER: {
-            name: 'Grazer',
+            name: 'Hopgrazer',
+            role: 'Grazer',
             type: 'herbivore',
             energy: 40,
             maxEnergy: 100,
@@ -99,7 +103,8 @@ export const CONFIG = {
             apCost: 2,
         },
         BROWSER: {
-            name: 'Browser',
+            name: 'Bramblemaw',
+            role: 'Browser',
             type: 'herbivore',
             energy: 55,
             maxEnergy: 100,
@@ -114,7 +119,8 @@ export const CONFIG = {
             apCost: 2,
         },
         PREDATOR: {
-            name: 'Predator',
+            name: 'Shadestalker',
+            role: 'Predator',
             type: 'predator',
             energy: 60,
             maxEnergy: 120,

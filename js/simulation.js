@@ -343,8 +343,8 @@ export class Simulation {
     // Count organisms by player
     census() {
         const counts = {
-            1: { plants: 0, herbivores: 0, predators: 0, biomass: 0 },
-            2: { plants: 0, herbivores: 0, predators: 0, biomass: 0 },
+            1: { plants: 0, herbivores: 0, predators: 0, biomass: 0, bySpecies: {} },
+            2: { plants: 0, herbivores: 0, predators: 0, biomass: 0, bySpecies: {} },
         };
 
         this.grid.forEach((cell) => {
@@ -357,6 +357,7 @@ export class Simulation {
                 else if (type === 'herbivore') p.herbivores++;
                 else if (type === 'predator') p.predators++;
                 p.biomass += org.energy;
+                p.bySpecies[org.species] = (p.bySpecies[org.species] || 0) + 1;
             }
         });
 

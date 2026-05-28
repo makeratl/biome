@@ -22,6 +22,62 @@
     <div class="game-layout">
         <!-- Left Panel -->
         <div class="panel panel-left">
+            <div class="panel-section" id="match-section">
+                <h3>Match</h3>
+
+                <!-- Segmented mode switcher -->
+                <div class="match-mode-segments" role="tablist">
+                    <button class="match-mode-segment active" data-mode="solo" role="tab">Solo</button>
+                    <button class="match-mode-segment" data-mode="watch" role="tab">Watch</button>
+                    <button class="match-mode-segment" data-mode="tournament" role="tab">Tournament</button>
+                </div>
+
+                <!-- Collapsed summary (shown during running match) -->
+                <div id="match-summary" class="match-summary" style="display:none;">
+                    <div class="ms-mode" id="ms-mode">—</div>
+                    <button id="btn-match-expand" class="ms-expand" title="Change setup">⟲</button>
+                </div>
+
+                <!-- Mode-specific configuration -->
+                <div id="match-config-solo" class="match-config" data-mode="solo">
+                    <div class="mmp-label p2">Opponent</div>
+                    <select id="match-model-p2-solo" class="match-model-picker p2"></select>
+                </div>
+
+                <div id="match-config-watch" class="match-config" data-mode="watch" style="display:none;">
+                    <div class="mmp-label p1">Player 1</div>
+                    <select id="match-model-p1-watch" class="match-model-picker p1"></select>
+                    <div class="mmp-label p2" style="margin-top:8px;">Player 2</div>
+                    <select id="match-model-p2-watch" class="match-model-picker p2"></select>
+                </div>
+
+                <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
+                    <div class="mt-blurb">8 AI models compete in a single-elimination bracket.</div>
+                </div>
+
+                <button id="btn-start-match" class="btn btn-primary" style="margin-top:8px;">Start Match ▶</button>
+
+                <button id="btn-manage-models" class="btn-manage-models">⚙ Manage Models</button>
+
+                <!-- Model Configuration Drawer -->
+                <div id="model-config-panel" class="model-config-panel" style="display:none;">
+                    <div class="mcp-header">
+                        <span>Model Configuration</span>
+                        <button id="btn-mcp-close" class="mcp-close">×</button>
+                    </div>
+                    <div class="mcp-section">
+                        <div class="mcp-label">Installed Models</div>
+                        <div id="mcp-installed" class="mcp-model-list"></div>
+                    </div>
+                    <div class="mcp-section">
+                        <div class="mcp-label">Recommended Models</div>
+                        <div class="mcp-hint">Click to download via Ollama</div>
+                        <div id="mcp-recommended" class="mcp-model-list"></div>
+                    </div>
+                    <div id="mcp-status" class="mcp-status"></div>
+                </div>
+            </div>
+
             <div class="panel-section">
                 <h3>Species</h3>
                 <div id="species-palette"></div>
@@ -30,42 +86,8 @@
             <div class="panel-section">
                 <h3>Actions</h3>
                 <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
-                <button id="btn-new-game" class="btn" data-action="new-game" style="margin-top:6px;">New Game</button>
-                <button id="btn-tournament" class="btn btn-tournament" style="margin-top:6px;">⚔ Tournament</button>
                 <button id="btn-rankings" class="btn btn-rankings" style="margin-top:6px;">🏆 Rankings</button>
             </div>
-
-            <div class="panel-section">
-                <h3>AI Players</h3>
-                <div class="ai-player-row">
-                    <button id="btn-ai-p1" class="btn ai-toggle" data-player="1">P1: Human</button>
-                    <select id="ai-model-p1" class="ai-select" data-player="1"></select>
-                </div>
-                <div class="ai-player-row">
-                    <button id="btn-ai-p2" class="btn ai-toggle" data-player="2">P2: Human</button>
-                    <select id="ai-model-p2" class="ai-select" data-player="2"></select>
-                </div>
-                <button id="btn-model-config" class="btn btn-model-config">⚙ Models</button>
-            </div>
-
-            <!-- Model Configuration Panel -->
-            <div id="model-config-panel" class="model-config-panel" style="display:none;">
-                <div class="mcp-header">
-                    <span>Model Configuration</span>
-                    <button id="btn-mcp-close" class="mcp-close">×</button>
-                </div>
-                <div class="mcp-section">
-                    <div class="mcp-label">Installed Models</div>
-                    <div id="mcp-installed" class="mcp-model-list"></div>
-                </div>
-                <div class="mcp-section">
-                    <div class="mcp-label">Recommended Models</div>
-                    <div class="mcp-hint">Click to download via Ollama</div>
-                    <div id="mcp-recommended" class="mcp-model-list"></div>
-                </div>
-                <div id="mcp-status" class="mcp-status"></div>
-            </div>
-
         </div>
 
         <!-- Canvas -->
@@ -170,6 +192,31 @@
     <script type="module" src="js/game.js"></script>
     <!-- Tournament overlay -->
     <div id="tournament-overlay" class="t-hidden">
+
+        <!-- First-load launcher welcome -->
+        <div class="t-screen t-hidden" id="launcher-welcome">
+            <div class="t-header">
+                <div class="t-title launcher-title">BIOME</div>
+                <div class="t-subtitle">Choose how you want to play</div>
+            </div>
+            <div class="launcher-mode-grid">
+                <button class="launcher-mode-card" data-launcher-mode="solo">
+                    <div class="lmc-icon">▶</div>
+                    <div class="lmc-name">PLAY</div>
+                    <div class="lmc-desc">You vs AI</div>
+                </button>
+                <button class="launcher-mode-card watch" data-launcher-mode="watch">
+                    <div class="lmc-icon">👁</div>
+                    <div class="lmc-name">WATCH</div>
+                    <div class="lmc-desc">AI vs AI</div>
+                </button>
+                <button class="launcher-mode-card tournament" data-launcher-mode="tournament">
+                    <div class="lmc-icon">⚔</div>
+                    <div class="lmc-name">TOURNAMENT</div>
+                    <div class="lmc-desc">8-model bracket</div>
+                </button>
+            </div>
+        </div>
 
         <!-- Mode select -->
         <div class="t-screen" id="t-mode-select">

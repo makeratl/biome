@@ -104,6 +104,13 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.info-row.sub {
+    font-size: 11px;
+    padding: 1px 0 1px 12px;
+}
+.info-row.sub span:first-child { color: #5e5e85; }
+.info-row.sub span:last-child  { color: #9a9abe; }
+
 .info-divider {
     border-top: 1px solid #2a2a4e;
     margin: 6px 0;
@@ -251,53 +258,131 @@ body {
     border: 1px solid #3a3a5e;
 }
 
-/* AI controls */
-.ai-player-row {
+/* ── Match section: segmented mode switcher ─────────────────── */
+.match-mode-segments {
     display: flex;
-    gap: 4px;
-    margin-bottom: 4px;
-    align-items: center;
+    gap: 0;
+    background: #0e1424;
+    border: 1px solid #1f2942;
+    border-radius: 5px;
+    padding: 2px;
+    margin-bottom: 10px;
 }
-
-.ai-player-row .ai-toggle {
+.match-mode-segment {
     flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    padding: 5px 6px;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #6e6e92;
     font-size: 10px;
-    padding: 3px 8px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    font-family: inherit;
+}
+.match-mode-segment:hover {
+    color: #b8b8d8;
+}
+.match-mode-segment.active {
+    background: rgba(200, 168, 110, 0.14);
+    color: #c8a86e;
 }
 
-.ai-select {
-    flex: 1;
-    min-width: 0;
-    padding: 3px 4px;
+/* ── Match section: model pickers ──────────────────────────── */
+.mmp-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+}
+.mmp-label.p1 { color: hsl(190, 70%, 60%); }
+.mmp-label.p2 { color: hsl(25, 75%, 62%); }
+
+.match-model-picker {
+    width: 100%;
+    padding: 6px 8px;
     background: #1a1a2e;
     color: #c8c8e0;
     border: 1px solid #2a2a4e;
-    border-radius: 3px;
-    font-size: 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%237a7a9e' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 24px;
+}
+.match-model-picker:hover { border-color: #4a4a7e; }
+.match-model-picker:focus { outline: none; border-color: #c8a86e; }
+.match-model-picker.p1 { border-left: 3px solid hsl(190, 70%, 50%); }
+.match-model-picker.p2 { border-left: 3px solid hsl(25, 75%, 52%); }
+
+/* ── Match section: blurb (tournament mode) ────────────────── */
+.mt-blurb {
+    font-size: 11px;
+    color: #8a8aae;
+    line-height: 1.45;
+    padding: 4px 2px;
 }
 
-.ai-toggle.ai-active {
-    border-color: #c8a86e;
-    color: #c8a86e;
-    background: rgba(200, 168, 110, 0.1);
-}
-
-.btn-model-config {
-    width: 100%;
-    margin-top: 4px;
-    font-size: 10px;
-    padding: 3px 8px;
-    background: transparent;
-    color: #7777aa;
+/* ── Match section: collapsed in-play summary ──────────────── */
+.match-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: rgba(255,255,255,0.025);
     border: 1px solid #2a2a4e;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+}
+.ms-mode {
+    font-size: 11px;
+    color: #c8c8e0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+.ms-expand {
+    background: transparent;
+    border: 1px solid #3a3a5e;
+    color: #8a8abe;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 1;
+    padding: 3px 7px;
     cursor: pointer;
 }
-.btn-model-config:hover {
+.ms-expand:hover { color: #c8a86e; border-color: #c8a86e; }
+
+/* ── Match section: Manage Models link ─────────────────────── */
+.btn-manage-models {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    font-size: 10px;
+    padding: 4px 8px;
+    background: transparent;
+    color: #6a6a8e;
+    border: 1px dashed #2a2a4e;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    transition: color 0.15s, border-color 0.15s;
+}
+.btn-manage-models:hover {
     color: #9999cc;
     border-color: #4444aa;
+    border-style: solid;
 }
 
 .model-config-panel {
@@ -700,18 +785,81 @@ body {
     margin: 2px 0;
 }
 
-/* ── Tournament Button ───────────────────────────────────── */
-.btn-tournament {
-    background: linear-gradient(135deg, hsl(270, 50%, 28%), hsl(220, 50%, 28%));
-    border: 1px solid hsl(270, 40%, 45%);
-    color: hsl(270, 80%, 85%);
-    font-weight: 700;
-    letter-spacing: 0.04em;
+/* ── Launcher (welcome screen on first load) ─────────────── */
+.launcher-title {
+    font-size: 56px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    background: linear-gradient(135deg, hsl(140, 60%, 65%), hsl(180, 55%, 60%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.launcher-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    max-width: 720px;
     width: 100%;
 }
-.btn-tournament:hover {
-    background: linear-gradient(135deg, hsl(270, 55%, 35%), hsl(220, 55%, 35%));
+
+.launcher-mode-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 180px;
+    padding: 28px 16px;
+    background: linear-gradient(135deg, rgba(168, 216, 168, 0.04), rgba(168, 216, 168, 0.10));
+    border: 1px solid rgba(168, 216, 168, 0.25);
+    border-radius: 12px;
+    color: rgba(255,255,255,0.85);
+    cursor: pointer;
+    font-family: inherit;
+    transition: transform 0.15s ease, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.launcher-mode-card:hover {
+    transform: translateY(-3px);
+    background: linear-gradient(135deg, rgba(168, 216, 168, 0.10), rgba(168, 216, 168, 0.18));
+    border-color: rgba(168, 216, 168, 0.55);
+    box-shadow: 0 8px 24px rgba(168, 216, 168, 0.12);
+}
+.launcher-mode-card.watch {
+    background: linear-gradient(135deg, rgba(80, 180, 220, 0.05), rgba(80, 180, 220, 0.12));
+    border-color: rgba(120, 200, 230, 0.25);
+}
+.launcher-mode-card.watch:hover {
+    background: linear-gradient(135deg, rgba(80, 180, 220, 0.12), rgba(80, 180, 220, 0.22));
+    border-color: rgba(120, 200, 230, 0.55);
+    box-shadow: 0 8px 24px rgba(80, 180, 220, 0.12);
+}
+.launcher-mode-card.tournament {
+    background: linear-gradient(135deg, hsl(270, 50%, 22%), hsl(220, 50%, 22%));
+    border-color: hsl(270, 40%, 45%);
+}
+.launcher-mode-card.tournament:hover {
+    background: linear-gradient(135deg, hsl(270, 55%, 30%), hsl(220, 55%, 30%));
     border-color: hsl(270, 60%, 60%);
+    box-shadow: 0 8px 24px rgba(168, 100, 220, 0.15);
+}
+
+.lmc-icon {
+    font-size: 36px;
+    line-height: 1;
+    margin-bottom: 4px;
+    opacity: 0.85;
+}
+.lmc-name {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+}
+.lmc-desc {
+    font-size: 11px;
+    color: rgba(255,255,255,0.55);
+    letter-spacing: 0.06em;
 }
 
 /* ── Tournament Overlay ──────────────────────────────────── */

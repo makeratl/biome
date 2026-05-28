@@ -329,15 +329,17 @@ SCORING (this is critical!):
 - Example: 5000 weighted biomass × 1.5 (5 species) × 1.25 (trophic) = 9375 final score
 - A diverse ecosystem CRUSHES a grass monoculture in scoring!
 
-SPECIES AND COSTS:
-- Grass (1 AP): Spreads fast. Foundation of any ecosystem. Essential early.
-- Shrub (1 AP): Moderate spread, tougher. Adds species diversity bonus.
-- Tree (2 AP): Slow spread, high energy (120 max). Immune to grazers. Great late-game anchor.
-- Grazer (2 AP): Eats grass & shrubs, prefers enemy plants. Raider + herbivore energy counts ×2.
-- Browser (2 AP): Eats shrubs & trees. Slower but energy counts ×2.
-- Predator (2 AP): Hunts herbivores. Energy counts ×3! Deploy when enemy has herbivores.
+SPECIES (in-world name → role, cost, behavior):
+- Sedgeweave (Grass, 1 AP): Spreads fast. Foundation of any ecosystem. Essential early.
+- Thornbloom (Shrub, 1 AP): Moderate spread, tougher. Adds species diversity bonus.
+- Spirewood (Tree, 2 AP): Slow spread, high energy (120 max). Immune to grazers. Great late-game anchor.
+- Hopgrazer (Grazer, 2 AP): Eats grass & shrubs, prefers enemy plants. Raider + herbivore energy counts ×2.
+- Bramblemaw (Browser, 2 AP): Eats shrubs & trees. Slower but energy counts ×2.
+- Shadestalker (Predator, 2 AP): Hunts herbivores. Energy counts ×3! Deploy when enemy has herbivores.
 
-STRATEGY: Early rounds plant grass for foundation. Mid-game diversify — add shrubs, herbivores. Late-game ensure you have all 3 trophic levels for the ×1.25 bonus.
+VOICE: In your reasoning and banter, prefer the in-world names (Sedgeweave, Thornbloom, Spirewood, Hopgrazer, Bramblemaw, Shadestalker) — they give your trash-talk personality. Roles (Grass/Shrub/Tree/Grazer/Browser/Predator) are fine too. The action JSON below must still use the technical UPPERCASE keys.
+
+STRATEGY: Early rounds plant Sedgeweave for foundation. Mid-game diversify — add Thornbloom, Hopgrazers. Late-game ensure you have all 3 trophic levels for the ×1.25 bonus.
 
 Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
 

@@ -36,12 +36,15 @@ class Game {
         this._buildSpeciesPalette();
         this._bindEvents();
         this._initModelConfig();
+        this._initMatchSection();
+        this._initLauncher();
         this._updateWorldInfo();
         this._scoreHistory = [];
         this._updateCensus();
+        this._updateTurnUI();
 
-        // Start the game
-        this.turns.startGame();
+        // Show launcher overlay on first load — game does NOT auto-start
+        this._openLauncherWelcome();
 
         console.log(`Biome initialized — seed: ${this.seed}`);
     }
@@ -55,11 +58,13 @@ class Game {
             const card = document.createElement('div');
             card.className = 'species-card';
             card.dataset.species = sp.key;
+            const subLabel = sp.role.toLowerCase() === sp.type ? sp.type : `${sp.role} · ${sp.type}`;
             card.innerHTML = `
                 <div class="name">${sp.name}</div>
-                <div class="type">${sp.type}</div>
+                <div class="type">${subLabel}</div>
                 <div class="cost">${sp.apCost} AP</div>
             `;
+            card.title = `${sp.name} (${sp.role}) — ${sp.type}`;
             card.addEventListener('click', () => this._selectSpecies(sp.key, card));
             palette.appendChild(card);
         }
@@ -85,47 +90,6 @@ class Game {
                 this.turns.endTurn();
             }
         });
-
-        document.getElementById('btn-new-game').addEventListener('click', () => {
-            this.seed = Math.floor(Math.random() * 100000);
-            this.grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS, CONFIG.HEX_SIZE);
-            this.renderer = new Renderer(this.canvas, this.grid);
-            this.simulation = new Simulation(this.grid);
-            this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
-            this._init();
-        });
-
-        document.getElementById('btn-tournament')?.addEventListener('click', () => {
-            this._startTournament();
-        });
-
-        // AI toggle buttons — each player has its own model dropdown
-        for (const btn of document.querySelectorAll('.ai-toggle')) {
-            btn.addEventListener('click', () => {
-                const p = parseInt(btn.dataset.player);
-                if (this.aiPlayers[p]) {
-                    this.removeAI(p);
-                    btn.textContent = `P${p}: Human`;
-                    btn.classList.remove('ai-active');
-                } else {
-                    const select = document.getElementById(`ai-model-p${p}`);
-                    const model = select?.value;
-                    if (!model) {
-                        this._log('No model selected — is Ollama running?');
-                        return;
-                    }
-                    this.setAI(p, model);
-                    // Show truncated model name on button
-                    const short = model.replace(/:latest$/, '').slice(0, 16);
-                    btn.textContent = `P${p}: ${short}`;
-                    btn.title = model;
-                    btn.classList.add('ai-active');
-                }
-            });
-        }
-
-        // Populate model dropdown
-        this._populateModelDropdown();
     }
 
     _isAIvsAI() {
@@ -310,11 +274,20 @@ class Game {
         } else if (phase === PHASE.GAME_OVER) {
             playerEl.textContent = 'Game Over';
             playerEl.className = 'player-indicator';
+        } else {
+            // SETUP / pre-match
+            playerEl.textContent = 'Ready';
+            playerEl.className = 'player-indicator';
         }
 
         // Round and AP
         const roundEl = document.getElementById('round-info');
-        roundEl.textContent = `Round ${this.turns.round} / ${this.turns.totalRounds}`;
+        if (this.turns.round > 0) {
+            roundEl.textContent = `Round ${this.turns.round} / ${this.turns.totalRounds}`;
+            roundEl.style.visibility = '';
+        } else {
+            roundEl.style.visibility = 'hidden';
+        }
 
         const apEl = document.getElementById('ap-display');
         if (player) {
@@ -507,22 +480,31 @@ class Game {
         const p1Label = this.aiPlayers[1] ? `P1 (${this.aiPlayers[1].model})` : 'Player 1';
         const p2Label = this.aiPlayers[2] ? `P2 (${this.aiPlayers[2].model})` : 'Player 2';
 
-        el.innerHTML = `
-            <div class="census-player p1">
-                <div class="census-label">${p1Label}</div>
-                <div class="info-row"><span>Plants</span><span>${census[1].plants}</span></div>
-                <div class="info-row"><span>Herbivores</span><span>${census[1].herbivores}</span></div>
-                <div class="info-row"><span>Predators</span><span>${census[1].predators}</span></div>
-                <div class="info-row biomass"><span>Biomass</span><span>${Math.round(census[1].biomass)}</span></div>
-            </div>
-            <div class="census-player p2">
-                <div class="census-label">${p2Label}</div>
-                <div class="info-row"><span>Plants</span><span>${census[2].plants}</span></div>
-                <div class="info-row"><span>Herbivores</span><span>${census[2].herbivores}</span></div>
-                <div class="info-row"><span>Predators</span><span>${census[2].predators}</span></div>
-                <div class="info-row biomass"><span>Biomass</span><span>${Math.round(census[2].biomass)}</span></div>
-            </div>
-        `;
+        const speciesByType = {
+            plant: ['GRASS', 'SHRUB', 'TREE'],
+            herbivore: ['GRAZER', 'BROWSER'],
+            predator: ['PREDATOR'],
+        };
+
+        const subRows = (bySpecies, type) =>
+            speciesByType[type]
+                .filter(k => bySpecies[k])
+                .map(k => `<div class="info-row sub"><span>${CONFIG.SPECIES[k].name}</span><span>${bySpecies[k]}</span></div>`)
+                .join('');
+
+        const playerBlock = (label, c, side) => `
+            <div class="census-player ${side}">
+                <div class="census-label">${label}</div>
+                <div class="info-row"><span>Plants</span><span>${c.plants}</span></div>
+                ${subRows(c.bySpecies, 'plant')}
+                <div class="info-row"><span>Herbivores</span><span>${c.herbivores}</span></div>
+                ${subRows(c.bySpecies, 'herbivore')}
+                <div class="info-row"><span>Predators</span><span>${c.predators}</span></div>
+                ${subRows(c.bySpecies, 'predator')}
+                <div class="info-row biomass"><span>Biomass</span><span>${Math.round(c.biomass)}</span></div>
+            </div>`;
+
+        el.innerHTML = playerBlock(p1Label, census[1], 'p1') + playerBlock(p2Label, census[2], 'p2');
     }
 
     async _showGameOver() {
@@ -566,7 +548,12 @@ class Game {
 
         document.getElementById('btn-play-again').addEventListener('click', () => {
             overlay.style.display = 'none';
-            document.getElementById('btn-new-game').click();
+            if (this._lastMatchConfig) {
+                this._startMatch(this._lastMatchConfig);
+            } else {
+                this._expandMatchSection();
+                this._openLauncherWelcome();
+            }
         });
 
         // Request final statements from AI players (in parallel)
@@ -665,22 +652,25 @@ class Game {
         this._log(`P${playerNum} is now Human`);
     }
 
-    async _populateModelDropdown() {
-        const selects = [
-            document.getElementById('ai-model-p1'),
-            document.getElementById('ai-model-p2'),
-        ].filter(Boolean);
+    async _populateModelPickers() {
+        const pickerIds = [
+            'match-model-p2-solo',
+            'match-model-p1-watch',
+            'match-model-p2-watch',
+        ];
+        const selects = pickerIds.map(id => document.getElementById(id)).filter(Boolean);
         if (selects.length === 0) return;
 
         this._installedModels = await listOllamaModels();
 
         for (const select of selects) {
+            const prevValue = select.value;
             select.innerHTML = '';
 
             if (this._installedModels.length === 0) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No models found';
+                opt.textContent = 'No models found — is Ollama running?';
                 select.appendChild(opt);
                 continue;
             }
@@ -692,24 +682,219 @@ class Game {
                 opt.textContent = size ? `${m.name}  (${size})` : m.name;
                 select.appendChild(opt);
             }
+            if (prevValue && this._installedModels.some(m => m.name === prevValue)) {
+                select.value = prevValue;
+            }
         }
 
-        // Set defaults — prefer cloud models, pick two different ones
-        if (this._installedModels.length > 0) {
-            const cloud = this._installedModels.filter(m => m.name.includes('cloud'));
-            const p1Default = cloud[0] || this._installedModels[0];
-            const p2Default = cloud[1] || cloud[0] || this._installedModels[Math.min(1, this._installedModels.length - 1)];
+        // Set sensible defaults: prefer cloud models, pick two different ones for Watch
+        if (this._installedModels.length === 0) return;
+        const cloud = this._installedModels.filter(m => m.name.includes('cloud'));
+        const first = cloud[0] || this._installedModels[0];
+        const second = cloud[1] || (this._installedModels[1] || first);
 
-            if (selects[0]) selects[0].value = p1Default.name;
-            if (selects[1] && p2Default.name !== p1Default.name) selects[1].value = p2Default.name;
-            else if (selects[1]) selects[1].value = this._installedModels[Math.min(1, this._installedModels.length - 1)].name;
+        const soloP2 = document.getElementById('match-model-p2-solo');
+        const watchP1 = document.getElementById('match-model-p1-watch');
+        const watchP2 = document.getElementById('match-model-p2-watch');
+        if (soloP2 && !soloP2.value) soloP2.value = first.name;
+        if (watchP1 && !watchP1.value) watchP1.value = first.name;
+        if (watchP2 && !watchP2.value) watchP2.value = second.name;
+    }
+
+    // ── Match section (sidebar mode-switcher) ────────────────
+
+    _initMatchSection() {
+        this._matchMode = 'solo';
+        this._lastMatchConfig = null;
+
+        for (const seg of document.querySelectorAll('.match-mode-segment')) {
+            seg.addEventListener('click', () => this._setMatchMode(seg.dataset.mode));
         }
+
+        document.getElementById('btn-start-match').addEventListener('click', () => {
+            this._onStartMatchClick();
+        });
+
+        document.getElementById('btn-match-expand')?.addEventListener('click', () => {
+            this._expandMatchSection();
+        });
+
+        this._populateModelPickers();
+    }
+
+    _setMatchMode(mode) {
+        this._matchMode = mode;
+        for (const seg of document.querySelectorAll('.match-mode-segment')) {
+            seg.classList.toggle('active', seg.dataset.mode === mode);
+        }
+        for (const cfg of document.querySelectorAll('.match-config')) {
+            cfg.style.display = cfg.dataset.mode === mode ? '' : 'none';
+        }
+        const startBtn = document.getElementById('btn-start-match');
+        if (mode === 'tournament') startBtn.textContent = 'Start Tournament ▶';
+        else if (mode === 'watch') startBtn.textContent = 'Start Watch Match ▶';
+        else startBtn.textContent = 'Start Match ▶';
+    }
+
+    async _onStartMatchClick() {
+        // If a match is currently in progress (not game-over), confirm restart
+        const running = this.turns.phase && this.turns.phase !== 'SETUP'
+            && this.turns.phase !== PHASE.GAME_OVER;
+        if (running) {
+            const ok = window.confirm('A match is in progress. Start a new match?');
+            if (!ok) return;
+        }
+
+        if (this._matchMode === 'tournament') {
+            this._startTournament();
+            return;
+        }
+
+        const cfg = { mode: this._matchMode };
+        if (this._matchMode === 'solo') {
+            cfg.p2Model = document.getElementById('match-model-p2-solo').value;
+        } else if (this._matchMode === 'watch') {
+            cfg.p1Model = document.getElementById('match-model-p1-watch').value;
+            cfg.p2Model = document.getElementById('match-model-p2-watch').value;
+        }
+        this._startMatch(cfg);
+    }
+
+    _startMatch(config) {
+        this._lastMatchConfig = config;
+
+        // Reset world: fresh seed, terrain, simulation, turn manager
+        this.seed = Math.floor(Math.random() * 100000);
+        this.grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS, CONFIG.HEX_SIZE);
+        this.renderer = new Renderer(this.canvas, this.grid);
+        this.simulation = new Simulation(this.grid);
+        this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
+        this.aiPlayers = {};
+        this._matchResolve = null;
+        this._scoreHistory = [];
+        this.simulating = false;
+
+        generateTerrain(this.grid, this.seed);
+        this.renderer.render();
+        this._updateWorldInfo();
+
+        // Configure AI players based on mode
+        if (config.mode === 'solo' && config.p2Model) {
+            this.setAI(2, config.p2Model);
+            this._rememberRecentModel(config.p2Model);
+        } else if (config.mode === 'watch') {
+            if (config.p1Model) {
+                this.setAI(1, config.p1Model);
+                this._rememberRecentModel(config.p1Model);
+            }
+            if (config.p2Model) {
+                this.setAI(2, config.p2Model);
+                this._rememberRecentModel(config.p2Model);
+            }
+        }
+
+        // Clear overlays
+        ['p1', 'p2'].forEach(p => {
+            const b = document.getElementById(`ai-banter-${p}`);
+            const s = document.getElementById(`ai-strategy-${p}`);
+            const lbl = document.querySelector(`#ai-overlay-${p} .ai-overlay-label`);
+            if (b) b.textContent = '';
+            if (s) s.textContent = '';
+            if (lbl) lbl.textContent = p.toUpperCase();
+        });
+        const log = document.getElementById('action-log');
+        if (log) log.innerHTML = '';
+
+        this._collapseMatchSection();
+        this._updateCensus();
+        this.turns.startGame();
+
+        console.log(`Match started: mode=${config.mode}, p1=${config.p1Model || 'human'}, p2=${config.p2Model || 'human'}`);
+    }
+
+    _collapseMatchSection() {
+        for (const cfg of document.querySelectorAll('.match-config')) {
+            cfg.style.display = 'none';
+        }
+        const startBtn = document.getElementById('btn-start-match');
+        const manageBtn = document.getElementById('btn-manage-models');
+        const panel = document.getElementById('model-config-panel');
+        const summary = document.getElementById('match-summary');
+        if (startBtn) startBtn.style.display = 'none';
+        if (manageBtn) manageBtn.style.display = 'none';
+        if (panel) panel.style.display = 'none';
+        if (summary) {
+            summary.style.display = '';
+            const cfg = this._lastMatchConfig || {};
+            const label = this._matchModeLabel(cfg);
+            document.getElementById('ms-mode').textContent = label;
+        }
+    }
+
+    _expandMatchSection() {
+        document.getElementById('match-summary').style.display = 'none';
+        document.getElementById('btn-start-match').style.display = '';
+        document.getElementById('btn-manage-models').style.display = '';
+        this._setMatchMode(this._matchMode);
+    }
+
+    _matchModeLabel(cfg) {
+        const short = m => m ? m.replace(/:latest$/, '').split('/').pop().slice(0, 14) : 'human';
+        if (cfg.mode === 'solo') return `Solo · vs ${short(cfg.p2Model)}`;
+        if (cfg.mode === 'watch') return `Watch · ${short(cfg.p1Model)} × ${short(cfg.p2Model)}`;
+        if (cfg.mode === 'tournament') return 'Tournament';
+        return 'Match';
+    }
+
+    _rememberRecentModel(model) {
+        if (!model) return;
+        try {
+            const key = 'biome.recentModels';
+            const list = JSON.parse(localStorage.getItem(key) || '[]');
+            const filtered = list.filter(m => m !== model);
+            filtered.unshift(model);
+            localStorage.setItem(key, JSON.stringify(filtered.slice(0, 4)));
+        } catch (_) { /* localStorage unavailable */ }
+    }
+
+    // ── Launcher overlay (first load) ────────────────────────
+
+    _initLauncher() {
+        for (const card of document.querySelectorAll('.launcher-mode-card')) {
+            card.addEventListener('click', () => {
+                const mode = card.dataset.launcherMode;
+                this._closeLauncherWelcome();
+                this._setMatchMode(mode);
+                if (mode === 'tournament') {
+                    // Tournament cards immediately open the existing Standard/Lightning picker
+                    this._startTournament();
+                }
+                // Solo/Watch: user picks model(s) in sidebar then clicks Start Match
+            });
+        }
+    }
+
+    _openLauncherWelcome() {
+        const overlay = document.getElementById('tournament-overlay');
+        const screen = document.getElementById('launcher-welcome');
+        if (!overlay || !screen) return;
+        overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+        screen.classList.remove('t-hidden');
+        overlay.classList.remove('t-hidden');
+    }
+
+    _closeLauncherWelcome() {
+        const overlay = document.getElementById('tournament-overlay');
+        const screen = document.getElementById('launcher-welcome');
+        if (!overlay || !screen) return;
+        screen.classList.add('t-hidden');
+        overlay.classList.add('t-hidden');
     }
 
     // ── Model Configuration Panel ───────────────────────────
 
     _initModelConfig() {
-        const btn = document.getElementById('btn-model-config');
+        const btn = document.getElementById('btn-manage-models');
         const panel = document.getElementById('model-config-panel');
         const closeBtn = document.getElementById('btn-mcp-close');
         if (!btn || !panel) return;
@@ -810,8 +995,8 @@ class Game {
 
         if (result.success) {
             statusDiv.textContent = `${modelName} installed!`;
-            // Refresh everything — dropdown + config panel
-            await this._populateModelDropdown();
+            // Refresh everything — pickers + config panel
+            await this._populateModelPickers();
             await this._refreshModelConfig();
         } else {
             statusDiv.textContent = `Failed: ${result.error}`;
