@@ -128,12 +128,13 @@ The AI module detects cloud-hosted Ollama models and increases token budgets acc
 Click the **⚔ Tournament** button to run a bracket elimination:
 
 1. **Select 8 models** from your Ollama instance
-2. **Quarter-Finals** (4 matches) → **Semi-Finals** (2 matches) → **Final** (1 match)
-3. Each match is a full 20-round game
-4. Bracket display shows matchups, scores, and progression
-5. Stats panel tracks per-model win rate, average score, and best species composition
+2. Pick a mode: **Standard** (20 rounds per match) or **Lightning** (10 rounds per match — faster brackets)
+3. **Quarter-Finals** (4 matches) → **Semi-Finals** (2 matches) → **Final** (1 match)
+4. Live bracket panel surfaces per-match state: completed (with winner + score margin), live (with running scores and round counter), up-next, queued, and pending slots
+5. Round recap and a championship transition card mark the climax of each match
+6. Stats panel tracks per-model win rate, average score, ELO ranking, and best species composition
 
-Matches run sequentially. The AI thinking overlay shows which model is making each move.
+Matches run sequentially. The AI thinking overlay shows which model is making each move, and audio cues mark callouts, recaps, and round transitions.
 
 ## Architecture
 
@@ -143,17 +144,19 @@ biome/
 ├── style.css           # All styling
 ├── server.py           # HTTP server + Ollama CORS proxy (port 8765)
 └── js/
-    ├── game.js         # Main game class, UI binding, AI orchestration
+    ├── game.js         # Main game class, UI binding, AI orchestration, round-end sequencer
     ├── config.js       # All tunable constants (grid, terrain, species, scoring)
     ├── ai.js           # AIPlayer — prompt builder, Ollama calls, JSON parsing
     ├── simulation.js   # Ecosystem engine — feeding, spreading, reproduction, death
     ├── species.js      # Organism creation and species queries
-    ├── turn.js          # TurnManager state machine
-    ├── grid.js          # HexGrid with flat-top hexagons (even-q offset)
-    ├── terrain.js       # Procedural terrain via Simplex Noise
-    ├── tournament.js    # TournamentManager — bracket, match execution, stats
-    ├── renderer.js      # Canvas rendering — terrain, organisms, fog, highlights
-    └── noise.js         # Simplex noise implementation
+    ├── turn.js         # TurnManager state machine
+    ├── grid.js         # HexGrid with flat-top hexagons (even-q offset)
+    ├── terrain.js      # Procedural terrain via Simplex Noise
+    ├── tournament.js   # TournamentManager — bracket, match execution, live state, stats
+    ├── rankings.js     # Per-model ELO rankings and tournament history
+    ├── sound.js        # Synthesized SFX bank (callouts, recap, round transitions)
+    ├── renderer.js     # Canvas rendering — terrain, organisms, fog, highlights
+    └── noise.js        # Simplex noise implementation
 ```
 
 ### Key Dependencies
