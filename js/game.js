@@ -596,6 +596,8 @@ class Game {
             return;
         } else if (phase === PHASE.ROUND_END) {
             this.renderer.clearHighlightRound();
+            // Tournament tick — repaint the bracket panel with this round's live scores
+            this._onTournamentTick?.();
             // Detect milestones (FIRST PREDATOR, DOMINANCE, COMEBACK, etc.)
             this._detectMilestones();
             // Show recap card with biomass + species deltas (if any milestone fired, defer slightly)

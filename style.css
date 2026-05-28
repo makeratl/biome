@@ -3190,53 +3190,90 @@ body {
 
 .lb-match {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0 4px;
-    padding: 3px 0;
-    border-radius: 3px;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
 }
 
 .lb-match.lb-live {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 160, 40, 0.06);
+    border-color: rgba(255, 160, 40, 0.32);
+    box-shadow: 0 0 12px rgba(255, 160, 40, 0.08);
 }
 
-.lb-p {
+.lb-match.lb-completed { opacity: 0.85; }
+.lb-match.lb-upnext    { background: rgba(255, 255, 255, 0.025); }
+.lb-match.lb-queued    { opacity: 0.6; }
+.lb-match.lb-pending   { opacity: 0.45; }
+
+.lb-side {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
     font-size: 10px;
-    color: rgba(255,255,255,0.55);
-    width: calc(50% - 20px);
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.lb-name {
+    flex: 1 1 auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.lb-p.lb-win  { color: hsl(140, 50%, 60%); font-weight: 600; }
-.lb-p.lb-lose { color: rgba(255,255,255,0.25); }
+.lb-score {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.45);
+    font-variant-numeric: tabular-nums;
+}
 
-.lb-badge {
+.lb-side.lb-win,
+.lb-side.lb-win  .lb-score { color: hsl(140, 55%, 65%); }
+.lb-side.lb-win             { font-weight: 600; }
+.lb-side.lb-lose,
+.lb-side.lb-lose .lb-score { color: rgba(255, 255, 255, 0.22); }
+.lb-side.lb-leading,
+.lb-side.lb-leading .lb-score { color: hsl(30, 80%, 68%); }
+.lb-side.lb-leading           { font-weight: 600; }
+
+.lb-status {
     font-size: 8px;
     font-weight: 700;
-    letter-spacing: 0.06em;
-    color: hsl(140, 45%, 55%);
-    background: rgba(140, 220, 140, 0.1);
+    letter-spacing: 0.08em;
     padding: 1px 5px;
+    margin-top: 2px;
     border-radius: 3px;
-    width: 100%;
     text-align: center;
-    text-overflow: ellipsis;
     overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.lb-badge.lb-playing {
-    color: hsl(30, 80%, 60%);
-    background: rgba(255, 160, 40, 0.12);
+.lb-status.lb-playing {
+    color: hsl(30, 85%, 65%);
+    background: rgba(255, 160, 40, 0.15);
     animation: lb-pulse 1.6s ease infinite;
+}
+
+.lb-status.lb-completed {
+    color: hsl(140, 50%, 60%);
+    background: rgba(140, 220, 140, 0.08);
+}
+
+.lb-status.lb-upnext {
+    color: rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 @keyframes lb-pulse {
     0%, 100% { opacity: 1; }
-    50%      { opacity: 0.5; }
+    50%      { opacity: 0.55; }
 }
 
 /* Floating stats toggle button is replaced by the gear menu entry */

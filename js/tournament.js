@@ -11,6 +11,7 @@ export class TournamentManager {
         this.running = false;
         this.tournamentId = crypto.randomUUID().slice(0, 8);
         this._statsOpen = false;
+        this._currentMatchIdx = null; // index in this.bracket of the match inside _runMatch
         this._setupStatsToggle();
     }
 
@@ -124,6 +125,11 @@ export class TournamentManager {
         document.getElementById('t-intro-p2').textContent  = this._short(match.p2);
         document.getElementById('t-intro-note').textContent = this._matchNote(match);
         this._show('t-match-intro');
+
+        // Surface in the bracket panel that THIS match is now the live one
+        this._currentMatchIdx = match.id;
+        this._renderLiveBracket();
+
         await this._sleep(3500);
 
         // Run game
@@ -131,9 +137,12 @@ export class TournamentManager {
         this.game.resetForMatch(this.totalRounds);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
+        // Repaint the bracket panel each round-end so the live card carries fresh scores + round counter
+        this.game._onTournamentTick = () => this._renderLiveBracket();
         const promise = this.game.runFullGame();
         this.game.turns.startGame();
         const scores = await promise;
+        this.game._onTournamentTick = null;
 
         // Record result — capture score history before it gets cleared on next reset
         match.scores = scores;
@@ -153,8 +162,10 @@ export class TournamentManager {
             mode: this.mode,
         });
 
-        // Update stats panel
+        // Update stats panel and live bracket — the panel can show the result while the result-screen overlay is up
+        this._currentMatchIdx = null;
         this._renderStats();
+        this._renderLiveBracket();
 
         // Result screen
         const loser  = match.winner === match.p1 ? match.p2 : match.p1;
@@ -247,31 +258,95 @@ export class TournamentManager {
             { label: 'Final', ids: [6] },
         ];
 
+        // The next match in the run order = lowest-id non-completed match with both slots filled, excluding the live one
+        const upNextId = this.bracket.findIndex((m, i) =>
+            !m.winner && i !== this._currentMatchIdx && m.p1 && m.p2
+        );
+
+        // Live data — only meaningful while a match is in progress
+        const liveScores = (this._currentMatchIdx != null && this.game.simulation)
+            ? this.game.simulation.finalScore()
+            : null;
+        const liveRound  = this._currentMatchIdx != null ? this.game.turns?.round : null;
+
         let html = '';
         for (const sec of sections) {
             html += `<div class="lb-section">${sec.label}</div>`;
             for (const id of sec.ids) {
-                const m = this.bracket[id];
-                const done = !!m.winner;
-                const isLive = !done && m.p1 && m.p2;
-                html += `<div class="lb-match ${done ? 'lb-done' : ''} ${isLive ? 'lb-live' : ''}">
-                    <div class="lb-p ${m.winner === m.p1 ? 'lb-win' : done ? 'lb-lose' : ''}">${m.p1 ? this._short(m.p1) : '—'}</div>
-                    <div class="lb-p ${m.winner === m.p2 ? 'lb-win' : done ? 'lb-lose' : ''}">${m.p2 ? this._short(m.p2) : '—'}</div>
-                    ${done ? `<div class="lb-badge">${this._short(m.winner)}</div>` : isLive ? '<div class="lb-badge lb-playing">LIVE</div>' : ''}
-                </div>`;
+                html += this._renderLiveMatch(this.bracket[id], id, upNextId, liveScores, liveRound);
             }
         }
 
-        // Render into the right-panel bracket tab
         const panelContent = document.getElementById('bt-bracket-content');
         if (panelContent) panelContent.innerHTML = html;
 
-        // Update the panel bracket title
         this.game.setBracketAvailable({
             available: true,
             live: this.running,
             title: `${modeLabel} Bracket`,
         });
+    }
+
+    _matchState(m, id, upNextId) {
+        if (m.winner) return 'completed';
+        if (id === this._currentMatchIdx) return 'live';
+        if (!m.p1 || !m.p2) return 'pending';
+        return id === upNextId ? 'upnext' : 'queued';
+    }
+
+    _renderLiveMatch(m, id, upNextId, liveScores, liveRound) {
+        const state = this._matchState(m, id, upNextId);
+
+        // Per-side classes — winner/loser only meaningful once a match completes
+        const p1Done   = state === 'completed' && m.winner === m.p1;
+        const p2Done   = state === 'completed' && m.winner === m.p2;
+        const p1Lost   = state === 'completed' && !p1Done;
+        const p2Lost   = state === 'completed' && !p2Done;
+
+        // Live scores — color whichever side is currently leading
+        const p1Live   = state === 'live' && liveScores ? liveScores[1].finalScore : null;
+        const p2Live   = state === 'live' && liveScores ? liveScores[2].finalScore : null;
+        const p1Lead   = state === 'live' && p1Live != null && p2Live != null && p1Live > p2Live;
+        const p2Lead   = state === 'live' && p1Live != null && p2Live != null && p2Live > p1Live;
+
+        // Completed margin — winner's score minus loser's score
+        const margin = state === 'completed' && m.scores
+            ? Math.abs(m.scores[1].finalScore - m.scores[2].finalScore)
+            : null;
+
+        const renderSide = (player, isP1) => {
+            const win  = isP1 ? p1Done : p2Done;
+            const lose = isP1 ? p1Lost : p2Lost;
+            const lead = isP1 ? p1Lead : p2Lead;
+            const live = isP1 ? p1Live : p2Live;
+            const cls  = ['lb-side'];
+            if (win)  cls.push('lb-win');
+            if (lose) cls.push('lb-lose');
+            if (lead) cls.push('lb-leading');
+            const score = live != null ? `<span class="lb-score">${live.toLocaleString()}</span>` : '';
+            return `<div class="${cls.join(' ')}">
+                <span class="lb-name">${player ? this._short(player) : '—'}</span>
+                ${score}
+            </div>`;
+        };
+
+        let status = '';
+        if (state === 'live') {
+            const r = liveRound ?? 1;
+            status = `<div class="lb-status lb-playing">LIVE · R${r}/${this.totalRounds}</div>`;
+        } else if (state === 'completed') {
+            const marginStr = margin != null && margin > 0 ? ` · +${margin.toLocaleString()}` : '';
+            status = `<div class="lb-status lb-completed">✓ ${this._short(m.winner)}${marginStr}</div>`;
+        } else if (state === 'upnext') {
+            status = `<div class="lb-status lb-upnext">UP NEXT</div>`;
+        }
+        // 'queued' and 'pending' get no status row — they read as muted
+
+        return `<div class="lb-match lb-${state}">
+            ${renderSide(m.p1, true)}
+            ${renderSide(m.p2, false)}
+            ${status}
+        </div>`;
     }
 
     _renderStats() {
