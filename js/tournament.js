@@ -508,7 +508,9 @@ export class TournamentManager {
 
         for (const m of matches) {
             const box = document.createElement('div');
-            box.className = 'bc-match' + (m.winner ? ' bc-done' : '');
+            const isLive = !m.winner && m.id === this._currentMatchIdx;
+            box.className = 'bc-match' +
+                (m.winner ? ' bc-done' : isLive ? ' bc-live' : '');
 
             const p1 = document.createElement('div');
             p1.className = 'bc-player' +

@@ -2521,8 +2521,16 @@ body {
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.35);
+    color: rgba(255,255,255,0.62);
     margin-bottom: 4px;
+    align-self: center;
+    padding: 3px 12px;
+    border-radius: 999px;
+    background: rgba(8, 12, 24, 0.6);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.5);
 }
 
 .bc-matches {
@@ -2533,29 +2541,68 @@ body {
 }
 
 .bc-match {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 8px;
-    padding: 10px 12px;
+    background:
+        linear-gradient(180deg, rgba(20,26,44,0.82), rgba(10,14,26,0.88));
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 9px;
+    padding: 10px 12px 10px 15px;
     position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
+    box-shadow:
+        0 6px 22px rgba(0,0,0,0.45),
+        inset 0 1px 0 rgba(255,255,255,0.07);
 }
-.bc-match.bc-done { border-color: rgba(255,255,255,0.2); }
+/* Left accent bar — color encodes match state, reads on any biome theme */
+.bc-match::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: rgba(255,255,255,0.18);
+}
+.bc-match.bc-done {
+    border-color: rgba(140, 220, 150, 0.28);
+}
+.bc-match.bc-done::before {
+    background: hsl(140, 60%, 58%);
+    box-shadow: 0 0 12px hsla(140, 60%, 55%, 0.55);
+}
+.bc-match.bc-live {
+    border-color: rgba(255, 170, 60, 0.5);
+    box-shadow:
+        0 6px 22px rgba(0,0,0,0.45),
+        0 0 18px rgba(255, 160, 40, 0.22),
+        inset 0 1px 0 rgba(255,255,255,0.07);
+}
+.bc-match.bc-live::before {
+    background: hsl(32, 90%, 60%);
+    box-shadow: 0 0 14px hsla(32, 90%, 58%, 0.7);
+    animation: bc-live-pulse 1.6s ease infinite;
+}
+@keyframes bc-live-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.5; }
+}
 
 .bc-player {
     font-size: 13px;
     font-weight: 600;
     padding: 4px 0;
-    color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.62);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.bc-player.bc-win { color: hsl(140, 60%, 65%); font-weight: 700; }
-.bc-player.bc-lose { color: rgba(255,255,255,0.25); text-decoration: line-through; }
+.bc-player.bc-win { color: hsl(140, 62%, 68%); font-weight: 700; }
+.bc-player.bc-lose { color: rgba(255,255,255,0.3); text-decoration: line-through; }
 
 .bc-divider {
     height: 1px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.12);
     margin: 3px 0;
 }
 
@@ -2579,13 +2626,14 @@ body {
 }
 .bc-conn-line {
     font-size: 10px;
-    color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.45);
     text-align: center;
     white-space: nowrap;
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
 }
 
 /* Match intro screen */
@@ -2615,8 +2663,49 @@ body {
 }
 .t-intro-note {
     font-size: 13px;
-    color: rgba(255,255,255,0.35);
+    color: rgba(255,255,255,0.45);
     letter-spacing: 0.05em;
+    position: relative;
+    z-index: 1;
+}
+
+/* Radial scrim so the matchup reads on any biome theme */
+#t-match-intro::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 120%;
+    height: 70%;
+    background: radial-gradient(
+        ellipse at center,
+        rgba(4, 6, 16, 0.78) 0%,
+        rgba(4, 6, 16, 0.55) 40%,
+        rgba(4, 6, 16, 0) 72%
+    );
+    pointer-events: none;
+    z-index: 0;
+}
+
+#t-match-intro .t-match-label,
+#t-match-intro .t-vs-row,
+#t-match-intro .t-intro-note {
+    position: relative;
+    z-index: 1;
+}
+
+#t-match-intro .t-match-label {
+    color: rgba(255,255,255,0.6);
+}
+
+/* Lift the model names off the map with a readable shadow */
+#t-match-intro .t-model {
+    text-shadow: 0 2px 18px rgba(0,0,0,0.7);
+}
+#t-match-intro .t-vs {
+    color: rgba(255,255,255,0.4);
+    text-shadow: 0 2px 12px rgba(0,0,0,0.6);
 }
 
 /* Match result screen */
@@ -3301,20 +3390,23 @@ body {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid transparent;
+    padding: 5px 7px;
+    border-radius: 5px;
+    background: rgba(10, 14, 26, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
     transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
 }
 
 .lb-match.lb-live {
-    background: rgba(255, 160, 40, 0.06);
-    border-color: rgba(255, 160, 40, 0.32);
-    box-shadow: 0 0 12px rgba(255, 160, 40, 0.08);
+    background: rgba(255, 160, 40, 0.12);
+    border-color: rgba(255, 160, 40, 0.5);
+    box-shadow: 0 0 16px rgba(255, 160, 40, 0.18);
 }
 
-.lb-match.lb-completed { opacity: 0.85; }
-.lb-match.lb-upnext    { background: rgba(255, 255, 255, 0.025); }
+.lb-match.lb-completed { opacity: 0.85; border-color: rgba(140, 220, 150, 0.22); }
+.lb-match.lb-upnext    { background: rgba(255, 255, 255, 0.06); }
 .lb-match.lb-queued    { opacity: 0.6; }
 .lb-match.lb-pending   { opacity: 0.45; }
 
