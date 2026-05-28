@@ -600,26 +600,37 @@ class Game {
             this._onTournamentTick?.();
             // Detect milestones (FIRST PREDATOR, DOMINANCE, COMEBACK, etc.)
             this._detectMilestones();
-            // Show recap card with biomass + species deltas (if any milestone fired, defer slightly)
-            const calloutsFiring = this._calloutBusy;
-            const recapDelay = calloutsFiring ? 1100 : 200;
-            if (this._preSimSnapshot) {
-                setTimeout(() => this._showRecap(this._preSimSnapshot), recapDelay);
-            }
-            // Show round transition card, then advance
-            const nextRound = this.turns.round + 1;
-            if (nextRound <= this.turns.totalRounds) {
-                setTimeout(() => this._showRoundTransition(nextRound), 3500);
-                setTimeout(() => this.turns.nextRound(), 4700);
-            } else {
-                setTimeout(() => this.turns.nextRound(), 3500);
-            }
+            // Sequencer owns the round-end timeline: callouts → recap → transition → advance.
+            // No fixed setTimeouts — each step awaits the previous overlay's hide.
+            this._runRoundEndSequence();
         } else if (phase === PHASE.GAME_OVER) {
             this.renderer.clearHighlightRound();
             this._showGameOver();
         }
 
         this._updateTurnUI();
+    }
+
+    async _runRoundEndSequence() {
+        const isFinalRound = this.turns.round >= this.turns.totalRounds;
+
+        // Step 1 — drain any milestone callouts dispatched synchronously by _detectMilestones
+        await this._waitForCalloutsDone();
+
+        // Step 2 — recap card (returns immediately if there's nothing notable to show)
+        if (this._preSimSnapshot) {
+            await this._showRecap(this._preSimSnapshot);
+        }
+
+        // Step 3 — round transition card. Final round still gets a card, with FINAL copy.
+        if (isFinalRound) {
+            await this._showRoundTransition(null, { isFinalRound: true });
+        } else {
+            await this._showRoundTransition(this.turns.round + 1);
+        }
+
+        // Step 4 — advance the game. For the final round this triggers PHASE.GAME_OVER.
+        this.turns.nextRound();
     }
 
     _onHover(e) {
@@ -946,12 +957,24 @@ class Game {
     _dispatchCallout({ text, subtitle = '', tone = 'neutral' }) {
         this._calloutQueue = this._calloutQueue || [];
         this._calloutQueue.push({ text, subtitle, tone });
-        if (!this._calloutBusy) this._drainCallouts();
+        if (!this._calloutBusy) {
+            // Starting a fresh drain — create a promise the sequencer can await
+            this._calloutsDone = new Promise(resolve => { this._calloutsDoneResolve = resolve; });
+            this._drainCallouts();
+        }
+    }
+
+    _waitForCalloutsDone() {
+        return this._calloutsDone || Promise.resolve();
     }
 
     _drainCallouts() {
         if (!this._calloutQueue || this._calloutQueue.length === 0) {
             this._calloutBusy = false;
+            // Drain complete — resolve any waiting sequencer
+            this._calloutsDoneResolve?.();
+            this._calloutsDoneResolve = null;
+            this._calloutsDone = null;
             return;
         }
         this._calloutBusy = true;
@@ -1139,14 +1162,14 @@ class Game {
             }
         }
 
-        if (lines.length === 0) return; // nothing notable
+        if (lines.length === 0) return Promise.resolve(); // nothing notable
 
         this._playSound('recap');
 
         const el = document.getElementById('recap-card');
         const hEl = document.getElementById('rc-header');
         const bEl = document.getElementById('rc-body');
-        if (!el || !bEl) return;
+        if (!el || !bEl) return Promise.resolve();
 
         hEl.textContent = `Round ${this.turns.round} Recap`;
 
@@ -1167,8 +1190,13 @@ class Game {
         void el.offsetWidth;
         el.className = '';
 
-        clearTimeout(this._recapTimer);
-        this._recapTimer = setTimeout(() => el.classList.add('recap-hidden'), 3200);
+        return new Promise(resolve => {
+            clearTimeout(this._recapTimer);
+            this._recapTimer = setTimeout(() => {
+                el.classList.add('recap-hidden');
+                resolve();
+            }, 3200);
+        });
     }
 
     _snapshotCensus() {
@@ -1179,13 +1207,13 @@ class Game {
         };
     }
 
-    _showRoundTransition(nextRound) {
+    _showRoundTransition(nextRound, { isFinalRound = false } = {}) {
         const overlay = document.getElementById('round-transition');
         const numEl = document.getElementById('rt-number');
         const subEl = document.getElementById('rt-subline');
-        if (!overlay || !numEl) return;
+        if (!overlay || !numEl) return Promise.resolve();
 
-        numEl.textContent = nextRound;
+        numEl.textContent = isFinalRound ? 'FINAL' : nextRound;
 
         // Subline shows current leader (if any meaningful margin)
         const scores = this.simulation.finalScore();
@@ -1211,9 +1239,13 @@ class Game {
         overlay.classList.remove('rt-hidden');
         this._playSound('round');
 
-        // Auto-hide after the animation completes
-        clearTimeout(this._rtHideTimer);
-        this._rtHideTimer = setTimeout(() => overlay.classList.add('rt-hidden'), 1500);
+        return new Promise(resolve => {
+            clearTimeout(this._rtHideTimer);
+            this._rtHideTimer = setTimeout(() => {
+                overlay.classList.add('rt-hidden');
+                resolve();
+            }, 1500);
+        });
     }
 
     _drawScoreChart() {
