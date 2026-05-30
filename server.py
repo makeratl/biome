@@ -23,9 +23,21 @@ def _save_log(data):
     with open(LOG_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
+DEFAULT_ELO = 1000
+
+def _expected(r_a, r_b):
+    """Expected score (win probability) for player A vs player B under ELO."""
+    return 1 / (1 + 10 ** ((r_b - r_a) / 400))
+
+def _rank_of(rankings, name):
+    """Return {'elo', 'rank'} (1-based) for a name in an ordered rankings dict, or None."""
+    for i, (n, stats) in enumerate(rankings.items()):
+        if n == name:
+            return {'elo': stats['elo'], 'rank': i + 1}
+    return None
+
 def _compute_rankings(log):
     K = 32
-    DEFAULT_ELO = 1000
     models = {}
     for entry in log:
         p1 = entry['p1']
@@ -35,7 +47,7 @@ def _compute_rankings(log):
                 models[m] = {'elo': DEFAULT_ELO, 'wins': 0, 'losses': 0, 'matches': 0}
         r1 = models[p1]['elo']
         r2 = models[p2]['elo']
-        e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
+        e1 = _expected(r1, r2)
         e2 = 1 - e1
         s1 = 1 if entry['winner'] == p1 else 0
         s2 = 1 - s1
@@ -91,6 +103,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament-result':
             self._handle_tournament_result()
             return
+        # Reset rankings (archive then clear the match log)
+        if self.path == '/reset-rankings':
+            self._handle_reset()
+            return
         super().do_POST()
 
     def _json_response(self, data, status=200):
@@ -123,9 +139,59 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'mode': body.get('mode', 'standard'),
         }
         log = _load_log()
+        before = _compute_rankings(log)   # rankings as they stood BEFORE this match
         log.append(entry)
         _save_log(log)
-        self._json_response({'ok': True, 'total_matches': len(log)})
+        after = _compute_rankings(log)    # rankings AFTER this match resolves
+        total_after = len(after)
+
+        def _delta(name):
+            b = _rank_of(before, name)
+            a = _rank_of(after, name)
+            return {
+                'name': name,
+                'eloBefore': b['elo'] if b else DEFAULT_ELO,
+                'eloAfter': a['elo'] if a else DEFAULT_ELO,
+                'rankBefore': b['rank'] if b else None,   # null = wasn't ranked yet
+                'rankAfter': a['rank'] if a else total_after,
+                'total': total_after,
+            }
+
+        winner = entry['winner']
+        loser = entry['p2'] if winner == entry['p1'] else entry['p1']
+        wb = _rank_of(before, winner)
+        lb = _rank_of(before, loser)
+        winner_win_prob = _expected(
+            wb['elo'] if wb else DEFAULT_ELO,
+            lb['elo'] if lb else DEFAULT_ELO,
+        )
+
+        result = {
+            'p1': _delta(entry['p1']),
+            'p2': _delta(entry['p2']),
+            'winner': winner,
+            'winnerWinProb': winner_win_prob,
+        }
+        self._json_response({
+            'ok': True,
+            'total_matches': len(log),
+            'result': result,
+            'rankings': after,
+        })
+
+    def _handle_reset(self):
+        """Archive the current match log to a timestamped backup, then start fresh."""
+        archived = None
+        if os.path.exists(LOG_FILE):
+            ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+            backup = os.path.join(os.path.dirname(LOG_FILE), f'tournament_log.{ts}.bak')
+            try:
+                os.rename(LOG_FILE, backup)
+                archived = os.path.basename(backup)
+            except OSError:
+                pass
+        _save_log([])
+        self._json_response({'ok': True, 'archived': archived})
 
     def _proxy_ollama_stream(self, path, is_post=False):
         """Stream proxy for pull requests — sends NDJSON lines as they arrive."""

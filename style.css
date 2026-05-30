@@ -931,6 +931,34 @@ body {
 }
 .sb-lead.tied { color: rgba(255,255,255,0.4); }
 
+/* Pre-match win odds (shown in the lead slot at round 0) */
+.sb-odds {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    min-height: 14px;
+}
+.sb-odds-pct { font-weight: 700; }
+.sb-odds-arrow { font-size: 9px; opacity: 0.85; }
+.sb-odds-tag {
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    opacity: 0.55;
+}
+.sb-odds.p1 {
+    color: hsl(190, 70%, 60%);
+    text-shadow: 0 0 7px hsla(190, 80%, 60%, 0.45);
+}
+.sb-odds.p2 {
+    color: hsl(25, 75%, 60%);
+    text-shadow: 0 0 7px hsla(25, 80%, 60%, 0.45);
+}
+.sb-odds.even { color: rgba(255, 255, 255, 0.5); }
+
 /* LIVE indicator */
 .sb-live {
     display: inline-flex;
@@ -1447,6 +1475,15 @@ body {
 .activity-ticker.at-hidden {
     opacity: 0;
     pointer-events: none;
+}
+/* Hushed while a "moment" (callout / recap / transition) owns the stage —
+   the feed recedes instead of competing with the celebration. */
+.activity-ticker.at-quiet {
+    opacity: 0.18;
+    transform: translateX(-50%) translateY(4px) scale(0.96);
+    filter: saturate(0.6);
+    pointer-events: none;
+    transition: opacity 0.35s ease, transform 0.35s ease, filter 0.35s ease;
 }
 .at-rail {
     display: flex;
@@ -3001,7 +3038,9 @@ body {
     top: 50%;
     left: 0;
     right: 0;
-    z-index: 28;
+    /* Above the game-over (100) and tournament (1000) overlays so rank-drama
+       celebrations read on top of the result/intro screens. */
+    z-index: 1400;
     transform: translateY(-50%);
     pointer-events: none;
     display: flex;
@@ -3065,12 +3104,69 @@ body {
     --co-glow: hsla(45, 100%, 60%, 0.55);
 }
 
+/* ── Rank-drama celebration tones ───────────────────────── */
+#callout.tone-upset .co-text {
+    background: linear-gradient(135deg, hsl(48, 100%, 68%), hsl(330, 90%, 62%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    --co-glow: hsla(330, 95%, 60%, 0.6);
+}
+#callout.tone-promote .co-text {
+    background: linear-gradient(135deg, hsl(150, 80%, 65%), hsl(170, 75%, 50%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    --co-glow: hsla(155, 85%, 55%, 0.55);
+}
+#callout.tone-demote .co-text {
+    background: linear-gradient(135deg, hsl(210, 25%, 72%), hsl(220, 18%, 52%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    --co-glow: hsla(220, 30%, 50%, 0.45);
+}
+#callout.tone-throne .co-text {
+    background: linear-gradient(135deg, hsl(45, 100%, 72%), hsl(40, 100%, 58%), hsl(50, 100%, 75%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    --co-glow: hsla(45, 100%, 60%, 0.7);
+}
+
 @keyframes co-anim {
     0%   { opacity: 0; transform: translateY(20px) scale(0.85); }
     10%  { opacity: 1; transform: translateY(0) scale(1.04); }
     16%  { transform: translateY(0) scale(1.0); }
     82%  { opacity: 1; transform: translateY(0) scale(1.0); }
     100% { opacity: 0; transform: translateY(-12px) scale(1.04); }
+}
+
+/* ── Rank-drama beat (throne / promote / upset) ───────────────
+   A leaderboard surprise gets a punchier entrance with an elastic
+   overshoot and a pulsing glow, held longer (3000ms) so the moment
+   reads as a celebration rather than a flicker. */
+#callout.co-rank > * {
+    animation: co-anim-rank 3000ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+#callout.co-rank > .co-text {
+    animation: co-anim-rank 3000ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+               co-rank-glow 900ms ease-in-out 200ms 2;
+}
+
+@keyframes co-anim-rank {
+    0%   { opacity: 0; transform: translateY(30px) scale(0.6); }
+    9%   { opacity: 1; transform: translateY(0) scale(1.16); }
+    16%  { transform: translateY(0) scale(0.97); }
+    23%  { transform: translateY(0) scale(1.05); }
+    30%  { transform: translateY(0) scale(1.0); }
+    85%  { opacity: 1; transform: translateY(0) scale(1.0); }
+    100% { opacity: 0; transform: translateY(-16px) scale(1.06); }
+}
+
+@keyframes co-rank-glow {
+    0%, 100% { filter: drop-shadow(0 0 8px var(--co-glow, rgba(255,255,255,0.4))); }
+    50%      { filter: drop-shadow(0 0 28px var(--co-glow, rgba(255,255,255,0.4))) brightness(1.15); }
 }
 
 /* ── Round-end recap card ────────────────────────────────── */
@@ -3810,3 +3906,153 @@ body {
 .rk-m-beat   { color: rgba(255,255,255,0.2); }
 .rk-m-loser  { color: rgba(255,255,255,0.35); min-width: 60px; }
 .rk-m-scores { color: rgba(255,255,255,0.25); margin-left: auto; }
+
+/* ── Rank badge on player cards ─────────────────────────── */
+.pc-rank {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+}
+.pc-rank:empty { display: none; }
+.player-card.p1 .pc-rank { color: hsl(185, 80%, 72%); }
+.player-card.p2 .pc-rank { color: hsl(28, 90%, 68%); }
+
+/* ── Pre-match / intro win-odds ─────────────────────────── */
+.odds-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    margin-top: 14px;
+}
+.odds-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.22em;
+    color: rgba(255,255,255,0.35);
+}
+.odds-side {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 96px;
+}
+.odds-pct {
+    font-size: 22px;
+    font-weight: 900;
+    line-height: 1;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}
+.odds-tag {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+}
+.odds-fav  { color: hsl(45, 100%, 70%); background: hsla(45, 100%, 55%, 0.14); border: 1px solid hsla(45, 100%, 60%, 0.4); }
+.odds-dog  { color: hsl(210, 30%, 78%); background: hsla(210, 30%, 60%, 0.1); border: 1px solid hsla(210, 30%, 60%, 0.28); }
+.odds-even { color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); }
+
+/* ── Leaderboard "you" highlight + reset button ─────────── */
+.rk-row.rk-you {
+    background: hsla(150, 70%, 50%, 0.12);
+    box-shadow: inset 2px 0 0 hsl(150, 70%, 55%);
+}
+.rk-row.rk-you .rk-name { color: hsl(150, 75%, 72%); font-weight: 800; }
+.rk-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.rk-reset {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.rk-reset:hover {
+    color: hsl(0, 75%, 72%);
+    border-color: hsla(0, 75%, 60%, 0.5);
+    background: hsla(0, 75%, 55%, 0.12);
+}
+
+/* ── Human handle prompt modal ──────────────────────────── */
+.handle-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 6, 18, 0.72);
+    backdrop-filter: blur(4px);
+}
+.handle-modal.modal-hidden { display: none; }
+.handle-card {
+    width: min(380px, 90vw);
+    background: rgba(16, 22, 42, 0.98);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px;
+    padding: 26px 24px 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    text-align: center;
+}
+.handle-title {
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    color: #fff;
+    margin-bottom: 6px;
+}
+.handle-sub {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 18px;
+}
+.handle-input {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 8px;
+    padding: 12px 14px;
+    outline: none;
+    margin-bottom: 16px;
+}
+.handle-input:focus { border-color: hsl(150, 70%, 55%); }
+.handle-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+.handle-btn-skip {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.6);
+}
+.handle-btn-ok {
+    background: linear-gradient(135deg, hsl(150, 70%, 48%), hsl(168, 70%, 42%));
+    border: none;
+    color: #04140c;
+    font-weight: 800;
+}

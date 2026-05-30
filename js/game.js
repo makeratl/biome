@@ -9,8 +9,12 @@ import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
-import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel } from './rankings.js';
+import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
 import { playSound, setMuted, isMuted } from './sound.js';
+
+// Callout tones that represent a leaderboard surprise. These get a larger
+// entrance animation and a longer hold so the moment reads as a celebration.
+const RANK_DRAMA_TONES = new Set(['throne', 'promote', 'upset']);
 
 class Game {
     constructor() {
@@ -101,6 +105,26 @@ class Game {
                 if (rail.children.length === 0) ticker.classList.add('at-hidden');
             }, 450);
         }, 4000);
+    }
+
+    // ── Moment lock ──────────────────────────────────────────
+    // A "moment" is any celebratory overlay that owns the stage: a dramatic
+    // callout sequence, the round recap, or the round-transition card. While
+    // one is on screen we hush the activity ticker so the bottom feed recedes
+    // instead of competing for attention. Ref-counted so overlapping owners
+    // (e.g. a callout that runs into the recap) don't un-hush prematurely.
+    _beginMoment() {
+        this._momentDepth = (this._momentDepth || 0) + 1;
+        if (this._momentDepth === 1) {
+            document.getElementById('activity-ticker')?.classList.add('at-quiet');
+        }
+    }
+
+    _endMoment() {
+        this._momentDepth = Math.max(0, (this._momentDepth || 0) - 1);
+        if (this._momentDepth === 0) {
+            document.getElementById('activity-ticker')?.classList.remove('at-quiet');
+        }
     }
 
     _openActivityLog() {
@@ -373,6 +397,21 @@ class Game {
         } else {
             statusEl.textContent = 'Unranked';
         }
+    }
+
+    // Fetch both models' ELO and compute the head-to-head win probability for the
+    // pre-match header readout. No-op (and clears odds) unless both slots are ranked AIs.
+    async _updateMatchupOdds() {
+        const a1 = this.aiPlayers[1], a2 = this.aiPlayers[2];
+        if (!a1 || !a2) { this._matchupOdds = null; this._updateScoreboard(); return; }
+        const m1 = a1.model, m2 = a2.model;
+        const [r1, r2] = await Promise.all([this._fetchRanking(m1), this._fetchRanking(m2)]);
+        // Bail if either slot changed mid-fetch.
+        if (this.aiPlayers[1]?.model !== m1 || this.aiPlayers[2]?.model !== m2) return;
+        if (r1?.elo == null || r2?.elo == null) { this._matchupOdds = null; this._updateScoreboard(); return; }
+        const p1Win = expectedScore(r1.elo, r2.elo);
+        this._matchupOdds = { p1Win, p2Win: 1 - p1Win };
+        this._updateScoreboard();
     }
 
     _resetAICard(playerNum) {
@@ -854,6 +893,27 @@ class Game {
         scoreEl1.classList.toggle('winning', s1.finalScore > s2.finalScore);
         scoreEl2.classList.toggle('winning', s2.finalScore > s1.finalScore);
 
+        // Head-to-head win odds — persistent below the live lead for the whole match,
+        // so the ELO-implied favorite stays visible while the actual score plays out.
+        const oddsEl = document.getElementById('sb-odds');
+        if (oddsEl) {
+            if (this._matchupOdds) {
+                const { p1Win, p2Win } = this._matchupOdds;
+                const favPct = Math.round(Math.max(p1Win, p2Win) * 100);
+                if (Math.abs(p1Win - p2Win) < 0.02) {
+                    oddsEl.className = 'sb-odds even';
+                    oddsEl.innerHTML = `<span class="sb-odds-pct">EVEN</span><span class="sb-odds-tag">ODDS</span>`;
+                } else {
+                    const favIsP1 = p1Win > p2Win;
+                    oddsEl.className = `sb-odds ${favIsP1 ? 'p1' : 'p2'}`;
+                    oddsEl.innerHTML = `<span class="sb-odds-pct">${favPct}%</span><span class="sb-odds-arrow">${favIsP1 ? '◀' : '▶'}</span><span class="sb-odds-tag">ODDS</span>`;
+                }
+                oddsEl.style.display = '';
+            } else {
+                oddsEl.style.display = 'none';
+            }
+        }
+
         const diff = Math.abs(s1.finalScore - s2.finalScore);
         const fmtLead = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
         if (diff === 0) {
@@ -954,12 +1014,13 @@ class Game {
         this._calloutBusy = false;
     }
 
-    _dispatchCallout({ text, subtitle = '', tone = 'neutral' }) {
+    _dispatchCallout({ text, subtitle = '', tone = 'neutral', sound = 'callout' }) {
         this._calloutQueue = this._calloutQueue || [];
-        this._calloutQueue.push({ text, subtitle, tone });
+        this._calloutQueue.push({ text, subtitle, tone, sound });
         if (!this._calloutBusy) {
             // Starting a fresh drain — create a promise the sequencer can await
             this._calloutsDone = new Promise(resolve => { this._calloutsDoneResolve = resolve; });
+            this._beginMoment();
             this._drainCallouts();
         }
     }
@@ -970,36 +1031,48 @@ class Game {
 
     _drainCallouts() {
         if (!this._calloutQueue || this._calloutQueue.length === 0) {
-            this._calloutBusy = false;
-            // Drain complete — resolve any waiting sequencer
-            this._calloutsDoneResolve?.();
-            this._calloutsDoneResolve = null;
-            this._calloutsDone = null;
+            this._finishCalloutDrain();
             return;
         }
         this._calloutBusy = true;
-        const { text, subtitle, tone } = this._calloutQueue.shift();
+        const { text, subtitle, tone, sound = 'callout' } = this._calloutQueue.shift();
 
         const el = document.getElementById('callout');
         const tEl = document.getElementById('co-text');
         const sEl = document.getElementById('co-subtitle');
-        if (!el || !tEl) { this._calloutBusy = false; return; }
+        if (!el || !tEl) { this._finishCalloutDrain(); return; }
 
         tEl.textContent = text;
         sEl.textContent = subtitle || '';
         sEl.style.display = subtitle ? '' : 'none';
 
+        // Rank-drama tones (a leaderboard surprise) get a bigger entrance and a
+        // longer hold so the moment lands as a celebration, not a flicker.
+        const isRankDrama = RANK_DRAMA_TONES.has(tone);
+
         el.className = 'co-hidden'; // reset
         void el.offsetWidth;
-        el.className = `tone-${tone}`;
-        this._playSound('callout');
+        el.className = isRankDrama ? `tone-${tone} co-rank` : `tone-${tone}`;
+        this._playSound(sound);
 
-        // Animation runs ~2.4s; queue next after a short gap
+        const holdMs = isRankDrama ? 3000 : 2400;
         clearTimeout(this._coTimer);
         this._coTimer = setTimeout(() => {
             el.className = 'co-hidden';
             setTimeout(() => this._drainCallouts(), 220);
-        }, 2400);
+        }, holdMs);
+    }
+
+    // Drain finished (or aborted) — release the moment lock and resolve any
+    // sequencer awaiting the queue. Idempotent guards keep the moment ref-count
+    // balanced even on the missing-element early-out.
+    _finishCalloutDrain() {
+        this._calloutBusy = false;
+        this._calloutQueue = [];
+        this._endMoment();
+        this._calloutsDoneResolve?.();
+        this._calloutsDoneResolve = null;
+        this._calloutsDone = null;
     }
 
     _detectMilestones() {
@@ -1190,10 +1263,12 @@ class Game {
         void el.offsetWidth;
         el.className = '';
 
+        this._beginMoment();
         return new Promise(resolve => {
             clearTimeout(this._recapTimer);
             this._recapTimer = setTimeout(() => {
                 el.classList.add('recap-hidden');
+                this._endMoment();
                 resolve();
             }, 3200);
         });
@@ -1245,10 +1320,12 @@ class Game {
 
         // Final round holds longer so the moment lands — 2.5s instead of 1.5s
         const holdMs = isFinalRound ? 2500 : 1500;
+        this._beginMoment();
         return new Promise(resolve => {
             clearTimeout(this._rtHideTimer);
             this._rtHideTimer = setTimeout(() => {
                 overlay.classList.add('rt-hidden');
+                this._endMoment();
                 resolve();
             }, holdMs);
         });
@@ -1567,6 +1644,16 @@ class Game {
         overlay.style.display = 'flex';
         overlay.querySelector('.winner').textContent = winnerLabel;
         this._playSound('victory');
+
+        // Solo + Watch matches now count toward the leaderboard. Post the
+        // result, then stage any rank drama (upset / promotion / throne) as its
+        // own beat — a short pause after the match-end fanfare so the two don't
+        // collide. The callout queue hushes the ticker while it plays.
+        this._recordCasualResult(scores).then(res => {
+            if (res?.result) {
+                setTimeout(() => this._celebrateResult(res.result), 800);
+            }
+        });
         overlay.querySelector('.final-score').innerHTML =
             breakdown(p1Label, s1, 'final-stmt-p1') + breakdown(p2Label, s2, 'final-stmt-p2');
 
@@ -1700,12 +1787,17 @@ class Game {
         this.aiPlayers[playerNum] = new AIPlayer(this, playerNum, { model });
         this._log(`P${playerNum} is now AI (${model})`);
         this._setAICardIdentity(playerNum);
+        // Surface identity in the header immediately — don't wait for the first move.
+        this._updateScoreboard();
+        this._updateMatchupOdds();
     }
 
     removeAI(playerNum) {
         delete this.aiPlayers[playerNum];
         this._log(`P${playerNum} is now Human`);
         this._setAICardIdentity(playerNum);
+        this._matchupOdds = null;
+        this._updateScoreboard();
     }
 
     async _populateModelPickers() {
@@ -1850,6 +1942,11 @@ class Game {
     async _startMatch(config) {
         this._lastMatchConfig = config;
 
+        // Solo matches are ranked under the human's handle — prompt once up front.
+        if (config.mode === 'solo') {
+            this._humanHandle = await this._ensureHandle();
+        }
+
         // Solo/Watch matches clear any prior tournament state from the panel
         if (config.mode === 'solo' || config.mode === 'watch') {
             this.setBracketAvailable({ available: false });
@@ -1864,6 +1961,7 @@ class Game {
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.aiPlayers = {};
         this._matchResolve = null;
+        this._matchupOdds = null;
         this._scoreHistory = [];
         this.simulating = false;
 
@@ -1959,6 +2057,120 @@ class Game {
         return `${niceBase} ${niceTag}${cloudTag}`.replace(/\s+/g, ' ').trim();
     }
 
+    // ── Human identity ───────────────────────────────────────
+
+    _getHandle() {
+        try { return localStorage.getItem('biome.handle') || null; } catch (_) { return null; }
+    }
+
+    // Resolve the human's leaderboard handle, prompting once if none is stored.
+    _ensureHandle() {
+        const existing = this._getHandle();
+        if (existing) return Promise.resolve(existing);
+        return new Promise(resolve => {
+            const modal = document.getElementById('handle-modal');
+            const input = document.getElementById('handle-input');
+            const okBtn = document.getElementById('handle-ok');
+            const skipBtn = document.getElementById('handle-skip');
+            if (!modal || !input || !okBtn) { resolve('You'); return; }
+
+            const finish = (name) => {
+                const handle = (name || '').trim().slice(0, 24) || 'You';
+                try { localStorage.setItem('biome.handle', handle); } catch (_) {}
+                modal.classList.add('modal-hidden');
+                okBtn.removeEventListener('click', onOk);
+                skipBtn?.removeEventListener('click', onSkip);
+                input.removeEventListener('keydown', onKey);
+                resolve(handle);
+            };
+            const onOk = () => finish(input.value);
+            const onSkip = () => finish('You');
+            const onKey = (e) => { if (e.key === 'Enter') finish(input.value); };
+
+            modal.classList.remove('modal-hidden');
+            input.value = '';
+            okBtn.addEventListener('click', onOk);
+            skipBtn?.addEventListener('click', onSkip);
+            input.addEventListener('keydown', onKey);
+            setTimeout(() => input.focus(), 50);
+        });
+    }
+
+    _shortName(n) {
+        if (!n) return '—';
+        return n.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
+    }
+
+    // ── Ranked results for casual (solo/watch) matches ───────
+
+    // Post a solo/watch result to the leaderboard and return the server's
+    // { result, rankings } payload (or null when the match shouldn't count).
+    async _recordCasualResult(scores) {
+        const cfg = this._lastMatchConfig;
+        if (!cfg || (cfg.mode !== 'solo' && cfg.mode !== 'watch')) return null;
+
+        const handle = this._humanHandle || this._getHandle() || 'You';
+        const p1Name = this.aiPlayers[1] ? this.aiPlayers[1].model : handle;
+        const p2Name = this.aiPlayers[2] ? this.aiPlayers[2].model : handle;
+        if (!p1Name || !p2Name || p1Name === p2Name) return null;
+
+        const s1 = scores[1], s2 = scores[2];
+        if (s1.finalScore === s2.finalScore) return null; // ties have no ELO winner
+
+        const winner = s1.finalScore > s2.finalScore ? p1Name : p2Name;
+        return await postResult({
+            tournament_id: crypto.randomUUID().slice(0, 8),
+            round: 0,
+            p1: p1Name,
+            p2: p2Name,
+            p1_score: s1.finalScore,
+            p2_score: s2.finalScore,
+            winner,
+            mode: cfg.mode,
+        });
+    }
+
+    // Turn a server result payload into dramatic callouts: throne change,
+    // upset win, and rank promotion/demotion. Reuses the callout queue.
+    _celebrateResult(result) {
+        if (!result) return 0;
+        const sides = [result.p1, result.p2].filter(Boolean);
+        const winnerName = result.winner;
+        const winSide = sides.find(s => s.name === winnerName);
+        const loseSide = sides.find(s => s.name !== winnerName);
+        const queue = [];
+
+        // New #1 — highest drama, fires first
+        for (const s of sides) {
+            if (s.rankAfter === 1 && s.rankBefore !== 1) {
+                queue.push({ text: 'NEW CHAMPION 👑', subtitle: `${this._shortName(s.name)} seizes #1`, tone: 'throne', sound: 'champion' });
+            }
+        }
+
+        // Upset — winner was a long shot
+        if (winSide && result.winnerWinProb != null && result.winnerWinProb < 0.35) {
+            const massive = result.winnerWinProb < 0.20;
+            const gap = (winSide.rankBefore && loseSide?.rankBefore)
+                ? `#${winSide.rankBefore} def. #${loseSide.rankBefore}`
+                : `${Math.round(result.winnerWinProb * 100)}% odds to win`;
+            queue.push({ text: massive ? 'MASSIVE UPSET!' : 'UPSET!', subtitle: gap, tone: 'upset', sound: 'upset' });
+        }
+
+        // Promotion / demotion — only when board position actually moved
+        for (const s of sides) {
+            if (s.rankBefore == null || s.rankAfter == null) continue;
+            if (s.rankAfter === 1 && s.rankBefore !== 1) continue; // already crowned above
+            if (s.rankAfter < s.rankBefore) {
+                queue.push({ text: `PROMOTED ▲  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'promote', sound: 'promote' });
+            } else if (s.rankAfter > s.rankBefore) {
+                queue.push({ text: `SLIPPED ▼  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'demote', sound: 'callout' });
+            }
+        }
+
+        for (const c of queue) this._dispatchCallout(c);
+        return queue.length;
+    }
+
     async _fetchRanking(model) {
         try {
             // Rankings come back as { fullName: { elo, wins, losses } } in leaderboard order.
@@ -1990,43 +2202,47 @@ class Game {
         const { model, player, isHuman = false, compact = false } = opts;
         el.classList.toggle('compact', compact);
 
-        let initials, displayName, role, meta;
+        let initials, displayName, role, meta, lookupName;
         if (isHuman) {
+            const handle = opts.handle || this._humanHandle || this._getHandle() || 'You';
             initials = 'YOU';
-            displayName = 'Player';
+            displayName = handle;
             role = `Player ${player}`;
             meta = 'Human';
+            lookupName = handle;
         } else {
             initials = this._modelInitials(model);
             displayName = this._prettyModelName(model);
             role = `Player ${player}`;
             meta = model.includes('cloud') ? 'Cloud Model' : 'Local Model';
+            lookupName = model;
         }
 
         // Initial render without ELO data, then update once fetched
         el.innerHTML = `
             <div class="pc-role">${role}</div>
+            <div class="pc-rank" data-rank></div>
             <div class="pc-avatar">${initials}</div>
             <div class="pc-name">${displayName}</div>
-            ${isHuman ? '' : `
-                <div class="pc-stats">
-                    <div class="pc-stat elo"><span class="pc-stat-value" data-elo>—</span><span class="pc-stat-label">ELO</span></div>
-                    <div class="pc-stat wins"><span class="pc-stat-value" data-wins>—</span><span class="pc-stat-label">Wins</span></div>
-                    <div class="pc-stat losses"><span class="pc-stat-value" data-losses>—</span><span class="pc-stat-label">Loss</span></div>
-                </div>
-            `}
+            <div class="pc-stats">
+                <div class="pc-stat elo"><span class="pc-stat-value" data-elo>—</span><span class="pc-stat-label">ELO</span></div>
+                <div class="pc-stat wins"><span class="pc-stat-value" data-wins>—</span><span class="pc-stat-label">Wins</span></div>
+                <div class="pc-stat losses"><span class="pc-stat-value" data-losses>—</span><span class="pc-stat-label">Loss</span></div>
+            </div>
             <div class="pc-meta">${meta}</div>
         `;
 
-        if (!isHuman && model) {
-            const r = await this._fetchRanking(model);
+        if (lookupName) {
+            const r = await this._fetchRanking(lookupName);
             if (r) {
                 const eloEl = el.querySelector('[data-elo]');
                 const winsEl = el.querySelector('[data-wins]');
                 const lossEl = el.querySelector('[data-losses]');
+                const rankEl = el.querySelector('[data-rank]');
                 if (eloEl) eloEl.textContent = Math.round(r.elo);
                 if (winsEl) winsEl.textContent = r.wins;
                 if (lossEl) lossEl.textContent = r.losses;
+                if (rankEl) rankEl.textContent = `#${r.rank}`;
             }
         }
     }
@@ -2042,14 +2258,27 @@ class Game {
         overlay.classList.remove('t-hidden');
 
         // Render cards
+        const handle = this._humanHandle || this._getHandle() || 'You';
         const p1Opts = config.mode === 'solo'
-            ? { player: 1, isHuman: true }
+            ? { player: 1, isHuman: true, handle }
             : { player: 1, model: config.p1Model };
         const p2Opts = { player: 2, model: config.p2Model };
         await Promise.all([
             this._renderPlayerCard('prematch-p1-card', p1Opts),
             this._renderPlayerCard('prematch-p2-card', p2Opts),
         ]);
+
+        // Pre-match odds from current ELO (favorite / underdog read)
+        const p1Lookup = config.mode === 'solo' ? handle : config.p1Model;
+        const [r1, r2] = await Promise.all([
+            p1Lookup ? this._fetchRanking(p1Lookup) : null,
+            config.p2Model ? this._fetchRanking(config.p2Model) : null,
+        ]);
+        renderOddsInto(
+            document.getElementById('prematch-p1-odds'),
+            document.getElementById('prematch-p2-odds'),
+            r1, r2,
+        );
 
         // Auto-dismiss + skip-on-click
         return new Promise(resolve => {
@@ -2257,6 +2486,7 @@ class Game {
         // Clear AI players and callbacks
         this.aiPlayers = {};
         this._matchResolve = null;
+        this._matchupOdds = null;
         this._scoreHistory = [];
         this.simulating = false;
 
@@ -2339,22 +2569,34 @@ async function setupRankings() {
     const btn = document.getElementById('btn-rankings');
     const panel = document.getElementById('rankings-panel');
     const closeBtn = document.getElementById('btn-rankings-close');
+    const resetBtn = document.getElementById('btn-rankings-reset');
     const lbEl = document.getElementById('rk-leaderboard');
     const histEl = document.getElementById('rk-history');
     if (!btn || !panel) return;
+
+    const getHandle = () => { try { return localStorage.getItem('biome.handle'); } catch { return null; } };
+    const refresh = async () => {
+        const [rankings, history] = await Promise.all([fetchRankings(), fetchHistory()]);
+        renderRankingsPanel(lbEl, rankings, { humanHandle: getHandle() });
+        renderHistoryPanel(histEl, history);
+    };
 
     let open = false;
     const toggle = async (force) => {
         open = force !== undefined ? force : !open;
         if (open) {
             panel.classList.remove('rankings-hidden');
-            const [rankings, history] = await Promise.all([fetchRankings(), fetchHistory()]);
-            renderRankingsPanel(lbEl, rankings);
-            renderHistoryPanel(histEl, history);
+            await refresh();
         } else {
             panel.classList.add('rankings-hidden');
         }
     };
     btn.addEventListener('click', () => toggle());
     closeBtn?.addEventListener('click', () => toggle(false));
+    resetBtn?.addEventListener('click', async () => {
+        if (!confirm('Reset the leaderboard? Current standings are archived to a backup file and can be restored.')) return;
+        const res = await resetRankings();
+        await refresh();
+        if (res?.archived) console.log(`Rankings reset — standings archived to ${res.archived}`);
+    });
 }

@@ -1,7 +1,7 @@
 // Tournament mode — pits all available models against each other
 // Structure: Quarter-Finals (4) → Semi-Finals (2) → Final (1) = 7 matches
 
-import { postResult } from './rankings.js';
+import { postResult, renderOddsInto } from './rankings.js';
 import { CONFIG } from './config.js';
 
 export class TournamentManager {
@@ -125,6 +125,7 @@ export class TournamentManager {
         document.getElementById('t-intro-p2').textContent  = this._short(match.p2);
         document.getElementById('t-intro-note').textContent = this._matchNote(match);
         this._show('t-match-intro');
+        this._renderIntroOdds(match.p1, match.p2); // async — fills the odds line once ELO is fetched
 
         // Surface in the bracket panel that THIS match is now the live one
         this._currentMatchIdx = match.id;
@@ -149,9 +150,8 @@ export class TournamentManager {
         match.scoreHistory = [...this.game._scoreHistory];
         match.winner = scores[1].finalScore >= scores[2].finalScore ? match.p1 : match.p2;
 
-        // Log result to server
-        const isP1Winner = match.winner === match.p1;
-        postResult({
+        // Log result to server — await so we can celebrate the rank movement it returns
+        const res = await postResult({
             tournament_id: this.tournamentId,
             round: match.id,
             p1: match.p1,
@@ -180,7 +180,11 @@ export class TournamentManager {
         document.getElementById('t-result-next').textContent =
             match.id === 6 ? 'Revealing the Champion...' : 'Bracket updating...';
         this._show('t-match-result');
+
+        // Celebrate rank drama (upset / promotion / new #1) over the result screen
+        const drama = this.game._celebrateResult?.(res?.result) || 0;
         await this._sleep(5000);
+        if (drama) await this.game._waitForCalloutsDone?.();
 
         // Updated bracket
         this._renderBracket(match.label + ' complete');
@@ -192,6 +196,18 @@ export class TournamentManager {
         if (match.id === 6) return '🏆 Championship Final';
         if (match.id === 4 || match.id === 5) return 'Winner advances to the Final';
         return 'Winner advances to the Semi-Finals';
+    }
+
+    async _renderIntroOdds(p1, p2) {
+        const [r1, r2] = await Promise.all([
+            p1 ? this.game._fetchRanking(p1) : null,
+            p2 ? this.game._fetchRanking(p2) : null,
+        ]);
+        renderOddsInto(
+            document.getElementById('t-intro-odds-p1'),
+            document.getElementById('t-intro-odds-p2'),
+            r1, r2,
+        );
     }
 
     _showChampion(winner) {
