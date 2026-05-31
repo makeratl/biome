@@ -10,6 +10,9 @@ import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
+import { applyAvatar, clearAvatar, preloadAvatars } from './model-avatar.js';
+
+preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
 import { playSound, setMuted, isMuted } from './sound.js';
 
 // Callout tones that represent a leaderboard surprise. These get a larger
@@ -46,7 +49,7 @@ class Game {
         this._initMuteToggle();
         this._initGearMenu();
         this._initActivityTicker();
-        this._initEcoBiomeTabs();
+        this._initConsole();
         this._initAICards();
         this._updateWorldInfo();
         this._scoreHistory = [];
@@ -247,62 +250,183 @@ class Game {
         }
     }
 
-    /** Kept for compatibility with prior call sites. Bracket now lives in the
-     *  panel tab so the right stack no longer needs to hide during tournaments. */
-    _refreshRightStackVisibility() {
-        const sc = document.getElementById('score-chart-overlay');
-        const bt = document.getElementById('biomass-tower');
-        if (sc) sc.classList.remove('sc-hidden');
-        if (bt) bt.style.display = '';
-    }
+    /** Legacy no-op: the right-edge stack was retired for the bottom-center
+     *  HUD console. Tournament code still calls this. */
+    _refreshRightStackVisibility() { /* retired — console is always present */ }
 
-    _initEcoBiomeTabs() {
-        const tabs = document.querySelectorAll('#biomass-tower .bt-tab');
-        for (const tab of tabs) {
-            tab.addEventListener('click', () => this._activateBtTab(tab.dataset.btTab));
+    // ── HUD console (bottom-center: scoreline rail + Stats/Bracket/Menu) ──
+
+    _initConsole() {
+        // Tab switching
+        for (const tab of document.querySelectorAll('#hud-console .hc-tab')) {
+            tab.addEventListener('click', () => this._activateConsoleTab(tab.dataset.hcTab));
         }
 
-        // Bracket "expand" button (mirrors the old floating expand action)
-        const expandBtn = document.getElementById('bt-bracket-expand');
-        if (expandBtn) {
-            expandBtn.addEventListener('click', () => {
-                this.tournament?._showExpandedBracket?.();
+        // Rail toggles the panel open/closed (unless yielding to the dock)
+        document.getElementById('hc-rail')?.addEventListener('click', () => {
+            if (this._consoleDockYield) return;
+            this._setConsoleExpanded(this._consoleCollapsed());
+        });
+
+        // Bracket "expand to fullscreen" button
+        document.getElementById('bt-bracket-expand')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.tournament?._showExpandedBracket?.();
+        });
+
+        // Menu items (absorbed from the old gear dropdown)
+        for (const item of document.querySelectorAll('#hud-console .hc-menu-item')) {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = item.dataset.hcMenu;
+                if (action === 'new-match') this._openLauncherWelcome();
+                else if (action === 'manage-models') this._openModelConfigModal();
+                else if (action === 'rankings') document.getElementById('btn-rankings')?.click();
             });
         }
     }
 
-    _activateBtTab(target) {
-        if (!target) return;
-        const tabs = document.querySelectorAll('#biomass-tower .bt-tab');
-        for (const t of tabs) {
-            const isActive = t.dataset.btTab === target;
-            t.classList.toggle('active', isActive);
-            t.setAttribute('aria-selected', String(isActive));
+    _consoleCollapsed() {
+        return !!document.getElementById('hud-console')?.classList.contains('hc-collapsed');
+    }
+
+    _setConsoleExpanded(expanded, remember = true) {
+        const c = document.getElementById('hud-console');
+        if (!c) return;
+        c.classList.toggle('hc-collapsed', !expanded);
+        document.getElementById('hc-rail')?.setAttribute('aria-expanded', String(!!expanded));
+        if (remember) this._consoleUserExpanded = !!expanded;
+        this._reserveConsoleSpace();
+    }
+
+    /**
+     * Reserve a bottom band for the open stats console so the board fits ABOVE
+     * it and is never overlaid — the mirror of the scoreboard's --header-h band.
+     * Collapsed/hidden → 0 (board reclaims the full height; only the tiny handle
+     * floats). Open → the panel's rendered height + handle + bottom offset.
+     * The console is absolutely positioned, so growing the band shrinks the
+     * board (a flex child) while the panel stays pinned at the viewport bottom.
+     */
+    _reserveConsoleSpace(animate = true) {
+        const c = document.getElementById('hud-console');
+        let footer = 0;
+        if (c && !c.classList.contains('hc-hidden') && !c.classList.contains('hc-collapsed')) {
+            const panel = document.getElementById('hc-panel');
+            const handle = document.getElementById('hc-rail');
+            // scrollHeight gives the panel's natural content height even while
+            // its max-height is animating; cap it at the CSS max (62vh).
+            const maxPanel = window.innerHeight * 0.62;
+            const panelH = Math.min(panel ? panel.scrollHeight : 0, maxPanel);
+            const handleH = handle ? handle.offsetHeight : 0;
+            const BOTTOM_OFFSET = 40;   // .hud-console { bottom: 40px }
+            const BREATH = 10;
+            footer = Math.round(panelH + handleH + BOTTOM_OFFSET + BREATH);
         }
-        for (const view of document.querySelectorAll('#biomass-tower .bt-view')) {
-            view.classList.toggle('bt-view-hidden', view.dataset.btView !== target);
+        if (animate) {
+            this._animateFooterTo(footer);
+        } else {
+            document.body.style.setProperty('--footer-h', footer + 'px');
+            this.renderer?._fit();
+            this.renderer?.render();
         }
     }
 
-    /** Called by TournamentManager when tournament starts/ends or progresses.
-     *  Toggles bracket tab availability + auto-switches when starting. */
-    setBracketAvailable({ available, live = false, autoSwitch = false, title }) {
-        const panel = document.getElementById('biomass-tower');
-        if (!panel) return;
-        panel.classList.toggle('bt-has-bracket', !!available);
-        panel.classList.toggle('bt-tournament-live', !!live);
+    /** Smoothly grow/shrink the reserved console band (--footer-h) and keep the
+     *  board fitted to the changing space each frame, so it tracks the panel and
+     *  never overlaps it. Driven in JS — transitioning a var-backed padding in
+     *  CSS doesn't fire reliably (unregistered custom property). One-shot rAF. */
+    _animateFooterTo(target) {
+        if (this._fitRaf) cancelAnimationFrame(this._fitRaf);
+        const from = parseFloat(getComputedStyle(document.body).getPropertyValue('--footer-h')) || 0;
+        if (Math.abs(target - from) < 1) {
+            document.body.style.setProperty('--footer-h', target + 'px');
+            this.renderer?._fit();
+            this.renderer?.render();
+            return;
+        }
+        const start = performance.now();
+        const DURATION = 340;
+        const ease = (t) => 1 - Math.pow(1 - t, 3);   // easeOutCubic — cohesive with the panel slide
+        const tick = () => {
+            const t = Math.min(1, (performance.now() - start) / DURATION);
+            const v = Math.round(from + (target - from) * ease(t));
+            document.body.style.setProperty('--footer-h', v + 'px');
+            this.renderer?._fit();
+            this.renderer?.render();
+            if (t < 1) this._fitRaf = requestAnimationFrame(tick);
+            else this._fitRaf = null;
+        };
+        this._fitRaf = requestAnimationFrame(tick);
+    }
+
+    /** Show/hide the whole console (hidden on the launcher, shown in a match). */
+    _setConsoleVisible(visible) {
+        const c = document.getElementById('hud-console');
+        if (!c) return;
+        c.classList.toggle('hc-hidden', !visible);
+        if (visible) {
+            this._activateConsoleTab('stats');     // Stats (eco) is always the default
+            this._setConsoleExpanded(true);
+        } else {
+            this._reserveConsoleSpace();           // hidden → release the band
+        }
+    }
+
+    _activateConsoleTab(target) {
+        if (!target) return;
+        for (const t of document.querySelectorAll('#hud-console .hc-tab')) {
+            const isActive = t.dataset.hcTab === target;
+            t.classList.toggle('active', isActive);
+            t.setAttribute('aria-selected', String(isActive));
+        }
+        for (const v of document.querySelectorAll('#hud-console .hc-view')) {
+            v.classList.toggle('hc-view-hidden', v.dataset.hcView !== target);
+        }
+        // Reflect the active tab on the collapse handle
+        const meta = { stats: ['⛧', 'Stats'], bracket: ['⚔', 'Bracket'], menu: ['≡', 'Menu'] }[target];
+        if (meta) {
+            const ico = document.getElementById('hc-handle-icon');
+            const lbl = document.getElementById('hc-handle-label');
+            if (ico) ico.textContent = meta[0];
+            if (lbl) lbl.textContent = meta[1];
+        }
+        // Picking a tab while collapsed pops the panel open
+        if (this._consoleCollapsed() && !this._consoleDockYield) this._setConsoleExpanded(true);
+        // Tabs differ in height (bracket vs eco vs menu) — re-reserve if open
+        else this._reserveConsoleSpace();
+    }
+
+    /** Called by TournamentManager. Shows/hides the Bracket tab + live dot.
+     *  Default tab stays Stats (eco) even in tournament — no auto-switch. */
+    setBracketAvailable({ available, live = false, title }) {
+        const c = document.getElementById('hud-console');
+        if (!c) return;
+        c.classList.toggle('hc-has-bracket', !!available);
+        c.classList.toggle('hc-tournament-live', !!live);
 
         if (title) {
             const t = document.getElementById('bt-bracket-title');
             if (t) t.textContent = title;
         }
 
-        if (available && autoSwitch) {
-            this._activateBtTab('bracket');
-        } else if (!available) {
-            // Tournament ended — if currently on bracket tab, fall back to ECO
-            const bracketTab = document.querySelector('#biomass-tower .bt-tab[data-bt-tab="bracket"]');
-            if (bracketTab?.classList.contains('active')) this._activateBtTab('eco');
+        if (!available) {
+            // Tournament cleared — if the bracket tab was active, fall back to Stats
+            const bracketTab = document.querySelector('#hud-console .hc-tab[data-hc-tab="bracket"]');
+            if (bracketTab?.classList.contains('active')) this._activateConsoleTab('stats');
+        }
+    }
+
+    /** Yield the bottom-center stage to the species dock during human turns:
+     *  lock the console collapsed, then restore the prior state afterward. */
+    _syncConsoleToDock(dockActive) {
+        const c = document.getElementById('hud-console');
+        if (!c || dockActive === this._consoleDockYield) return;
+        this._consoleDockYield = dockActive;
+        c.classList.toggle('hc-dock-yield', dockActive);
+        if (dockActive) {
+            this._setConsoleExpanded(false, false);
+        } else {
+            this._setConsoleExpanded(this._consoleUserExpanded !== false, false);
         }
     }
 
@@ -365,7 +489,8 @@ class Game {
 
         const ai = this.aiPlayers[playerNum];
         if (ai) {
-            avatarEl.textContent = this._modelInitials(ai.model);
+            avatarEl.textContent = this._modelInitials(ai.model);   // fallback under the avatar
+            applyAvatar(avatarEl, ai.model);                         // baked PNG if one exists
             nameEl.textContent = this._prettyModelName(ai.model);
             if (statusEl) {
                 // Show rank/place status (persistent — fetched async below)
@@ -375,6 +500,7 @@ class Game {
             // Async populate rank/place
             this._updateAIRankStatus(playerNum);
         } else {
+            clearAvatar(avatarEl);                                   // humans keep the P1/P2 chip
             avatarEl.textContent = `P${playerNum}`;
             nameEl.textContent = `Player ${playerNum}`;
             if (statusEl) {
@@ -528,6 +654,7 @@ class Game {
         const player = this.turns && this.turns.currentPlayer;
         const isHuman = !!player && this.turns.isPlayerTurn() && !this.aiPlayers[player];
         dock.classList.toggle('sd-hidden', !isHuman);
+        this._syncConsoleToDock(isHuman);
 
         const remainingAP = this.turns && this.turns.currentAP != null
             ? this.turns.currentAP
@@ -547,6 +674,15 @@ class Game {
         this.canvas.addEventListener('mousemove', (e) => this._onHover(e));
         this.canvas.addEventListener('mouseleave', () => this._hideCellTooltip());
         this.canvas.addEventListener('click', (e) => this._onClick(e));
+
+        // Keep the board fitted to the window as it resizes (always the current
+        // renderer, which is rebuilt per match). Registered once.
+        window.addEventListener('resize', () => {
+            // Re-render the board crisp to fill the resized viewport (also
+            // re-reserves the console band). Debounced to coalesce resize bursts.
+            clearTimeout(this._resizeTimer);
+            this._resizeTimer = setTimeout(() => this._refitBoard(), 80);
+        });
 
         const endTurn = () => {
             if (this.turns.isPlayerTurn()) this.turns.endTurn();
@@ -675,8 +811,11 @@ class Game {
     _onHover(e) {
         if (this.simulating) return;
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        // Map display pixels → bitmap pixels (canvas may be CSS-scaled to fit).
+        const sx = this.canvas.width / rect.width;
+        const sy = this.canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * sx;
+        const y = (e.clientY - rect.top) * sy;
         const cell = this.renderer.getCellAtPixel(x, y);
 
         this.renderer.render();
@@ -696,8 +835,11 @@ class Game {
         if (this.simulating) return;
 
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        // Map display pixels → bitmap pixels (canvas may be CSS-scaled to fit).
+        const sx = this.canvas.width / rect.width;
+        const sy = this.canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * sx;
+        const y = (e.clientY - rect.top) * sy;
         const cell = this.renderer.getCellAtPixel(x, y);
 
         if (!cell || !this.selectedSpecies) return;
@@ -837,7 +979,7 @@ class Game {
 
         info.innerHTML = `
             <div class="info-row"><span>Seed</span><span>${this.seed}</span></div>
-            <div class="info-row"><span>Grid</span><span>${CONFIG.GRID_COLS} x ${CONFIG.GRID_ROWS}</span></div>
+            <div class="info-row"><span>Grid</span><span>${this.grid.cols} x ${this.grid.rows}</span></div>
             <div class="info-divider"></div>
             <div class="info-row"><span>Water</span><span>${counts.WATER}</span></div>
             <div class="info-row"><span>Fertile</span><span>${counts.FERTILE}</span></div>
@@ -893,6 +1035,15 @@ class Game {
         scoreEl1.classList.toggle('winning', s1.finalScore > s2.finalScore);
         scoreEl2.classList.toggle('winning', s2.finalScore > s1.finalScore);
 
+        // Fighting-game HUD: end-cap avatars + score-share health bar.
+        this._syncSbAvatar(document.getElementById('sb-ava-p1'), this.aiPlayers[1]?.model);
+        this._syncSbAvatar(document.getElementById('sb-ava-p2'), this.aiPlayers[2]?.model);
+        const barP1 = document.getElementById('sb-bar-p1');
+        if (barP1) {
+            const tot = s1.finalScore + s2.finalScore;
+            barP1.style.width = (tot > 0 ? (s1.finalScore / tot) * 100 : 50).toFixed(1) + '%';
+        }
+
         // Head-to-head win odds — persistent below the live lead for the whole match,
         // so the ELO-implied favorite stays visible while the actual score plays out.
         const oddsEl = document.getElementById('sb-odds');
@@ -943,6 +1094,19 @@ class Game {
             last.p2 = s2.finalScore;
         }
         this._drawScoreChart();
+    }
+
+    // Scoreboard end-cap avatar: paint when the slot is an AI (only on model
+    // change — applyAvatar refetches otherwise), hide for humans.
+    _syncSbAvatar(el, model) {
+        if (!el) return;
+        if (model) {
+            if (el.dataset.model !== model) applyAvatar(el, model);
+            el.style.display = '';
+        } else {
+            clearAvatar(el);
+            el.style.display = 'none';
+        }
     }
 
     _animateScoreTo(el, target, player) {
@@ -1055,10 +1219,18 @@ class Game {
         el.className = isRankDrama ? `tone-${tone} co-rank` : `tone-${tone}`;
         this._playSound(sound);
 
+        // Flare any visible event stage to match the headline (upset → magenta,
+        // new champion → gold). Cleared when the callout hides. See .event-stage
+        // tint rules in style.css.
+        const stageTone = tone === 'upset' ? 'event-upset' : (tone === 'throne' ? 'event-throne' : null);
+        document.body.classList.remove('event-upset', 'event-throne');
+        if (stageTone) document.body.classList.add(stageTone);
+
         const holdMs = isRankDrama ? 3000 : 2400;
         clearTimeout(this._coTimer);
         this._coTimer = setTimeout(() => {
             el.className = 'co-hidden';
+            document.body.classList.remove('event-upset', 'event-throne');
             setTimeout(() => this._drainCallouts(), 220);
         }, holdMs);
     }
@@ -1335,7 +1507,15 @@ class Game {
         const canvas = document.getElementById('score-chart');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const W = canvas.width, H = canvas.height;
+        // Size the bitmap to the canvas's on-screen box (the timeline column
+        // grows with the board-width console), DPR-aware so the line stays crisp
+        // instead of being stretched from a fixed 320×64. Draw in CSS pixels.
+        const dpr = window.devicePixelRatio || 1;
+        const W = Math.max(1, Math.round(canvas.clientWidth || 320));
+        const H = Math.max(1, Math.round(canvas.clientHeight || 64));
+        const bw = Math.round(W * dpr), bh = Math.round(H * dpr);
+        if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         const history = this._scoreHistory;
         const total = this.turns.totalRounds || 20;
 
@@ -1643,6 +1823,16 @@ class Game {
         const overlay = document.getElementById('game-over-overlay');
         overlay.style.display = 'flex';
         overlay.querySelector('.winner').textContent = winnerLabel;
+
+        // Winner's portrait, large with a victory glow (AI winner only; a human or
+        // tie shows no creature).
+        const winnerModel = s1.finalScore > s2.finalScore ? this.aiPlayers[1]?.model
+            : s2.finalScore > s1.finalScore ? this.aiPlayers[2]?.model : null;
+        const goAva = document.getElementById('go-winner-avatar');
+        if (goAva) {
+            if (winnerModel) { applyAvatar(goAva, winnerModel); goAva.classList.add('show'); }
+            else { clearAvatar(goAva); goAva.classList.remove('show'); }
+        }
         this._playSound('victory');
 
         // Solo + Watch matches now count toward the leaderboard. Post the
@@ -1854,6 +2044,25 @@ class Game {
         if (soloP2 && !soloP2._userSet) soloP2.value = first.name;
         if (watchP1 && !watchP1._userSet) watchP1.value = first.name;
         if (watchP2 && !watchP2._userSet) watchP2.value = second.name;
+
+        this._wirePickerPreviews();
+    }
+
+    // Live avatar preview beside each model picker — pick opponents by face.
+    _wirePickerPreviews() {
+        const pairs = [
+            ['match-model-p2-solo', 'mmp-ava-p2-solo'],
+            ['match-model-p1-watch', 'mmp-ava-p1-watch'],
+            ['match-model-p2-watch', 'mmp-ava-p2-watch'],
+        ];
+        for (const [selId, avaId] of pairs) {
+            const sel = document.getElementById(selId);
+            const ava = document.getElementById(avaId);
+            if (!sel || !ava) continue;
+            const update = () => applyAvatar(ava, sel.value);
+            if (!sel._previewWired) { sel.addEventListener('change', update); sel._previewWired = true; }
+            update();
+        }
     }
 
     _pickDifferentModel(excludeName) {
@@ -1890,6 +2099,97 @@ class Game {
         }
 
         this._populateModelPickers();
+        this._initWorldControls();
+    }
+
+    // World settings: grid size / hex zoom / round count, shared across modes.
+    _initWorldControls() {
+        this._world = {
+            mapSize: 'auto',
+            hexZoom: CONFIG.HEX_ZOOM.default,
+            rounds: CONFIG.GAME.TOTAL_ROUNDS,
+        };
+        // In Auto, hex size is computed to fill; a preset uses the slider only
+        // if the player actually moved it (otherwise it contain-fits too).
+        this._hexZoomTouched = false;
+
+        // Label each map-size button with its grid dimensions (CONFIG is the
+        // source of truth, so the start screen always reflects real board sizes).
+        for (const b of document.querySelectorAll('#world-mapsize button[data-val]')) {
+            const m = CONFIG.MAPS[b.dataset.val];
+            const dim = b.querySelector('.ws-seg-dim');
+            if (m && dim) dim.textContent = `${m.cols}×${m.rows}`;
+        }
+
+        // Segmented controls: highlight the active button and update state.
+        const bindSeg = (id, key, parse = (v) => v) => {
+            const box = document.getElementById(id);
+            if (!box) return;
+            const sync = () => {
+                for (const b of box.querySelectorAll('button')) {
+                    b.classList.toggle('on', parse(b.dataset.val) === this._world[key]);
+                }
+            };
+            box.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-val]');
+                if (!btn) return;
+                this._world[key] = parse(btn.dataset.val);
+                sync();
+                this._updateWorldSummary();
+            });
+            sync();
+        };
+        bindSeg('world-mapsize', 'mapSize');
+        bindSeg('world-rounds', 'rounds', (v) => Number(v));
+
+        // Hex-zoom slider with live px readout.
+        const zoom = document.getElementById('world-hexzoom');
+        const zoomVal = document.getElementById('world-hexzoom-val');
+        if (zoom) {
+            zoom.min = CONFIG.HEX_ZOOM.min;
+            zoom.max = CONFIG.HEX_ZOOM.max;
+            zoom.value = this._world.hexZoom;
+            if (zoomVal) zoomVal.textContent = `${this._world.hexZoom}px`;
+            zoom.addEventListener('input', () => {
+                this._hexZoomTouched = true;
+                this._world.hexZoom = Number(zoom.value);
+                if (zoomVal) zoomVal.textContent = `${zoom.value}px`;
+                this._updateWorldSummary();
+            });
+        }
+
+        this._updateWorldSummary();
+    }
+
+    /** In "Fit screen" mode the hex size is computed, so the slider is inert —
+     *  disable it and show "Auto-fit"; restore it for fixed presets. */
+    _syncHexZoomEnabled() {
+        const zoom = document.getElementById('world-hexzoom');
+        const auto = this._world.mapSize === 'auto';
+        if (zoom) {
+            zoom.disabled = auto;
+            zoom.closest('.mw-row')?.classList.toggle('mw-row-disabled', auto);
+        }
+        // Readout is set in _updateWorldSummary from the resolved hex size so it
+        // matches the board (a preset contain-fits until the slider is touched).
+    }
+
+    /** One-line plain-language summary of the chosen world settings, shown
+     *  under the controls so the player sees exactly what they're committing to. */
+    _updateWorldSummary() {
+        this._syncHexZoomEnabled();
+        const el = document.getElementById('world-summary');
+        if (!el) return;
+        const w = this._world;
+        const lightning = w.rounds <= CONFIG.GAME.LIGHTNING_ROUNDS ? ' ⚡' : '';
+        const dims = this._resolveWorld(w);
+        const cells = dims.cols * dims.rows;
+        const approx = w.mapSize === 'auto' ? '~' : '';
+        const sizeNote = w.mapSize === 'auto' ? ' · fits screen' : '';
+        el.textContent = `${approx}${dims.cols} × ${dims.rows} board · ${cells.toLocaleString()} hexes${sizeNote} · ${w.rounds} rounds${lightning} · ${dims.hexSize}px`;
+        // Keep the hex-zoom readout in sync with the size actually used.
+        const zoomVal = document.getElementById('world-hexzoom-val');
+        if (zoomVal) zoomVal.textContent = w.mapSize === 'auto' ? 'Auto-fit' : `${dims.hexSize}px`;
     }
 
     _setMatchMode(mode) {
@@ -1906,6 +2206,77 @@ class Game {
         else startBtn.textContent = 'Start Match ▶';
     }
 
+    // Current world settings (grid size / hex zoom / round count), falling back
+    // to config defaults if the UI hasn't initialized them yet.
+    _worldSettings() {
+        return this._world || {
+            mapSize: 'medium',
+            hexZoom: CONFIG.HEX_ZOOM.default,
+            rounds: CONFIG.GAME.TOTAL_ROUNDS,
+        };
+    }
+
+    // ── Responsive board layout ───────────────────────────────
+    // The board fits the viewport: "Fit screen" (auto) keeps rows fixed, fills
+    // the height with hex size and the width with columns; presets keep a fixed
+    // cols×rows and scale the hex size to fill. See plan: responsive board.
+
+    /** Usable board area = viewport minus the reserved header/footer bands and a
+     *  small side margin. Mirrors the bands Renderer._fit() already subtracts. */
+    _availableBoard() {
+        const bs = getComputedStyle(document.body);
+        const headerH = parseFloat(bs.getPropertyValue('--header-h')) || 0;
+        const footerH = parseFloat(bs.getPropertyValue('--footer-h')) || 0;
+        const SIDE = 16;
+        return {
+            availW: Math.max(120, window.innerWidth - SIDE * 2),
+            availH: Math.max(120, window.innerHeight - headerH - footerH - SIDE),
+        };
+    }
+
+    /** Largest hex size that fits a fixed cols×rows board in the area, from the
+     *  HexGrid geometry (grid.js:getCanvasSize) + Renderer offsets (hexSize+4). */
+    _containHex(cols, rows, availW, availH) {
+        const SQRT3 = Math.sqrt(3);
+        const sW = (availW - 8) / (1.5 * (cols - 1) + 4);
+        const sH = (availH - 8) / (SQRT3 * (rows + 0.5) + 2);
+        const s = Math.min(sW, sH);
+        return Math.max(CONFIG.HEX_ZOOM.min, Math.min(s, CONFIG.AUTO_MAX_HEX));
+    }
+
+    /** Resolve world settings → concrete { cols, rows, hexSize } for grid build.
+     *  'auto' fits the viewport (fixed rows, fill width with cols); presets keep
+     *  fixed dimensions and scale the hex size to fill (slider overrides). */
+    _resolveWorld(world) {
+        const SQRT3 = Math.sqrt(3);
+        const { availW, availH } = this._availableBoard();
+        if (world.mapSize === 'auto') {
+            const rows = CONFIG.FIT.rows;
+            // hex size that fills the available height for those rows
+            const sH = (availH - 8) / (SQRT3 * (rows + 0.5) + 2);
+            const hexSize = Math.max(CONFIG.HEX_ZOOM.min, Math.min(sH, CONFIG.AUTO_MAX_HEX));
+            // columns that fill the available width at that hex size
+            const rawCols = Math.floor((availW - 8 - 4 * hexSize) / (1.5 * hexSize) + 1);
+            const cols = Math.max(CONFIG.FIT.minCols, Math.min(rawCols, CONFIG.FIT.maxCols));
+            return { cols, rows, hexSize: Math.round(hexSize * 10) / 10 };
+        }
+        const map = CONFIG.MAPS[world.mapSize] || CONFIG.MAPS.medium;
+        const hexSize = this._hexZoomTouched
+            ? (world.hexZoom || CONFIG.HEX_ZOOM.default)
+            : this._containHex(map.cols, map.rows, availW, availH);
+        return { cols: map.cols, rows: map.rows, hexSize: Math.round(hexSize * 10) / 10 };
+    }
+
+    /** Re-render the live board crisp to fill the current viewport. cols/rows are
+     *  locked once the world is generated, so this only adjusts the hex size
+     *  (contain-fit) — the board grows/shrinks with the window, never blurred. */
+    _refitBoard() {
+        if (!this.grid || !this.renderer) return;
+        const { availW, availH } = this._availableBoard();
+        this.renderer.setHexSize(this._containHex(this.grid.cols, this.grid.rows, availW, availH));
+        this._reserveConsoleSpace(false);   // re-reserve console band + render
+    }
+
     async _onStartMatchClick() {
         // If a match is currently in progress (not game-over), confirm restart
         const running = this.turns.phase && this.turns.phase !== 'SETUP'
@@ -1920,7 +2291,7 @@ class Game {
             return;
         }
 
-        const cfg = { mode: this._matchMode };
+        const cfg = { mode: this._matchMode, world: { ...this._worldSettings() } };
         if (this._matchMode === 'solo') {
             cfg.p2Model = document.getElementById('match-model-p2-solo').value;
         } else if (this._matchMode === 'watch') {
@@ -1953,12 +2324,16 @@ class Game {
             try { await this._showPrematch(config); } catch (_) { /* ignore */ }
         }
 
-        // Reset world: fresh seed, terrain, simulation, turn manager
+        // Reset world: fresh seed, terrain, simulation, turn manager.
+        // Grid size / hex zoom / round count come from the chosen world settings.
+        const world = config.world || this._worldSettings();
+        const dims = this._resolveWorld(world);
         this.seed = Math.floor(Math.random() * 100000);
-        this.grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS, CONFIG.HEX_SIZE);
+        this.grid = new HexGrid(dims.cols, dims.rows, dims.hexSize);
         this.renderer = new Renderer(this.canvas, this.grid);
         this.simulation = new Simulation(this.grid);
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
+        this.turns.totalRounds = world.rounds || CONFIG.GAME.TOTAL_ROUNDS;
         this.aiPlayers = {};
         this._matchResolve = null;
         this._matchupOdds = null;
@@ -1992,6 +2367,7 @@ class Game {
         if (log) log.innerHTML = '';
 
         this._collapseMatchSection();
+        this._setConsoleVisible(true);
         this._updateCensus();
         this._resetMilestones();
         this._playSound('match-start');
@@ -2132,7 +2508,12 @@ class Game {
 
     // Turn a server result payload into dramatic callouts: throne change,
     // upset win, and rank promotion/demotion. Reuses the callout queue.
-    _celebrateResult(result) {
+    // headlinesOnly: only the rare big moments (NEW CHAMPION / UPSET) play as
+    // center-stage callouts. Promotions/demotions are shown elsewhere (the
+    // tournament result card carries a rank badge), so they're skipped here to
+    // avoid two overlapping celebrations. Solo/Watch call without the flag and
+    // get the full set.
+    _celebrateResult(result, { headlinesOnly = false } = {}) {
         if (!result) return 0;
         const sides = [result.p1, result.p2].filter(Boolean);
         const winnerName = result.winner;
@@ -2156,14 +2537,17 @@ class Game {
             queue.push({ text: massive ? 'MASSIVE UPSET!' : 'UPSET!', subtitle: gap, tone: 'upset', sound: 'upset' });
         }
 
-        // Promotion / demotion — only when board position actually moved
-        for (const s of sides) {
-            if (s.rankBefore == null || s.rankAfter == null) continue;
-            if (s.rankAfter === 1 && s.rankBefore !== 1) continue; // already crowned above
-            if (s.rankAfter < s.rankBefore) {
-                queue.push({ text: `PROMOTED ▲  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'promote', sound: 'promote' });
-            } else if (s.rankAfter > s.rankBefore) {
-                queue.push({ text: `SLIPPED ▼  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'demote', sound: 'callout' });
+        // Promotion / demotion — only when board position actually moved.
+        // Skipped in headlinesOnly mode (the result card shows the rank badge).
+        if (!headlinesOnly) {
+            for (const s of sides) {
+                if (s.rankBefore == null || s.rankAfter == null) continue;
+                if (s.rankAfter === 1 && s.rankBefore !== 1) continue; // already crowned above
+                if (s.rankAfter < s.rankBefore) {
+                    queue.push({ text: `PROMOTED ▲  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'promote', sound: 'promote' });
+                } else if (s.rankAfter > s.rankBefore) {
+                    queue.push({ text: `SLIPPED ▼  #${s.rankBefore} → #${s.rankAfter}`, subtitle: this._shortName(s.name), tone: 'demote', sound: 'callout' });
+                }
             }
         }
 
@@ -2232,6 +2616,11 @@ class Game {
             <div class="pc-meta">${meta}</div>
         `;
 
+        // Baked cyber-organic portrait for AI players (humans keep the "YOU" chip).
+        if (!isHuman && model) {
+            applyAvatar(el.querySelector('.pc-avatar'), model);
+        }
+
         if (lookupName) {
             const r = await this._fetchRanking(lookupName);
             if (r) {
@@ -2268,6 +2657,13 @@ class Game {
             this._renderPlayerCard('prematch-p2-card', p2Opts),
         ]);
 
+        // Fighting-game entrance: fighters slam in from both sides, VS clashes in
+        // the middle, with a matching sound sting. Re-trigger by reflow each time.
+        screen.classList.remove('pm-enter');
+        void screen.offsetWidth;
+        screen.classList.add('pm-enter');
+        this._playSound('vs');
+
         // Pre-match odds from current ELO (favorite / underdog read)
         const p1Lookup = config.mode === 'solo' ? handle : config.p1Model;
         const [r1, r2] = await Promise.all([
@@ -2300,15 +2696,10 @@ class Game {
         for (const card of document.querySelectorAll('.launcher-mode-card')) {
             card.addEventListener('click', () => {
                 const mode = card.dataset.launcherMode;
-                if (mode === 'tournament') {
-                    // Tournament jumps straight to Standard/Lightning picker
-                    this._closeLauncherWelcome();
-                    this._setMatchMode(mode);
-                    this._startTournament();
-                } else {
-                    // Solo/Watch: show match setup sub-screen for model picking
-                    this._showLauncherSetup(mode);
-                }
+                // All modes — including tournament — route through the setup card
+                // so the world settings (map size / hex zoom / rounds) are configurable
+                // before launch. Tournament's Start button wires to _startTournament().
+                this._showLauncherSetup(mode);
             });
         }
 
@@ -2322,6 +2713,7 @@ class Game {
         const overlay = document.getElementById('tournament-overlay');
         const screen = document.getElementById('launcher-welcome');
         if (!overlay || !screen) return;
+        this._setConsoleVisible(false);   // console belongs to an active match
         overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
         screen.classList.remove('t-hidden');
         overlay.classList.remove('t-hidden');
@@ -2345,7 +2737,10 @@ class Game {
 
         const title = document.getElementById('launcher-setup-title');
         const sub = document.getElementById('launcher-setup-subtitle');
-        if (mode === 'watch') {
+        if (mode === 'tournament') {
+            if (title) title.textContent = 'CONFIGURE TOURNAMENT';
+            if (sub) sub.textContent = 'Set the board — it applies to every match';
+        } else if (mode === 'watch') {
             if (title) title.textContent = 'CONFIGURE WATCH';
             if (sub) sub.textContent = 'Pick two AI models';
         } else {
@@ -2468,9 +2863,17 @@ class Game {
 
     // ── Tournament support ────────────────────────────────────
 
-    resetForMatch(rounds) {
-        // Clear all organisms
-        this.grid.forEach(cell => { cell.organisms = []; });
+    resetForMatch(rounds, world) {
+        // Rebuild the grid if a world spec is given (tournament map size / hex
+        // zoom can differ); otherwise just clear the existing grid in place.
+        if (world) {
+            const dims = this._resolveWorld(world);
+            this.grid = new HexGrid(dims.cols, dims.rows, dims.hexSize);
+            this.renderer = new Renderer(this.canvas, this.grid);
+            this.simulation = new Simulation(this.grid);
+        } else {
+            this.grid.forEach(cell => { cell.organisms = []; });
+        }
 
         // Fresh terrain
         this.seed = Math.floor(Math.random() * 100000);
@@ -2500,6 +2903,7 @@ class Game {
         this.renderer.clearHighlightRound();
         this.renderer.render();
         this._updateWorldInfo();
+        this._setConsoleVisible(true);   // tournament matches need the console too
         this._updateCensus();
     }
 
@@ -2510,8 +2914,10 @@ class Game {
 
     async _startTournament() {
         if (this.tournament?.running) return;
-        const mode = await this._pickTournamentMode();
-        if (!mode) return;
+        // Rounds (and grid size / hex zoom) come from the World settings picker
+        // shared across modes; mode is just a label for the bracket panel.
+        const world = { ...this._worldSettings() };
+        const mode = world.rounds <= CONFIG.GAME.LIGHTNING_ROUNDS ? 'lightning' : 'standard';
 
         const models = await listOllamaModels();
         const eligible = models
@@ -2527,36 +2933,7 @@ class Game {
         while (eligible.length < 8) eligible.push(eligible[Math.floor(Math.random() * eligible.length)]);
         const field = eligible.slice(0, 8);
 
-        this.tournament.start(field, mode);
-    }
-
-    _pickTournamentMode() {
-        return new Promise(resolve => {
-            const overlay = document.getElementById('tournament-overlay');
-            const screen   = document.getElementById('t-mode-select');
-            overlay.classList.remove('t-hidden');
-            overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
-            screen.classList.remove('t-hidden');
-
-            const standardBtn  = document.getElementById('btn-mode-standard');
-            const lightningBtn = document.getElementById('btn-mode-lightning');
-            const cancelBtn    = document.getElementById('btn-mode-cancel');
-
-            const cleanup = () => {
-                standardBtn.removeEventListener('click', onStandard);
-                lightningBtn.removeEventListener('click', onLightning);
-                cancelBtn.removeEventListener('click', onCancel);
-            };
-
-            const pick = (mode) => { cleanup(); screen.classList.add('t-hidden'); resolve(mode); };
-            const onStandard  = () => pick('standard');
-            const onLightning = () => pick('lightning');
-            const onCancel    = () => { cleanup(); overlay.classList.add('t-hidden'); resolve(null); };
-
-            standardBtn.addEventListener('click', onStandard);
-            lightningBtn.addEventListener('click', onLightning);
-            cancelBtn.addEventListener('click', onCancel);
-        });
+        this.tournament.start(field, mode, world);
     }
 }
 

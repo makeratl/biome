@@ -1,0 +1,47 @@
+{
+  "cyber-organic": {
+    "deepseek-cloud": "avatars/cyber-organic/deepseek-cloud.png",
+    "gemma-mid": "avatars/cyber-organic/gemma-mid.png",
+    "llama-mid": "avatars/cyber-organic/llama-mid.png",
+    "mistral-mid": "avatars/cyber-organic/mistral-mid.png",
+    "qwen-cloud": "avatars/cyber-organic/qwen-cloud.png",
+    "qwen-large": "avatars/cyber-organic/qwen-large.png",
+    "deepseek-mid": "avatars/cyber-organic/deepseek-mid.png",
+    "glm-cloud": "avatars/cyber-organic/glm-cloud.png",
+    "qwen-small": "avatars/cyber-organic/qwen-small.png",
+    "qwen-mid": "avatars/cyber-organic/qwen-mid.png",
+    "kimi-cloud": "avatars/cyber-organic/kimi-cloud.png",
+    "glm-mid": "avatars/cyber-organic/glm-mid.png",
+    "generic-mid": "avatars/cyber-organic/generic-mid.png",
+    "llama-small": "avatars/cyber-organic/llama-small.png",
+    "minimax-cloud": "avatars/cyber-organic/minimax-cloud.png",
+    "nemotron-cloud": "avatars/cyber-organic/nemotron-cloud.png",
+    "gemini-mid": "avatars/cyber-organic/gemini-mid.png",
+    "lfm2-mid": "avatars/cyber-organic/lfm2-mid.png",
+    "cohere-mid": "avatars/cyber-organic/cohere-mid.png",
+    "granite-mid": "avatars/cyber-organic/granite-mid.png",
+    "falcon-mid": "avatars/cyber-organic/falcon-mid.png",
+    "yi-large": "avatars/cyber-organic/yi-large.png",
+    "exaone-mid": "avatars/cyber-organic/exaone-mid.png",
+    "olmo-mid": "avatars/cyber-organic/olmo-mid.png",
+    "internlm-mid": "avatars/cyber-organic/internlm-mid.png",
+    "starcoder-large": "avatars/cyber-organic/starcoder-large.png",
+    "smollm-small": "avatars/cyber-organic/smollm-small.png",
+    "baichuan-mid": "avatars/cyber-organic/baichuan-mid.png",
+    "stablelm-mid": "avatars/cyber-organic/stablelm-mid.png"
+  },
+  "creature-feature": {
+    "deepseek-cloud": "avatars/creature-feature/deepseek-cloud.png",
+    "gemma-mid": "avatars/creature-feature/gemma-mid.png",
+    "llama-mid": "avatars/creature-feature/llama-mid.png",
+    "qwen-cloud": "avatars/creature-feature/qwen-cloud.png",
+    "qwen-large": "avatars/creature-feature/qwen-large.png"
+  },
+  "cyber-machine": {
+    "deepseek-cloud": "avatars/cyber-machine/deepseek-cloud.png",
+    "gemma-mid": "avatars/cyber-machine/gemma-mid.png",
+    "llama-mid": "avatars/cyber-machine/llama-mid.png",
+    "qwen-cloud": "avatars/cyber-machine/qwen-cloud.png",
+    "qwen-large": "avatars/cyber-machine/qwen-large.png"
+  }
+}

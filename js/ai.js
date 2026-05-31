@@ -19,8 +19,8 @@ export class AIPlayer {
         if (this._mapSummary) return this._mapSummary;
 
         const grid = this.game.grid;
-        const cols = CONFIG.GRID_COLS;
-        const rows = CONFIG.GRID_ROWS;
+        const cols = grid.cols;
+        const rows = grid.rows;
         const regions = {};
         const names = [['NW','N','NE'],['W','C','E'],['SW','S','SE']];
 
@@ -53,8 +53,9 @@ export class AIPlayer {
     }
 
     _regionOf(col, row) {
-        const cx = col < CONFIG.GRID_COLS/3 ? 0 : col < CONFIG.GRID_COLS*2/3 ? 1 : 2;
-        const ry = row < CONFIG.GRID_ROWS/3 ? 0 : row < CONFIG.GRID_ROWS*2/3 ? 1 : 2;
+        const cols = this.game.grid.cols, rows = this.game.grid.rows;
+        const cx = col < cols/3 ? 0 : col < cols*2/3 ? 1 : 2;
+        const ry = row < rows/3 ? 0 : row < rows*2/3 ? 1 : 2;
         return [['NW','N','NE'],['W','C','E'],['SW','S','SE']][ry][cx];
     }
 
@@ -286,11 +287,16 @@ export class AIPlayer {
         });
         const currentMult = (1 + mySpecies.size * 0.10) * (myHasPlant && myHasHerb && myHasPred ? 1.25 : 1);
 
+        // Phase thresholds scale with the match length (rounds is configurable),
+        // so a 5- or 15-round game gets sensible early/mid/late guidance.
+        const earlyEnd = Math.max(1, Math.round(total * 0.25));
+        const midEnd = Math.max(earlyEnd + 1, Math.round(total * 0.65));
+
         let phaseAdvice;
-        if (round <= 4) {
+        if (round <= earlyEnd) {
             phaseAdvice = `PHASE: EARLY (round ${round}/${total}). You have ${ap} AP.
-PRIORITY: Plant grass in DIFFERENT regions (spread seeds wide). Use 3 AP on grass in 3 separate regions. Use your 4th AP on a shrub for early diversity (+10% species bonus). Remember: each unique species = +10% to your final score!`;
-        } else if (round <= 13) {
+PRIORITY: Plant grass in DIFFERENT regions (spread seeds wide). Spend most of your AP on grass across separate regions, and at least 1 AP on a shrub for early diversity (+10% species bonus). Remember: each unique species = +10% to your final score!`;
+        } else if (round <= midEnd) {
             let advice = `PHASE: MID GAME (round ${round}/${total}). You have ${ap} AP.\n`;
             advice += `Your scoring multiplier: ×${currentMult.toFixed(2)} (${mySpecies.size} species${myHasPlant && myHasHerb && myHasPred ? ' + trophic chain' : ''}).\n`;
             if (!myHasHerb) {

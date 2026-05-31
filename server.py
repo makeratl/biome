@@ -1,14 +1,99 @@
 #!/usr/bin/env python3
 """HTTP server with Ollama proxy for CORS bypass and tournament logging."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlencode
 import urllib.request
 import urllib.error
 import json
 import os
+import re
 import time
 import uuid
+import subprocess
+import threading
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tournament_log.json')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(BASE_DIR, 'tournament_log.json')
+
+# --- Avatar generation (ComfyUI bridge) ---
+COMFY_URL = 'http://localhost:8188'
+AVATARS_DIR = os.path.join(BASE_DIR, 'avatars')
+MANIFEST_FILE = os.path.join(AVATARS_DIR, 'manifest.json')
+WORKFLOW_FILE = os.path.join(BASE_DIR, 'comfy_avatar_workflow.json')
+_SLUG = re.compile(r'^[a-z0-9-]+$')
+_manifest_lock = threading.Lock()
+
+def _load_manifest():
+    try:
+        with open(MANIFEST_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+def _save_manifest(data):
+    with open(MANIFEST_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+
+def _comfy_generate(key, style, prompt, negative, lora, seed):
+    """Submit one avatar job to ComfyUI, wait for it, resize + save into
+    avatars/<style>/<key>.png, and record it in the manifest. Mirrors the exact
+    graph the MCP used (comfy_avatar_workflow.json); we only inject per-request
+    fields: positive (6), negative (7), style LoRA (14), seed (3), filename (9)."""
+    with open(WORKFLOW_FILE) as f:
+        graph = json.load(f)
+    graph['6']['inputs']['text'] = prompt
+    graph['7']['inputs']['text'] = negative
+    graph['14']['inputs']['lora_name'] = lora
+    graph['3']['inputs']['seed'] = int(seed)
+    graph['9']['inputs']['filename_prefix'] = f'biome-avatar-{style}-{key}'
+
+    payload = json.dumps({'prompt': graph}).encode()
+    req = urllib.request.Request(f'{COMFY_URL}/prompt', data=payload,
+                                 headers={'Content-Type': 'application/json'}, method='POST')
+    with urllib.request.urlopen(req, timeout=30) as r:
+        pid = json.load(r)['prompt_id']
+
+    img, t0 = None, time.time()
+    while time.time() - t0 < 180:
+        time.sleep(1)
+        try:
+            with urllib.request.urlopen(f'{COMFY_URL}/history/{pid}', timeout=10) as r:
+                hist = json.load(r)
+        except Exception:
+            continue
+        if pid in hist:
+            if hist[pid].get('status', {}).get('status_str') == 'error':
+                raise RuntimeError('ComfyUI reported a generation error')
+            imgs = hist[pid].get('outputs', {}).get('9', {}).get('images', [])
+            if imgs:
+                img = imgs[0]
+                break
+    if not img:
+        raise RuntimeError('generation timed out')
+
+    q = urlencode({'filename': img['filename'], 'subfolder': img.get('subfolder', ''),
+                   'type': img.get('type', 'output')})
+    with urllib.request.urlopen(f'{COMFY_URL}/view?{q}', timeout=30) as r:
+        raw = r.read()
+
+    out_dir = os.path.join(AVATARS_DIR, style)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f'{key}.png')
+    try:
+        subprocess.run(['convert', 'png:-', '-resize', '512x512', '-strip', out_path],
+                       input=raw, capture_output=True, check=True)
+    except Exception:
+        with open(out_path, 'wb') as f:  # fallback: full-size if imagemagick is missing
+            f.write(raw)
+
+    rel = f'avatars/{style}/{key}.png'
+    with _manifest_lock:
+        manifest = _load_manifest()
+        manifest.setdefault(style, {})[key] = rel
+        _save_manifest(manifest)
+    return {'ok': True, 'key': key, 'style': style, 'path': rel,
+            'prompt_id': pid, 'seconds': round(time.time() - t0, 1)}
 
 def _load_log():
     if not os.path.exists(LOG_FILE):
@@ -88,6 +173,16 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/history':
             self._json_response(_load_log())
             return
+        # Avatar generation: is ComfyUI reachable?
+        if self.path == '/comfy/health':
+            ok = False
+            try:
+                with urllib.request.urlopen(f'{COMFY_URL}/system_stats', timeout=3) as r:
+                    ok = r.status == 200
+            except Exception:
+                ok = False
+            self._json_response({'comfy': ok})
+            return
         super().do_GET()
 
     def do_POST(self):
@@ -106,6 +201,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         # Reset rankings (archive then clear the match log)
         if self.path == '/reset-rankings':
             self._handle_reset()
+            return
+        # Avatar generation via ComfyUI
+        if self.path == '/comfy/generate':
+            self._handle_comfy_generate()
             return
         super().do_POST()
 
@@ -178,6 +277,30 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'result': result,
             'rankings': after,
         })
+
+    def _handle_comfy_generate(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        key = body.get('key', '')
+        style = body.get('style', 'cyber-organic')
+        prompt = body.get('prompt', '')
+        negative = body.get('negative', '')
+        lora = body.get('lora', '')
+        seed = body.get('seed', 0)
+        if not (key and prompt and lora):
+            self._json_response({'error': 'key, prompt, and lora are required'}, 400)
+            return
+        if not (_SLUG.match(key) and _SLUG.match(style)):  # guard the filesystem path
+            self._json_response({'error': 'key/style must be lowercase slugs'}, 400)
+            return
+        try:
+            self._json_response(_comfy_generate(key, style, prompt, negative, lora, seed))
+        except Exception as e:
+            self._json_response({'error': str(e)}, 502)
 
     def _handle_reset(self):
         """Archive the current match log to a timestamped backup, then start fresh."""

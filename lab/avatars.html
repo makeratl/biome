@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome · Avatar Lab</title>
+    <link rel="stylesheet" href="avatars.css">
+</head>
+<body>
+    <header class="lab-header">
+        <div>
+            <h1>Avatar Lab <span class="style-badge">Cyber-organic</span></h1>
+            <p class="sub">Generate per-model biome-creature avatars for every installed model.
+               <a href="icons.html">organism icon lab →</a>
+               <a href="/">← back to game</a></p>
+        </div>
+        <div class="controls">
+            <span id="comfy-pill" class="status-pill">checking…</span>
+            <button id="refresh" class="ghost-btn">↻ Refresh</button>
+            <button id="gen-all" class="primary-btn" disabled>Generate all missing</button>
+        </div>
+    </header>
+
+    <main>
+        <section>
+            <h2 class="sec-title">Generate · running models <span id="gsummary" class="muted-tag"></span></h2>
+            <p class="hint">One avatar per unique <code>family-tier</code>, so models that share an
+               identity (e.g. <code>llama3.1:8b</code> and <code>codellama:7b</code>) reuse one
+               creature. Generation runs through <code>server.py → ComfyUI :8188</code> and writes
+               <code>avatars/cyber-organic/&lt;key&gt;.png</code> + the manifest.</p>
+            <p id="gstatus" class="hint gstatus"></p>
+            <div id="groups" class="groups"></div>
+        </section>
+
+        <details class="ref">
+            <summary class="sec-title">Family roster — how every known model maps</summary>
+            <p class="hint">Procedural reference for the full known/installed set, including synthetic
+               unknown families (generic fallback).</p>
+            <div id="rows" class="rows"></div>
+        </details>
+
+        <details class="ref">
+            <summary class="sec-title">Style comparison (reference)</summary>
+            <p class="hint">The exploration that led here. ★ marks the committed style.</p>
+            <div id="matrix" class="matrix"></div>
+        </details>
+    </main>
+
+    <script type="module" src="avatars.js"></script>
+</body>
+</html>

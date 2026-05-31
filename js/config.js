@@ -1,10 +1,27 @@
 // Biome — All tunable constants
 
 export const CONFIG = {
-    // Grid
+    // Grid — these are the Medium defaults / fallback. Per-match world settings
+    // (size, hex zoom, rounds) are chosen in the UI and passed through to the
+    // grid; see MAPS / HEX_ZOOM / GAME.ROUND_OPTIONS below.
     HEX_SIZE: 11,
     GRID_COLS: 72,
     GRID_ROWS: 38,
+
+    // Selectable grid-size presets (cols × rows). Hex size is independent.
+    MAPS: {
+        small:  { cols: 48, rows: 26, label: 'Small' },
+        medium: { cols: 72, rows: 38, label: 'Medium' },
+        large:  { cols: 100, rows: 52, label: 'Large' },
+    },
+    // Hex-zoom slider range (px radius). Default mirrors HEX_SIZE.
+    HEX_ZOOM: { min: 9, max: 22, default: 11 },
+    // Auto/"Fit screen" bounds: rows (battlefield height) stays fixed; hex size
+    // fills the viewport height; columns fill the width, clamped here. See
+    // Game._resolveWorld / _containHex. AUTO_MAX_HEX lets presets grow past the
+    // slider's 22px cap to fill large screens crisply.
+    FIT: { rows: 38, minCols: 44, maxCols: 150 },
+    AUTO_MAX_HEX: 40,
 
     // Terrain generation
     TERRAIN: {
@@ -154,5 +171,6 @@ export const CONFIG = {
         TOTAL_ROUNDS: 20,
         LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
+        ROUND_OPTIONS: [5, 10, 15, 20],   // selectable round counts (default = TOTAL_ROUNDS)
     },
 };

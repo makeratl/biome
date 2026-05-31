@@ -14,6 +14,24 @@ body {
     height: 100vh;
     width: 100vw;
     margin: 0;
+    /* Reserved top band for the scoreboard header. The board fits BELOW this
+       (see .canvas-container padding + Renderer._fit), so the scoreboard never
+       overlays live hexes. Recap/transition overlays anchor to it too. */
+    --header-h: 74px;
+    /* Reserved bottom band for the open stats console. Mirrors --header-h, but
+       DYNAMIC: 0 when the console is collapsed/hidden, grown to the panel's
+       height when it opens (set by Game._reserveConsoleSpace). The board fits
+       ABOVE it, so an open panel never overlays live hexes. */
+    --footer-h: 0px;
+    /* Live on-screen rect of the board (canvas), published by Renderer._fit via
+       _publishBoardRect. Transient overlays — tournament screens, game-over, AI
+       banter, expanded bracket — anchor to THIS instead of the viewport so they
+       sit centered ON the board and never fill the whole screen. Viewport-sized
+       defaults keep overlays valid before the first fit. */
+    --board-l: 0px;
+    --board-t: 0px;
+    --board-w: 100vw;
+    --board-h: 100vh;
 }
 
 /* Legacy compatibility container — keeps existing DOM ids reachable for code
@@ -43,6 +61,13 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Keep the board clear of the scoreboard header band (top) and the open
+       stats console (bottom). Both bands are reserved via padding so the
+       canvas — a flex child — fits and centers between them, never overlaid.
+       The console is absolutely positioned (bottom:40px) so it stays pinned
+       while the board shrinks into the remaining space. */
+    padding-top: var(--header-h);
+    padding-bottom: var(--footer-h);   /* --footer-h is animated in JS (Game._animateFooterTo) */
 }
 
 /* ── Corner wordmark (replaces header bar) ──────────────── */
@@ -502,6 +527,91 @@ body {
     color: #c8a86e;
 }
 
+/* ── World settings: size / hex zoom / rounds ──────────────── */
+.match-world {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #1f2942;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.mw-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+/* Hex-zoom row when "Fit screen" computes the size — slider is inert. */
+.mw-row-disabled { opacity: 0.45; }
+.mw-row-disabled .world-range { cursor: default; }
+.mw-label {
+    flex: 0 0 64px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6e6e92;
+}
+.world-seg {
+    flex: 1;
+    display: flex;
+    gap: 0;
+    background: #0e1424;
+    border: 1px solid #1f2942;
+    border-radius: 5px;
+    padding: 2px;
+}
+.world-seg button {
+    flex: 1;
+    padding: 5px 6px;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #6e6e92;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    font-family: inherit;
+}
+.world-seg button:hover { color: #b8b8d8; }
+.world-seg button.on {
+    background: rgba(200, 168, 110, 0.14);
+    color: #c8a86e;
+}
+/* Map-size buttons carry a dimension sub-label (name over cols×rows) */
+.world-seg-maps button {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    line-height: 1.15;
+}
+.ws-seg-name { font-size: 11px; font-weight: 700; }
+.ws-seg-dim {
+    font-size: 9px; font-weight: 600; opacity: 0.6;
+    font-variant-numeric: tabular-nums; letter-spacing: 0;
+}
+.world-range {
+    flex: 1;
+    accent-color: #c8a86e;
+    cursor: pointer;
+}
+.mw-readout {
+    flex: 0 0 34px;
+    text-align: right;
+    font-size: 11px;
+    font-weight: 600;
+    color: #c8a86e;
+    font-variant-numeric: tabular-nums;
+}
+.mw-summary {
+    margin-top: 2px;
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    color: rgba(255, 255, 255, 0.5);
+    font-variant-numeric: tabular-nums;
+}
+
 /* ── Match section: model pickers ──────────────────────────── */
 .mmp-label {
     font-size: 10px;
@@ -512,6 +622,17 @@ body {
 }
 .mmp-label.p1 { color: hsl(190, 70%, 60%); }
 .mmp-label.p2 { color: hsl(25, 75%, 62%); }
+
+/* Live avatar preview beside a model picker (the select can't hold an image). */
+.mmp-row { display: flex; align-items: center; gap: 8px; }
+.mmp-row .match-model-picker { width: auto; flex: 1 1 auto; }
+.mmp-ava {
+    flex: 0 0 auto; width: 30px; height: 30px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, hsl(var(--bh, 210), 55%, 56%), hsl(var(--bh, 210), 48%, 40%));
+}
+.mmp-ava.p1 { box-shadow: inset 0 0 0 2px hsl(190, 70%, 55%); }
+.mmp-ava.p2 { box-shadow: inset 0 0 0 2px hsl(25, 75%, 55%); }
 
 .match-model-picker {
     width: 100%;
@@ -754,12 +875,10 @@ body {
 
 /* Game over overlay */
 .game-over-overlay {
+    /* Full-screen designed event scene (aurora backdrop via .event-stage) —
+       the result is its own moment, not a card over the live board. */
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.75);
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -778,6 +897,27 @@ body {
     font-size: 24px;
     color: #a8d8a8;
     margin-bottom: 12px;
+}
+
+/* Winner's portrait — large hex with a golden victory glow. Hidden until .show. */
+.go-winner-avatar {
+    display: none;
+    width: 132px; height: 132px;
+    margin: 4px auto 14px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, hsl(var(--bh, 45), 50%, 50%), hsl(var(--bh, 45), 45%, 34%));
+    filter: drop-shadow(0 0 18px hsla(45, 90%, 60%, 0.6));
+    animation: go-winner-rise 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3) both, go-winner-glow 2.4s ease-in-out 0.6s infinite;
+}
+.go-winner-avatar.show { display: block; }
+@keyframes go-winner-rise {
+    0%   { transform: scale(0.3) translateY(20px); opacity: 0; }
+    70%  { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1) translateY(0); }
+}
+@keyframes go-winner-glow {
+    0%, 100% { filter: drop-shadow(0 0 14px hsla(45, 90%, 60%, 0.45)); }
+    50%      { filter: drop-shadow(0 0 26px hsla(45, 92%, 66%, 0.75)); }
 }
 
 .game-over-card .winner {
@@ -850,20 +990,28 @@ body {
 }
 
 /* Live scoreboard overlay */
+/* Full-width header band — the board is reserved below it (no overlay).
+   Lightly translucent and fading at its lower edge so it melts into the
+   board rather than sitting as an opaque slab. */
 #scoreboard-overlay {
     position: absolute;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--header-h);
     display: flex;
     align-items: center;
-    gap: 20px;
-    background: rgba(10, 10, 26, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 8px 22px;
+    justify-content: center;
+    gap: 36px;
+    background: linear-gradient(180deg,
+        rgba(10, 12, 26, 0.72) 0%,
+        rgba(10, 12, 26, 0.5) 62%,
+        rgba(10, 12, 26, 0) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 0 clamp(120px, 16vw, 320px);
     pointer-events: none;
-    backdrop-filter: blur(6px);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
     white-space: nowrap;
     z-index: 10;
 }
@@ -871,11 +1019,31 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    width: 220px;
-    flex: 0 0 220px;
+    flex: 1 1 0;
+    min-width: 0;
 }
 .sb-player.p1 { justify-content: flex-end; }
 .sb-player.p2 { justify-content: flex-start; }
+
+/* Fighting-game end-cap avatars + score-share health bar */
+.sb-ava {
+    flex: 0 0 auto; width: 34px; height: 34px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, hsl(var(--bh, 210), 55%, 56%), hsl(var(--bh, 210), 48%, 40%));
+}
+.sb-ava.p1 { box-shadow: inset 0 0 0 2px hsl(190, 72%, 58%); }
+.sb-ava.p2 { box-shadow: inset 0 0 0 2px hsl(25, 82%, 60%); }
+.sb-bar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+    background: linear-gradient(90deg, hsl(25, 80%, 52%), hsl(10, 72%, 46%));  /* P2 track */
+    overflow: hidden;
+}
+.sb-bar-p1 {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 50%;
+    background: linear-gradient(90deg, hsl(190, 72%, 50%), hsl(170, 66%, 44%));  /* P1 fill */
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5);
+    transition: width 0.55s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
 .sb-name {
     font-size: 11px;
     font-weight: 600;
@@ -903,9 +1071,10 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    width: 120px;
-    flex: 0 0 120px;
+    justify-content: center;
+    gap: 1px;
+    width: 140px;
+    flex: 0 0 140px;
 }
 .sb-round {
     font-size: 11px;
@@ -1017,21 +1186,25 @@ body {
 }
 #score-chart-overlay.sc-hidden { opacity: 0; pointer-events: none; }
 #score-chart {
-    width: 252px;
-    height: 72px;
+    /* Fills the timeline column (sized to the flex layout, not a fixed width —
+       the old fixed 252px leaked from the retired floating overlay and pushed
+       the canvas over the census panel). Bitmap is resized to match in
+       Game._drawScoreChart so it stays crisp at any width. */
+    width: 100%;
+    height: 100%;
     display: block;
 }
 
 /* ── Biome donut (inside the right-edge panel's Biome tab) ── */
 .ws-chart-wrap {
     position: relative;
-    width: 130px;
-    height: 130px;
-    margin: 4px auto 6px;
+    width: 104px;
+    height: 104px;
+    margin: 2px auto 4px;
 }
 .ws-donut {
-    width: 130px;
-    height: 130px;
+    width: 104px;
+    height: 104px;
     transform: rotate(-90deg);
 }
 .ws-seg {
@@ -1095,7 +1268,210 @@ body {
     margin-left: auto;
 }
 
-/* ── Right-edge tabbed panel: Ecosystem + Biome ── */
+/* ── Unified bottom-center HUD console ───────────────────────────
+   A live scoreline rail that slides up into Stats / Bracket / Menu.
+   Anchored bottom-center, between the two AI chat corners; sits in the
+   band above the activity ticker and yields to the species dock. */
+.hud-console {
+    position: absolute;
+    left: 50%;
+    bottom: 40px;
+    transform: translateX(-50%);
+    z-index: 14;
+    /* Match the live board's width (published as --board-w by Renderer._fit) so
+       the console reads as the board's own footer rail rather than a narrow
+       island — the stats spread into the width the board already occupies. */
+    width: min(var(--board-w, 920px), 96vw);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    pointer-events: none;          /* rail/panel opt back in */
+    font-family: inherit;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.hud-console.hc-hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(16px);
+}
+
+/* PANEL — sits above the rail, slides up out of it */
+.hc-panel {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(15, 20, 38, 0.93), rgba(10, 12, 26, 0.96));
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    max-height: 62vh;
+    opacity: 1;
+    transition: max-height 0.34s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.22s ease,
+                transform 0.34s cubic-bezier(0.4, 0, 0.2, 1),
+                padding 0.3s ease;
+}
+.hud-console.hc-collapsed .hc-panel {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+}
+
+/* HANDLE — compact toggle pill. Collapsed, the whole console is just this;
+   the persistent score lives in the top-center scoreboard. */
+.hc-handle {
+    align-self: center;            /* narrow centered pill when collapsed */
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    background: linear-gradient(180deg, rgba(18, 24, 44, 0.96), rgba(10, 12, 26, 0.97));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 11px;
+    color: #b8b8d8;
+    font-family: inherit;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    transition: border-color 0.18s, background 0.18s, color 0.18s, border-radius 0.2s;
+}
+.hc-handle:hover { border-color: rgba(255, 255, 255, 0.24); color: #fff; }
+.hc-handle-icon { font-size: 12px; opacity: 0.8; }
+.hc-handle-label { white-space: nowrap; }
+
+/* Expanded: the handle becomes a full-width bar fused to the panel bottom */
+.hud-console:not(.hc-collapsed) .hc-handle {
+    align-self: stretch;
+    justify-content: center;
+    border-radius: 0 0 12px 12px;
+    border-top-color: rgba(255, 255, 255, 0.05);
+}
+
+.hc-grip {
+    font-size: 11px; line-height: 1;
+    color: rgba(255, 255, 255, 0.5);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.18s;
+}
+.hud-console:not(.hc-collapsed) .hc-grip { transform: rotate(180deg); }
+.hc-handle:hover .hc-grip { color: rgba(255, 255, 255, 0.85); }
+
+/* While the species dock owns the bottom-center stage (human placement),
+   the console is locked collapsed and the handle recedes. */
+.hud-console.hc-dock-yield .hc-handle { opacity: 0.45; cursor: default; }
+
+/* Tabs */
+.hc-tabs {
+    display: flex; gap: 0;
+    background: #0e1424;
+    border: 1px solid #1f2942;
+    border-radius: 6px;
+    padding: 2px;
+}
+.hc-tab {
+    flex: 1;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 5px 6px;
+    background: transparent; border: none; border-radius: 4px;
+    color: #6e6e92; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.15s, color 0.15s;
+}
+.hc-tab:hover { color: #b8b8d8; }
+.hc-tab.active { background: rgba(200, 168, 110, 0.18); color: hsl(45, 90%, 75%); }
+.hc-tab-icon { font-size: 10px; opacity: 0.85; }
+
+/* Bracket tab hidden until a tournament exists */
+.hc-tab.hc-tab-bracket { display: none; position: relative; }
+.hud-console.hc-has-bracket .hc-tab.hc-tab-bracket { display: inline-flex; }
+.hc-tab-live {
+    display: none;
+    position: absolute; top: 3px; right: 5px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: hsl(0, 75%, 60%); box-shadow: 0 0 6px hsl(0, 75%, 60%);
+    animation: live-pulse 1.2s ease-in-out infinite;
+}
+.hud-console.hc-tournament-live .hc-tab-bracket .hc-tab-live { display: block; }
+
+/* Views */
+.hc-view { display: block; }
+.hc-view.hc-view-hidden { display: none; }
+
+/* Stats view: timeline · life stats · biome — three abreast, short panel */
+.hc-section-label {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: rgba(255, 255, 255, 0.4);
+    margin-bottom: 4px;
+}
+/* Three groups, intentionally UNequal: the timeline (a chart) drinks the extra
+   width, the census bars take a comfortable share, the donut is fixed. They are
+   not forced to a common width. */
+.hc-stats-cols {
+    display: flex; gap: 22px; align-items: stretch;
+}
+.hc-timeline {
+    flex: 1.7 1 0; min-width: 200px; overflow: hidden;
+    display: flex; flex-direction: column;
+}
+.hc-timeline canvas {
+    display: block; width: 100%; height: 100%; flex: 1 1 auto; min-height: 72px;
+}
+.hc-eco { flex: 1.1 1 0; min-width: 280px; display: flex; flex-direction: column; gap: 9px; justify-content: center; }
+.hc-biome {
+    flex: 0 0 156px;
+    display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+
+/* Bracket view inside the console */
+.hc-bracket-header {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    color: hsl(45, 80%, 72%);
+}
+.hc-bracket-action {
+    background: transparent; border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px; color: rgba(255, 255, 255, 0.6);
+    cursor: pointer; font-size: 12px; padding: 2px 7px; font-family: inherit;
+    transition: border-color 0.15s, color 0.15s;
+}
+.hc-bracket-action:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
+.hc-bracket-content {
+    margin-top: 9px; max-height: 46vh; overflow-y: auto;
+}
+.hc-bracket-content::-webkit-scrollbar { width: 4px; }
+.hc-bracket-content::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 2px; }
+
+/* Menu view */
+.hc-view-menu { display: flex; flex-direction: column; gap: 6px; }
+.hc-view-menu.hc-view-hidden { display: none; }
+.hc-menu-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: #cdd6f4; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: inherit; text-align: left;
+    transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+.hc-menu-item:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: translateX(2px);
+}
+.hc-mi-icon { font-size: 14px; width: 18px; text-align: center; }
+
+/* ── Right-edge tabbed panel: Ecosystem + Biome (legacy, retired) ── */
 .biomass-tower {
     position: absolute;
     top: 162px;
@@ -1606,7 +1982,7 @@ body {
 }
 .species-dock {
     position: absolute;
-    bottom: 44px;
+    bottom: 88px;            /* clears the collapsed HUD console rail below it */
     left: 50%;
     transform: translateX(-50%) translateY(0);
     z-index: 14;
@@ -1829,10 +2205,14 @@ body {
 
 /* ── AI commentary cards (character-style speech panels) ── */
 .ai-overlay {
-    position: absolute;
-    bottom: 16px;
-    width: 280px;
-    max-width: 32%;
+    /* Live in the side gutters BESIDE the board (in the letterbox margins
+       between the board edge and the viewport edge) — flanking the world, not
+       sitting on top of it. Each card pins to its viewport edge and caps its
+       width to its gutter (board-l on the left; the symmetric remainder on the
+       right) so it never spills over the map. */
+    position: fixed;
+    bottom: calc(100vh - var(--board-t) - var(--board-h) + 14px);
+    width: 300px;
     background: linear-gradient(180deg, rgba(15, 20, 38, 0.92), rgba(10, 12, 26, 0.92));
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -1844,12 +2224,16 @@ body {
 }
 
 .ai-overlay.p1 {
-    left: 16px;
+    left: 14px;
+    right: auto;
+    max-width: calc(var(--board-l) - 26px);
     border-left: 3px solid hsl(190, 70%, 50%);
     box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(190, 70%, 50%, 0);
 }
 .ai-overlay.p2 {
-    right: 16px;
+    right: 14px;
+    left: auto;
+    max-width: calc(100vw - var(--board-l) - var(--board-w) - 26px);
     border-right: 3px solid hsl(25, 75%, 52%);
     box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(25, 75%, 52%, 0);
 }
@@ -1885,6 +2269,15 @@ body {
 .ai-overlay.p2 .aic-avatar {
     background: linear-gradient(135deg, hsl(25, 80%, 60%), hsl(10, 70%, 50%));
 }
+/* Baked cyber-organic portrait fills the card avatar; initials hide behind it. */
+.aic-avatar.has-avatar {
+    background-size: cover;
+    background-position: center;
+    color: transparent;
+    text-shadow: none;
+}
+.ai-overlay.p1 .aic-avatar.has-avatar { box-shadow: inset 0 0 0 2px hsl(190, 75%, 60%); }
+.ai-overlay.p2 .aic-avatar.has-avatar { box-shadow: inset 0 0 0 2px hsl(25, 85%, 62%); }
 
 .aic-name-block {
     flex: 1;
@@ -2185,6 +2578,8 @@ body {
     --avatar-from: hsl(25, 80%, 60%);
     --avatar-to:   hsl(10, 70%, 50%);
 }
+/* Baked cyber-organic portrait fills the hex; initials hide behind it. */
+.pc-avatar.has-avatar { color: transparent; text-shadow: none; }
 
 .pc-role {
     font-size: 9px;
@@ -2273,6 +2668,18 @@ body {
     color: rgba(255,255,255,0.25);
     letter-spacing: 0.1em;
 }
+/* Fighting-game reveal: enlarge the portraits and give each a slot-coloured
+   ring + glow that follows the hex (drop-shadow respects the clip-path). */
+#prematch-p1-card .pc-avatar,
+#prematch-p2-card .pc-avatar { width: 104px; height: 104px; font-size: 42px; }
+#prematch-p1-card .pc-avatar.has-avatar {
+    box-shadow: inset 0 0 0 3px hsl(190, 72%, 60%);
+    filter: drop-shadow(0 0 14px hsla(190, 72%, 55%, 0.55));
+}
+#prematch-p2-card .pc-avatar.has-avatar {
+    box-shadow: inset 0 0 0 3px hsl(25, 82%, 62%);
+    filter: drop-shadow(0 0 14px hsla(25, 82%, 58%, 0.55));
+}
 .prematch-hint {
     font-size: 10px;
     letter-spacing: 0.18em;
@@ -2281,12 +2688,43 @@ body {
     margin-top: 12px;
 }
 
-/* ── Launcher (welcome screen on first load) ─────────────── */
-/* When the launcher-welcome screen is the active sub-screen, dim the backdrop
-   less aggressively so the generated hex grid behind shows through. */
-#tournament-overlay:has(#launcher-welcome:not(.t-hidden)) {
+/* ── Fighting-game VS entrance ───────────────────────────────── */
+@keyframes pm-slam-left {
+    0%   { transform: translateX(-130%) scale(0.82); opacity: 0; }
+    68%  { transform: translateX(5%) scale(1.05);    opacity: 1; }
+    82%  { transform: translateX(-2%) scale(0.99); }
+    100% { transform: translateX(0) scale(1); }
+}
+@keyframes pm-slam-right {
+    0%   { transform: translateX(130%) scale(0.82); opacity: 0; }
+    68%  { transform: translateX(-5%) scale(1.05);  opacity: 1; }
+    82%  { transform: translateX(2%) scale(0.99); }
+    100% { transform: translateX(0) scale(1); }
+}
+@keyframes pm-vs-clash {
+    0%, 58% { transform: scale(0.2) rotate(-12deg); opacity: 0; }
+    72%     { transform: scale(1.7) rotate(4deg);   opacity: 1; color: #fff; text-shadow: 0 0 26px rgba(255,255,255,0.95), 0 0 48px hsla(45,90%,70%,0.7); }
+    100%    { transform: scale(1) rotate(0); opacity: 1; }
+}
+.pm-enter .player-card.p1 { animation: pm-slam-left 0.42s cubic-bezier(0.2,0.85,0.3,1.25) both; }
+.pm-enter .player-card.p2 { animation: pm-slam-right 0.42s cubic-bezier(0.2,0.85,0.3,1.25) both; }
+.pm-enter .prematch-vs    { animation: pm-vs-clash 0.6s cubic-bezier(0.2,0.9,0.3,1.5) both; }
+
+/* ── Launcher (welcome / setup menus) ────────────────────────────
+   The launcher is the ambient MENU, not an in-game event — it deliberately
+   keeps the generated hex world visible behind a light dim (the opaque aurora
+   event-stage treatment is suppressed here). Only the actual event beats
+   (prematch → result → champion, bracket, game over) get the full scene. */
+#tournament-overlay:has(#launcher-welcome:not(.t-hidden)),
+#tournament-overlay:has(#launcher-setup:not(.t-hidden)) {
     background: linear-gradient(180deg, rgba(4, 6, 18, 0.78), rgba(4, 6, 18, 0.92));
     backdrop-filter: blur(3px);
+}
+#tournament-overlay:has(#launcher-welcome:not(.t-hidden))::before,
+#tournament-overlay:has(#launcher-welcome:not(.t-hidden))::after,
+#tournament-overlay:has(#launcher-setup:not(.t-hidden))::before,
+#tournament-overlay:has(#launcher-setup:not(.t-hidden))::after {
+    display: none;
 }
 
 .launcher-title {
@@ -2486,14 +2924,78 @@ body {
     letter-spacing: 0.06em;
 }
 
+/* ── Event stage — opaque full-screen aurora backdrop ─────────────
+   The big "event" beats (tournament transitions + screens, champion crowning,
+   game over, the championship bracket) are designed full-screen scenes, NOT
+   translucent layers over the live board — the muddy board-through-the-gaps
+   look read as cheap. Each is a self-contained stage: an opaque deep field
+   with slow-drifting aurora ribbons that tint to the moment. Lightweight,
+   in-the-world HUD (AI banter, scoreboard band) deliberately stays anchored on
+   the board and is simply occluded while a full-screen event plays.
+
+   Tint is driven by two custom props so a moment only overrides colours:
+     --aur-1 / --aur-2  ribbon hues   --aur-glow  centre pool */
+.event-stage {
+    /* Cool default — teal × violet, calm and premium */
+    --aur-1: hsl(190, 85%, 52%);
+    --aur-2: hsl(265, 75%, 58%);
+    --aur-glow: hsla(220, 80%, 50%, 0.18);
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    /* Opaque base so nothing reads through */
+    background:
+        radial-gradient(ellipse 80% 60% at 50% 38%, var(--aur-glow), transparent 70%),
+        linear-gradient(165deg, #080a1c 0%, #04050f 55%, #06070f 100%);
+}
+/* Two aurora layers drifting in opposition — organic, never-repeating motion.
+   Elongated soft blobs + blur read as light ribbons; screen-blend so they glow
+   over the dark base without washing it out. */
+.event-stage::before,
+.event-stage::after {
+    content: '';
+    position: absolute;
+    inset: -30%;
+    z-index: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    filter: blur(46px) saturate(1.15);
+    opacity: 0.6;
+    will-change: transform;
+}
+.event-stage::before {
+    background:
+        radial-gradient(ellipse 36% 60% at 26% 32%, var(--aur-1), transparent 62%),
+        radial-gradient(ellipse 30% 52% at 70% 60%, var(--aur-2), transparent 60%);
+    animation: aurora-a 34s ease-in-out infinite;
+}
+.event-stage::after {
+    background:
+        radial-gradient(ellipse 32% 56% at 78% 26%, var(--aur-2), transparent 60%),
+        radial-gradient(ellipse 40% 48% at 34% 74%, var(--aur-1), transparent 62%);
+    animation: aurora-b 46s ease-in-out infinite;
+    opacity: 0.5;
+}
+/* Keep all real content above the aurora pseudo-layers */
+.event-stage > * { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) {
+    .event-stage::before, .event-stage::after { animation: none; }
+}
+@keyframes aurora-a {
+    0%   { transform: translate(-4%, -3%) rotate(-3deg) scale(1.05); }
+    50%  { transform: translate(5%, 4%) rotate(4deg) scale(1.15); }
+    100% { transform: translate(-4%, -3%) rotate(-3deg) scale(1.05); }
+}
+@keyframes aurora-b {
+    0%   { transform: translate(4%, 3%) rotate(2deg) scale(1.12); }
+    50%  { transform: translate(-5%, -4%) rotate(-4deg) scale(1.02); }
+    100% { transform: translate(4%, 3%) rotate(2deg) scale(1.12); }
+}
+
 /* ── Tournament Overlay ──────────────────────────────────── */
 #tournament-overlay {
     position: fixed;
     inset: 0;
-    /* Backdrop lightened so the live canvas stays visible behind tournament screens — the moment of a match
-       feels like a culmination over the game world, not a teleport into a separate modal. */
-    background: rgba(4, 4, 16, 0.45);
-    backdrop-filter: blur(2px);
     z-index: 1000;
     display: flex;
     align-items: center;
@@ -2513,6 +3015,27 @@ body {
     animation: t-fadein 0.5s ease;
 }
 .t-screen.t-hidden { display: none; }
+
+/* Per-moment aurora tint — the champion stage glows gold */
+#tournament-overlay:has(#t-champion:not(.t-hidden)) {
+    --aur-1: hsl(45, 100%, 58%);
+    --aur-2: hsl(28, 95%, 52%);
+    --aur-glow: hsla(42, 100%, 50%, 0.22);
+}
+/* Rank-drama flares (driven by body classes set in Game._drainCallouts while a
+   headline callout holds): upset → magenta, throne → gold. */
+body.event-upset #tournament-overlay,
+body.event-upset #bracket-expanded {
+    --aur-1: hsl(330, 92%, 60%);
+    --aur-2: hsl(280, 85%, 60%);
+    --aur-glow: hsla(325, 95%, 55%, 0.24);
+}
+body.event-throne #tournament-overlay,
+body.event-throne #bracket-expanded {
+    --aur-1: hsl(45, 100%, 60%);
+    --aur-2: hsl(35, 95%, 54%);
+    --aur-glow: hsla(42, 100%, 52%, 0.26);
+}
 
 @keyframes t-fadein {
     from { opacity: 0; transform: translateY(12px); }
@@ -2535,142 +3058,386 @@ body {
     margin-top: 4px;
 }
 
-.bracket-grid {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    width: 100%;
-    justify-content: center;
-}
+/* ─────────────────────────────────────────────────────────────
+   Tournament bracket — responsive tree with ranking/upset stats.
+   Shared by the between-match interstitial (#bracket-grid) and the
+   expanded overlay (#be-grid). Connector lines are drawn entirely
+   in CSS via pair "spines" + per-cell horizontal stubs.
+   ───────────────────────────────────────────────────────────── */
+.bracket-grid { width: 100%; display: flex; justify-content: center; }
 
-.bracket-col {
+.bt-stage {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    min-width: 180px;
+    gap: 18px;
+    width: 100%;
+    height: 100%;
 }
-.bracket-col.semi { min-width: 190px; }
-.bracket-col.final { min-width: 190px; }
 
-.bc-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.62);
-    margin-bottom: 4px;
-    align-self: center;
-    padding: 3px 12px;
-    border-radius: 999px;
-    background: rgba(8, 12, 24, 0.6);
+/* Header stat strip — a masthead row, not floating chips over the tree */
+.bt-statbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-start;
+    align-items: center;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.bt-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 7px 14px;
+    border-radius: 10px;
+    background: rgba(10, 14, 26, 0.6);
     border: 1px solid rgba(255,255,255,0.1);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
-    text-shadow: 0 1px 6px rgba(0,0,0,0.5);
 }
+.bt-stat-k {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.45);
+}
+.bt-stat-v {
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.9);
+}
+.bt-stat-upset {
+    border-color: hsla(45, 90%, 60%, 0.4);
+    background: linear-gradient(180deg, hsla(45,80%,40%,0.18), rgba(10,14,26,0.6));
+}
+.bt-stat-upset .bt-stat-k { color: hsl(45, 90%, 70%); }
 
-.bc-matches {
+/* Tree layout */
+.bracket-tree {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    min-height: min(70vh, 540px);
+    flex: 1;
+}
+.bt-round {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
 }
+.bt-round--champ { flex: 0.85; }
 
-.bc-match {
-    background:
-        linear-gradient(180deg, rgba(20,26,44,0.82), rgba(10,14,26,0.88));
-    border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 9px;
-    padding: 10px 12px 10px 15px;
-    position: relative;
-    overflow: hidden;
-    backdrop-filter: blur(7px);
-    -webkit-backdrop-filter: blur(7px);
-    box-shadow:
-        0 6px 22px rgba(0,0,0,0.45),
-        inset 0 1px 0 rgba(255,255,255,0.07);
-}
-/* Left accent bar — color encodes match state, reads on any biome theme */
-.bc-match::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: rgba(255,255,255,0.18);
-}
-.bc-match.bc-done {
-    border-color: rgba(140, 220, 150, 0.28);
-}
-.bc-match.bc-done::before {
-    background: hsl(140, 60%, 58%);
-    box-shadow: 0 0 12px hsla(140, 60%, 55%, 0.55);
-}
-.bc-match.bc-live {
-    border-color: rgba(255, 170, 60, 0.5);
-    box-shadow:
-        0 6px 22px rgba(0,0,0,0.45),
-        0 0 18px rgba(255, 160, 40, 0.22),
-        inset 0 1px 0 rgba(255,255,255,0.07);
-}
-.bc-match.bc-live::before {
-    background: hsl(32, 90%, 60%);
-    box-shadow: 0 0 14px hsla(32, 90%, 58%, 0.7);
-    animation: bc-live-pulse 1.6s ease infinite;
-}
-@keyframes bc-live-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.5; }
-}
-
-.bc-player {
-    font-size: 13px;
-    font-weight: 600;
-    padding: 4px 0;
-    color: rgba(255,255,255,0.62);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.bc-player.bc-win { color: hsl(140, 62%, 68%); font-weight: 700; }
-.bc-player.bc-lose { color: rgba(255,255,255,0.3); text-decoration: line-through; }
-
-.bc-divider {
-    height: 1px;
-    background: rgba(255,255,255,0.12);
-    margin: 3px 0;
-}
-
-.bc-winner-badge {
+.bt-round-label {
+    height: 26px;
+    flex: 0 0 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 10px;
-    color: hsl(140, 60%, 55%);
-    letter-spacing: 0.05em;
-    margin-top: 6px;
     font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 8px;
 }
-
-.bracket-connector-col {
+.bt-round-body {
+    flex: 1;
     display: flex;
     flex-direction: column;
     justify-content: space-around;
-    align-items: center;
-    min-width: 80px;
-    height: 100%;
-    gap: 4px;
-    padding: 32px 4px 0;
+    min-height: 0;
 }
-.bc-conn-line {
-    font-size: 10px;
-    color: rgba(255,255,255,0.45);
-    text-align: center;
-    white-space: nowrap;
+.bt-pair {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    position: relative;
+    min-height: 0;
+}
+.bt-cell {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    padding: 6px 24px;
+    position: relative;
+    min-height: 0;
+}
+
+/* ── Connectors ─────────────────────────────────────────────────
+   Vertical spine joins each pair's two card-centers (25%↔75%);
+   horizontal stubs bridge card edge ↔ column edge (the 24px gutter). */
+.bt-pair:not(.bt-pair--solo)::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 25%;
+    bottom: 25%;
+    width: 3px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, rgba(150,170,210,0.4), rgba(120,140,190,0.22));
+    box-shadow: 0 0 8px rgba(120,150,210,0.18);
+}
+/* Outgoing stub: card right edge → column edge (all feeder cells) */
+.bt-round--qf .bt-cell::after,
+.bt-round--sf .bt-cell::after,
+.bt-round--final .bt-cell::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(150,170,210,0.34);
+}
+/* Incoming stub: column edge → card left edge (downstream rounds) */
+.bt-round--sf .bt-cell::before,
+.bt-round--final .bt-cell::before,
+.bt-round--champ .bt-champ::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(150,170,210,0.34);
+}
+.bt-round--champ .bt-champ { position: relative; }
+
+/* ── Match card ─────────────────────────────────────────────── */
+.bt-card {
+    width: 100%;
+    max-width: 260px;
+    background: linear-gradient(180deg, rgba(20,26,44,0.85), rgba(10,14,26,0.9));
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 11px;
+    padding: 9px 11px;
+    position: relative;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.bt-card-mid {
+    height: 1px;
+    background: rgba(255,255,255,0.1);
+    margin: 5px 2px;
+}
+
+.bt-side {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 2px;
+}
+.bt-seed {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 800;
+    color: rgba(0,0,0,0.78);
+}
+.bt-seed-hi   { background: linear-gradient(135deg, hsl(45,95%,66%), hsl(40,90%,54%)); }
+.bt-seed-mid  { background: linear-gradient(135deg, hsl(210,16%,80%), hsl(210,12%,64%)); }
+.bt-seed-lo   { background: linear-gradient(135deg, hsl(28,55%,62%), hsl(24,48%,48%)); color: rgba(255,255,255,0.9); }
+.bt-seed-none { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.3); font-weight: 600; }
+
+.bt-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.82);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.bt-elo {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255,255,255,0.4);
+    letter-spacing: 0.02em;
+}
+.bt-score {
+    flex: 0 0 auto;
+    min-width: 38px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255,255,255,0.55);
+}
+
+.bt-side.bt-win .bt-name  { color: hsl(140, 62%, 70%); font-weight: 800; }
+.bt-side.bt-win .bt-score { color: hsl(140, 62%, 70%); }
+.bt-side.bt-lose .bt-name { color: rgba(255,255,255,0.32); text-decoration: line-through; }
+.bt-side.bt-lose .bt-score,
+.bt-side.bt-lose .bt-elo  { color: rgba(255,255,255,0.28); }
+.bt-side.bt-lead .bt-name  { color: hsl(32, 92%, 66%); font-weight: 800; }
+.bt-side.bt-lead .bt-score { color: hsl(32, 92%, 66%); }
+
+/* Empty / not-yet-determined cards read muted */
+.bt-pending .bt-name, .bt-queued .bt-name { color: rgba(255,255,255,0.45); }
+
+/* ── State framing ──────────────────────────────────────────── */
+.bt-done  { border-color: rgba(140, 220, 150, 0.3); }
+.bt-chalk { border-color: rgba(140, 220, 150, 0.3); }
+
+.bt-live {
+    border-color: rgba(255, 170, 60, 0.6);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 22px rgba(255,160,40,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
+    transform: scale(1.05);
+    z-index: 2;
+    animation: bt-live-breathe 1.8s ease-in-out infinite;
+}
+.bt-live .bt-name { color: #fff; }
+.bt-live .bt-score { color: rgba(255,255,255,0.9); }
+@keyframes bt-live-breathe {
+    0%, 100% { box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 16px rgba(255,160,40,0.2), inset 0 1px 0 rgba(255,255,255,0.06); }
+    50%      { box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 30px rgba(255,160,40,0.45), inset 0 1px 0 rgba(255,255,255,0.06); }
+}
+
+.bt-upnext { border-color: rgba(120, 180, 255, 0.4); }
+
+/* Upset — gold/crimson framing + a one-shot celebratory pop */
+.bt-upset {
+    border-color: hsla(45, 95%, 62%, 0.6);
+    box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 24px hsla(45, 90%, 55%, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+    animation: bt-upset-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bt-upset-big {
+    border-color: hsla(8, 90%, 62%, 0.7);
+    box-shadow: 0 6px 28px rgba(0,0,0,0.5), 0 0 30px hsla(20, 95%, 58%, 0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+    animation: bt-upset-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), bt-upset-shimmer 2.6s ease-in-out 0.6s infinite;
+}
+@keyframes bt-upset-pop {
+    0%   { transform: scale(0.9); }
+    55%  { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+@keyframes bt-upset-shimmer {
+    0%, 100% { box-shadow: 0 6px 28px rgba(0,0,0,0.5), 0 0 22px hsla(20,95%,58%,0.35), inset 0 1px 0 rgba(255,255,255,0.1); }
+    50%      { box-shadow: 0 6px 28px rgba(0,0,0,0.5), 0 0 38px hsla(20,95%,58%,0.6), inset 0 1px 0 rgba(255,255,255,0.1); }
+}
+
+/* ── Status ribbon ──────────────────────────────────────────── */
+.bt-ribbon {
+    position: absolute;
+    top: -9px;
+    right: 10px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+.bt-ribbon-live  { background: hsl(32, 90%, 56%); color: #1a0f00; }
+.bt-ribbon-next  { background: hsla(215, 80%, 60%, 0.92); color: #04101f; }
+.bt-ribbon-chalk { background: hsla(140, 55%, 50%, 0.92); color: #04140a; }
+.bt-ribbon-upset {
+    background: linear-gradient(135deg, hsl(45,95%,60%), hsl(20,92%,56%));
+    color: #1a0a00;
+    animation: bt-upset-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Champion pedestal ──────────────────────────────────────────
+   A weighty plinth so the rightmost column reads as a destination,
+   not empty space — present even while the title is still TBD. */
+.bt-champ {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+    padding: 24px 20px 30px;
+    border-radius: 16px;
+    background:
+        radial-gradient(ellipse 90% 60% at 50% 18%, hsla(45,70%,40%,0.12), transparent 70%),
+        linear-gradient(180deg, rgba(26,30,52,0.92), rgba(10,14,26,0.94));
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 10px 34px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.07);
+}
+.bt-champ .bt-badge { margin: 4px 0 2px; }
+.bt-champ-glow {
+    position: absolute; inset: -1px;
+    border-radius: 16px;
+    background: radial-gradient(ellipse 70% 50% at 50% 30%, hsla(45,95%,58%,0.28), transparent 70%);
+    pointer-events: none;
+    animation: bt-champ-glow-pulse 2.8s ease-in-out infinite;
+}
+@keyframes bt-champ-glow-pulse { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+.bt-champ-trophy { font-size: 40px; line-height: 1; filter: drop-shadow(0 3px 10px rgba(0,0,0,0.55)); }
+.bt-champ-name { font-size: 19px; font-weight: 800; color: rgba(255,255,255,0.96); }
+.bt-champ-elo { font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.5); }
+.bt-champ-record {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.45);
+    margin-top: 2px;
+}
+.bt-champ-seed { font-weight: 700; }
+.bt-champ-wins { font-weight: 700; color: rgba(255,255,255,0.6); }
+/* Plinth base — the pedestal the trophy stands on */
+.bt-champ-plinth {
+    width: 78%; height: 10px;
+    margin-top: 12px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), transparent 72%);
+}
+.bt-champ-tbd {
+    border-style: dashed;
+    border-color: rgba(255,255,255,0.14);
+}
+.bt-champ-tbd .bt-champ-trophy { opacity: 0.4; filter: grayscale(0.6) drop-shadow(0 3px 8px rgba(0,0,0,0.5)); }
+.bt-champ-tbd .bt-champ-name { color: rgba(255,255,255,0.4); }
+.bt-champ-tbd .bt-champ-record { color: rgba(255,255,255,0.32); }
+.bt-champ-crowned {
+    border-color: hsla(45, 95%, 62%, 0.55);
+    box-shadow: 0 12px 38px rgba(0,0,0,0.5), 0 0 44px hsla(45, 90%, 55%, 0.4);
+    animation: bt-champ-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bt-champ-crowned .bt-champ-name { color: hsl(45, 95%, 72%); }
+@keyframes bt-champ-pop {
+    0%   { transform: scale(0.85); opacity: 0; }
+    60%  { transform: scale(1.06); opacity: 1; }
+    100% { transform: scale(1); }
+}
+
+/* ── Narrow viewports: stack rounds, drop connectors ─────────── */
+@media (max-width: 900px) {
+    .bracket-tree {
+        flex-direction: column;
+        min-height: 0;
+        gap: 14px;
+    }
+    .bt-round { flex: none; }
+    .bt-round--champ { flex: none; }
+    .bt-round-body { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 10px; }
+    .bt-pair { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 10px; flex: none; }
+    .bt-cell { flex: 0 1 240px; padding: 0; }
+    .bt-card { max-width: none; }
+    .bt-pair:not(.bt-pair--solo)::after,
+    .bt-cell::after,
+    .bt-cell::before,
+    .bt-champ::before { display: none; }
 }
 
 /* Match intro screen */
@@ -2758,6 +3525,18 @@ body {
     color: hsl(140, 65%, 60%);
     letter-spacing: -0.02em;
 }
+.t-result-rank {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    min-height: 20px;          /* reserve space so the card doesn't jump */
+}
+.t-result-rank:empty { min-height: 0; }
+.t-result-rank .rb-up   { color: hsl(140, 70%, 62%); }
+.t-result-rank .rb-down { color: hsl(8, 75%, 64%); }
+.t-result-rank .rb-new  { color: hsl(45, 90%, 64%); }
+.t-result-rank .rb-hold { color: rgba(255,255,255,0.4); font-weight: 700; }
+
 .t-result-scores {
     display: flex;
     flex-direction: column;
@@ -2841,115 +3620,9 @@ body {
 /* ── Tournament Stats Panel ──────────────────────────────── */
 .t-stats-hidden { display: none !important; }
 
-/* ── Tournament Mode Select ──────────────────── */
-
-.t-mode-buttons {
-    display: flex;
-    gap: 20px;
-}
-
-.t-mode-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    min-width: 172px;
-    padding: 22px 28px 18px;
-    /* Local glass panel — blurs the canvas behind so the card reads as a distinct surface over the world */
-    background: linear-gradient(180deg, rgba(20, 26, 48, 0.55), rgba(8, 12, 28, 0.68));
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 10px;
-    color: rgba(255,255,255,0.85);
-    cursor: pointer;
-    font-family: inherit;
-    /* Inset top highlight + drop shadow gives the card body — not just tint, actual shading */
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.06),
-        0 4px 20px rgba(0, 0, 0, 0.28);
-    transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-}
-
-.t-mode-btn:hover {
-    transform: translateY(-2px);
-    background: linear-gradient(180deg, rgba(32, 40, 64, 0.62), rgba(14, 18, 34, 0.74));
-    border-color: rgba(255, 255, 255, 0.24);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.10),
-        0 8px 28px rgba(0, 0, 0, 0.38);
-}
-
-.t-mode-btn:active {
-    transform: translateY(0);
-    background: linear-gradient(180deg, rgba(18, 22, 40, 0.55), rgba(8, 10, 22, 0.68));
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.04),
-        0 2px 12px rgba(0, 0, 0, 0.30);
-}
-
-.t-mode-rounds {
-    font-size: 44px;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.02em;
-    transition: filter 0.18s ease;
-}
-
-.t-mode-rounds-label {
-    font-size: 9px;
-    letter-spacing: 0.22em;
-    color: rgba(255,255,255,0.32);
-    text-transform: uppercase;
-    margin-bottom: 10px;
-}
-
-.t-mode-name {
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.72);
-}
-
-/* Standard — cool cyan accent */
-.t-mode-btn.t-mode-standard .t-mode-rounds {
-    background: linear-gradient(135deg, hsl(190, 75%, 70%), hsl(210, 70%, 58%));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-.t-mode-btn.t-mode-standard:hover {
-    border-color: hsla(195, 70%, 60%, 0.50);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.10),
-        0 8px 28px rgba(0, 0, 0, 0.38),
-        0 6px 28px hsla(195, 70%, 55%, 0.22);
-}
-.t-mode-btn.t-mode-standard:hover .t-mode-rounds {
-    filter: drop-shadow(0 0 14px hsla(195, 75%, 60%, 0.55));
-}
-
-/* Lightning — gold accent, same palette family as the FINAL transition */
-.t-mode-btn.t-mode-lightning .t-mode-rounds {
-    background: linear-gradient(135deg, hsl(45, 100%, 72%), hsl(35, 100%, 60%));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-.t-mode-btn.t-mode-lightning:hover {
-    border-color: hsla(45, 90%, 60%, 0.55);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.10),
-        0 8px 28px rgba(0, 0, 0, 0.38),
-        0 6px 28px hsla(45, 90%, 55%, 0.26);
-}
-.t-mode-btn.t-mode-lightning:hover .t-mode-rounds {
-    filter: drop-shadow(0 0 14px hsla(45, 90%, 60%, 0.65));
-}
-
-/* Cancel — small ghost button, doesn't compete with the two real choices */
+/* ── Launcher ghost button (Back / Cancel) ──────────────────── */
+/* (The old Standard/Lightning Tournament Mode Select screen was retired —
+   round count is chosen directly via the world-settings Rounds picker.) */
 .t-mode-cancel {
     align-self: center;
     background: none;
@@ -3174,7 +3847,7 @@ body {
 
 #recap-card {
     position: absolute;
-    top: 60px;
+    top: calc(var(--header-h) + 12px);
     left: 50%;
     z-index: 12;
     background: rgba(10, 10, 26, 0.88);
@@ -3408,23 +4081,21 @@ body {
 .bracket-expanded-hidden { display: none !important; }
 
 #bracket-expanded {
-    position: absolute;
-    inset: 16px;
-    background: rgba(8, 12, 24, 0.82);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    z-index: 30;
-    padding: 24px 28px;
+    /* Full-screen championship stage — opaque aurora backdrop (.event-stage),
+       no live board reading through. The bracket is the moment. */
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    padding: 28px clamp(30px, 5vw, 72px) 32px;
     overflow: auto;
-    animation: be-fadein 0.18s ease;
+    animation: be-fadein 0.28s ease;
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 18px;
 }
 
 @keyframes be-fadein {
-    from { opacity: 0; transform: scale(0.985); }
+    from { opacity: 0; transform: scale(0.99); }
     to   { opacity: 1; transform: scale(1); }
 }
 
@@ -3465,112 +4136,176 @@ body {
 }
 .be-close:hover { color: rgba(255,255,255,0.9); border-color: rgba(255,255,255,0.2); }
 
-#be-grid { flex: 1; align-items: center; }
+#be-grid { flex: 1; align-items: stretch; min-height: 0; }
 
-.lb-content {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+/* ── Hex model badge — shared identity token across both bracket views ── */
+.bt-badge {
+    position: relative;
+    flex: 0 0 auto;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 900; letter-spacing: -0.02em;
+    color: #fff;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, hsl(var(--bh, 210), 58%, 56%), hsl(var(--bh, 210), 52%, 40%));
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.bt-badge-p1 { background: linear-gradient(135deg, hsl(190, 70%, 55%), hsl(170, 65%, 45%)); }
+.bt-badge-p2 { background: linear-gradient(135deg, hsl(25, 80%, 60%), hsl(10, 70%, 50%)); }
+
+/* Baked avatar fills the hex and replaces the initials; seed pip stays visible.
+   The background-image url is set inline by model-avatar.applyAvatar. */
+.bt-badge.has-avatar {
+    background-size: cover;
+    background-position: center;
+    color: transparent;
+    text-shadow: none;
+}
+/* In a live match the avatar keeps a P1/P2 accent ring so sides stay readable. */
+.bt-badge-p1.has-avatar { box-shadow: inset 0 0 0 2px hsl(190, 75%, 60%); }
+.bt-badge-p2.has-avatar { box-shadow: inset 0 0 0 2px hsl(25, 85%, 62%); }
+.bt-badge-empty { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.3); }
+.bt-badge-lg { width: 40px; height: 40px; font-size: 15px; }
+.bt-badge-sm { width: 20px; height: 20px; font-size: 8px; }
+.bt-badge-seed {
+    position: absolute;
+    bottom: -3px; right: -4px;
+    min-width: 13px; height: 13px;
+    padding: 0 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 800;
+    color: #0a0e1a;
+    background: hsl(45, 95%, 66%);
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
 }
 
-.lb-section {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.22);
-    padding: 4px 0 2px;
+/* ── Mini bracket strip (now/next + progress rail) ── */
+.lbn { display: flex; flex-direction: column; gap: 9px; }
+
+.lbn-hero {
+    position: relative;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 12px 12px 11px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(18,24,42,0.7), rgba(10,13,26,0.78));
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.lbn-hero--live {
+    border-color: rgba(255,170,60,0.45);
+    box-shadow: 0 0 22px rgba(255,160,40,0.14), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.lbn-hero--champ {
+    border-color: hsla(45,95%,62%,0.5);
+    box-shadow: 0 0 26px hsla(45,90%,55%,0.22);
 }
 
-.lb-match {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 5px 7px;
-    border-radius: 5px;
-    background: rgba(10, 14, 26, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+.lbn-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    align-self: flex-start;
+    font-size: 9px; font-weight: 800; letter-spacing: 0.1em;
+    padding: 3px 9px; border-radius: 999px;
 }
-
-.lb-match.lb-live {
-    background: rgba(255, 160, 40, 0.12);
-    border-color: rgba(255, 160, 40, 0.5);
-    box-shadow: 0 0 16px rgba(255, 160, 40, 0.18);
+.lbn-tag--live   { background: hsl(32,90%,56%); color: #1a0f00; }
+.lbn-tag--next   { background: hsla(215,80%,60%,0.9); color: #04101f; }
+.lbn-tag--queued { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); }
+.lbn-tag--champ  { background: linear-gradient(135deg, hsl(45,95%,60%), hsl(35,90%,52%)); color: #1a0f00; }
+.lbn-livedot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #1a0f00; animation: lbn-blink 1.2s ease infinite;
 }
+@keyframes lbn-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 
-.lb-match.lb-completed { opacity: 0.85; border-color: rgba(140, 220, 150, 0.22); }
-.lb-match.lb-upnext    { background: rgba(255, 255, 255, 0.06); }
-.lb-match.lb-queued    { opacity: 0.6; }
-.lb-match.lb-pending   { opacity: 0.45; }
-
-.lb-side {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 6px;
+.lbn-side {
+    display: flex; align-items: center; gap: 9px;
     min-width: 0;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.55);
 }
-
-.lb-name {
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.lbn-name {
+    flex: 1 1 auto; min-width: 0;
+    font-size: 14px; font-weight: 700;
+    color: rgba(255,255,255,0.88);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-.lb-score {
-    flex-shrink: 0;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.45);
+.lbn-elo {
+    flex: 0 0 auto;
+    font-size: 10px; font-weight: 700;
+    color: rgba(255,255,255,0.4);
     font-variant-numeric: tabular-nums;
 }
+.lbn-score {
+    flex: 0 0 auto; min-width: 42px; text-align: right;
+    font-size: 16px; font-weight: 800;
+    color: rgba(255,255,255,0.85);
+    font-variant-numeric: tabular-nums;
+}
+.lbn-side.lbn-lead .lbn-name,
+.lbn-side.lbn-lead .lbn-score { color: hsl(45, 95%, 70%); }
 
-.lb-side.lb-win,
-.lb-side.lb-win  .lb-score { color: hsl(140, 55%, 65%); }
-.lb-side.lb-win             { font-weight: 600; }
-.lb-side.lb-lose,
-.lb-side.lb-lose .lb-score { color: rgba(255, 255, 255, 0.22); }
-.lb-side.lb-leading,
-.lb-side.lb-leading .lb-score { color: hsl(30, 80%, 68%); }
-.lb-side.lb-leading           { font-weight: 600; }
-
-.lb-status {
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    padding: 1px 5px;
-    margin-top: 2px;
-    border-radius: 3px;
-    text-align: center;
+.lbn-vsbar {
+    height: 5px; border-radius: 3px;
+    background: linear-gradient(90deg, hsl(25,80%,55%), hsl(10,72%,48%)); /* P2 fills remainder */
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+}
+.lbn-vsbar-p1 {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, hsl(190,75%,55%), hsl(175,68%,46%));
+    border-right: 2px solid rgba(255,255,255,0.55);
+    transition: width 0.5s cubic-bezier(0.25,1,0.5,1);
 }
 
-.lb-status.lb-playing {
-    color: hsl(30, 85%, 65%);
-    background: rgba(255, 160, 40, 0.15);
-    animation: lb-pulse 1.6s ease infinite;
-}
+.lbn-champ-row { display: flex; align-items: center; gap: 12px; }
+.lbn-champ-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lbn-champ-name { font-size: 17px; font-weight: 800; color: hsl(45,95%,72%); }
+.lbn-champ-sub { display: flex; gap: 8px; font-size: 10px; color: rgba(255,255,255,0.5); }
+.lbn-champ-wins { font-weight: 700; color: rgba(255,255,255,0.65); }
 
-.lb-status.lb-completed {
-    color: hsl(140, 50%, 60%);
-    background: rgba(140, 220, 140, 0.08);
+.lbn-next {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; color: rgba(255,255,255,0.5);
+    padding: 0 2px;
 }
-
-.lb-status.lb-upnext {
-    color: rgba(255, 255, 255, 0.5);
-    background: rgba(255, 255, 255, 0.05);
+.lbn-next b { color: rgba(255,255,255,0.78); font-weight: 700; }
+.lbn-next-tag {
+    font-size: 8px; font-weight: 800; letter-spacing: 0.1em;
+    color: hsla(215,80%,72%,0.95);
+    background: hsla(215,70%,55%,0.16);
+    padding: 2px 6px; border-radius: 4px;
 }
+.lbn-next-vs { color: rgba(255,255,255,0.3); font-style: italic; }
 
-@keyframes lb-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.55; }
+.lbn-rail {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 2px 0;
+}
+.lbn-rail-nodes { display: flex; align-items: center; gap: 6px; flex: 1; }
+.lbn-rail-gap {
+    width: 12px; height: 2px; border-radius: 1px;
+    background: rgba(255,255,255,0.12);
+}
+.lbn-node {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.14);
+    flex: 0 0 auto;
+    transition: background 0.25s, box-shadow 0.25s;
+}
+.lbn-node--done   { background: hsl(140,55%,52%); border-color: hsl(140,55%,60%); }
+.lbn-node--live   {
+    background: hsl(32,92%,56%); border-color: hsl(38,95%,68%);
+    box-shadow: 0 0 9px hsla(32,95%,58%,0.7);
+    animation: lbn-blink 1.2s ease infinite;
+}
+.lbn-node--upnext { background: hsla(215,80%,62%,0.85); border-color: hsla(215,85%,72%,0.9); }
+.lbn-node--final {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    transform: rotate(45deg);
+}
+.lbn-rail-count {
+    flex: 0 0 auto;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.45);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Floating stats toggle button is replaced by the gear menu entry */
@@ -3883,6 +4618,17 @@ body {
 
 .rk-rank { width: 18px; color: rgba(255,255,255,0.3); }
 .rk-name { color: rgba(255,255,255,0.75); }
+
+/* Avatar thumbnails on leaderboard rows + match history. Hex, brand-hue until a
+   baked portrait fills it (background set inline by model-avatar.applyAvatar). */
+.rk-ava {
+    display: inline-block; width: 22px; height: 22px; vertical-align: middle;
+    margin-right: 7px; flex: 0 0 auto;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, hsl(var(--bh, 210), 55%, 56%), hsl(var(--bh, 210), 48%, 40%));
+}
+.rk-ava-sm { width: 18px; height: 18px; margin-right: 4px; }
+.rk-ava-you { background: none; text-align: center; line-height: 22px; font-size: 13px; }
 .rk-elo  { color: hsl(180, 55%, 60%); font-weight: 600; width: 42px; }
 .rk-w    { color: hsl(140, 50%, 60%); width: 24px; text-align: center; }
 .rk-l    { color: rgba(255,255,255,0.2); width: 24px; text-align: center; }

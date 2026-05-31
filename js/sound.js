@@ -67,6 +67,16 @@ const BANK = {
         _tone({ type: 'sine', freq: 220, freqEnd: 660, peak: 0.30, attack: 0.02, hold: 0.0, release: 0.35 });
         _tone({ type: 'triangle', freq: 110, freqEnd: 330, peak: 0.18, attack: 0.02, hold: 0.0, release: 0.35 });
     },
+    // Fighting-game "VS" sting — two heavy slams (one per fighter entering) and
+    // a bright metallic clash when they meet in the middle.
+    vs() {
+        _tone({ type: 'triangle', freq: 130, freqEnd: 80,  peak: 0.42, attack: 0.004, hold: 0.04, release: 0.26 });           // P1 slam
+        _tone({ type: 'square',   freq: 220, freqEnd: 120, peak: 0.16, attack: 0.004, hold: 0.0,  release: 0.14 });
+        _tone({ type: 'triangle', freq: 150, freqEnd: 90,  peak: 0.42, attack: 0.004, hold: 0.04, release: 0.26, delay: 0.16 }); // P2 slam
+        _tone({ type: 'square',   freq: 247, freqEnd: 130, peak: 0.16, attack: 0.004, hold: 0.0,  release: 0.14, delay: 0.16 });
+        _tone({ type: 'sawtooth', freq: 1320, freqEnd: 660, peak: 0.22, attack: 0.003, hold: 0.0, release: 0.34, delay: 0.34 }); // clash
+        _tone({ type: 'sine',     freq: 1980, peak: 0.16, attack: 0.003, hold: 0.04, release: 0.40, delay: 0.36 });             // shimmer
+    },
     // Impactful low boom + high pluck — match begin
     'match-start'() {
         _tone({ type: 'triangle', freq: 90, peak: 0.45, attack: 0.005, hold: 0.05, release: 0.32 });

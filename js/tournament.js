@@ -1,8 +1,10 @@
 // Tournament mode — pits all available models against each other
 // Structure: Quarter-Finals (4) → Semi-Finals (2) → Final (1) = 7 matches
 
-import { postResult, renderOddsInto } from './rankings.js';
+import { postResult, renderOddsInto, fetchRankings, expectedScore } from './rankings.js';
 import { CONFIG } from './config.js';
+import { resolveModel } from './model-identity.js';
+import { applyAvatar } from './model-avatar.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -23,15 +25,57 @@ export class TournamentManager {
         document.getElementById('btn-be-close')?.addEventListener('click', () => this._hideExpandedBracket());
     }
 
-    _showExpandedBracket() {
+    async _showExpandedBracket() {
         if (!this.bracket) return;
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
         const status = `${modeLabel} — ${this.totalRounds} rounds`;
         document.getElementById('be-status').textContent = status;
-        this._renderBracketInto(document.getElementById('be-grid'));
         document.getElementById('bracket-expanded')?.classList.remove('bracket-expanded-hidden');
         // Hide the mini live-bracket while expanded view is up
         document.getElementById('live-bracket')?.classList.add('live-bracket-hidden');
+        // Render immediately with whatever we have, then refresh seeds/ELO live
+        this._renderBracketInto(document.getElementById('be-grid'));
+        await this._loadParticipantStats();
+        this._renderBracketInto(document.getElementById('be-grid'));
+    }
+
+    // Fetch current ELO for the 8 field models and derive 1–8 seeds (best ELO =
+    // seed 1). Cached on this._pStats; refreshable so standings stay current as
+    // matches post results. Tolerates a missing/unreachable server (null ELO).
+    async _loadParticipantStats() {
+        if (!this.bracket) return null;
+        const norm = (m) => m
+            ? m.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '')
+            : '';
+        const rankings = await fetchRankings();
+        const lookup = {};
+        if (rankings) {
+            for (const [name, s] of Object.entries(rankings)) {
+                lookup[norm(name)] = { elo: s.elo, wins: s.wins, losses: s.losses };
+            }
+        }
+        // Field = the 8 quarter-final competitors
+        const field = [];
+        for (const id of [0, 1, 2, 3]) field.push(this.bracket[id].p1, this.bracket[id].p2);
+        const ranked = field
+            .filter(Boolean)
+            .map(p => ({ key: norm(p), elo: lookup[norm(p)]?.elo ?? null }))
+            .filter(x => x.elo != null)
+            .sort((a, b) => b.elo - a.elo);
+        const seedMap = {};
+        ranked.forEach((x, i) => { seedMap[x.key] = i + 1; });
+
+        this._pStats = { norm, lookup, seedMap };
+        return this._pStats;
+    }
+
+    // Resolve a model's seed / ELO / record (null-safe when stats not loaded).
+    _statOf(model) {
+        const S = this._pStats;
+        if (!model || !S) return null;
+        const k = S.norm(model);
+        const base = S.lookup[k] || {};
+        return { elo: base.elo ?? null, wins: base.wins ?? 0, losses: base.losses ?? 0, seed: S.seedMap[k] ?? null };
     }
 
     _hideExpandedBracket() {
@@ -44,25 +88,41 @@ export class TournamentManager {
         this.game._refreshRightStackVisibility?.();
     }
 
-    async start(models, mode = 'standard') {
+    async start(models, mode = 'standard', world = null) {
         if (this.running) return;
         this.running = true;
         this.mode = mode;
-        this.totalRounds = mode === 'lightning'
-            ? CONFIG.GAME.LIGHTNING_ROUNDS
-            : CONFIG.GAME.TOTAL_ROUNDS;
+        // World settings (grid size / hex zoom / rounds) apply to every match in
+        // the bracket. Rounds come from the world picker when provided.
+        this.world = world;
+        this.totalRounds = (world && world.rounds)
+            || (mode === 'lightning' ? CONFIG.GAME.LIGHTNING_ROUNDS : CONFIG.GAME.TOTAL_ROUNDS);
 
         // Shuffle for random seeding
         const seeded = [...models].sort(() => Math.random() - 0.5);
         this.bracket = this._buildBracket(seeded);
 
-        // Enable the BRACKET tab in the right panel and auto-switch to it.
-        // Stats menu is always accessible through the gear menu.
+        // Pull ELO/seed data for the field so the bracket can show ranking
+        // context + detect upsets. Fire-and-forget: repaint bracket screens
+        // once it lands (first interstitial may render a beat before seeds).
+        this._pStats = null;
+        this._loadParticipantStats().then(() => {
+            const exp = document.getElementById('bracket-expanded');
+            if (exp && !exp.classList.contains('bracket-expanded-hidden')) {
+                this._renderBracketInto(document.getElementById('be-grid'));
+            }
+            const tb = document.getElementById('t-bracket');
+            if (tb && !tb.classList.contains('t-hidden')) {
+                this._renderBracketInto(document.getElementById('bracket-grid'));
+            }
+        });
+
+        // Reveal the BRACKET tab in the HUD console. No auto-switch — the
+        // console stays on Stats (eco) by default; the bracket is one tap away.
         const panelLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
         this.game.setBracketAvailable({
             available: true,
             live: true,
-            autoSwitch: true,
             title: `${panelLabel} Bracket`,
         });
         this._renderStats();
@@ -135,7 +195,7 @@ export class TournamentManager {
 
         // Run game
         this._hideAll();
-        this.game.resetForMatch(this.totalRounds);
+        this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
         // Repaint the bracket panel each round-end so the live card carries fresh scores + round counter
@@ -174,6 +234,14 @@ export class TournamentManager {
 
         document.getElementById('t-result-label').textContent  = match.label.toUpperCase() + ' — RESULT';
         document.getElementById('t-result-winner').textContent = this._short(match.winner);
+
+        // Rank movement is shown as a badge inside the card (winner side), not as
+        // a separate floating callout — so the result reads as one coherent card.
+        const winnerSide = res?.result
+            ? [res.result.p1, res.result.p2].find(s => s && s.name === match.winner)
+            : null;
+        document.getElementById('t-result-rank').innerHTML = this._rankBadge(winnerSide);
+
         document.getElementById('t-result-scores').innerHTML   =
             `<div class="rs-row rs-win">${this._short(match.winner)}<span>${wScore.toLocaleString()}</span></div>
              <div class="rs-row rs-lose">${this._short(loser)}<span>${lScore.toLocaleString()}</span></div>`;
@@ -181,15 +249,35 @@ export class TournamentManager {
             match.id === 6 ? 'Revealing the Champion...' : 'Bracket updating...';
         this._show('t-match-result');
 
-        // Celebrate rank drama (upset / promotion / new #1) over the result screen
-        const drama = this.game._celebrateResult?.(res?.result) || 0;
-        await this._sleep(5000);
-        if (drama) await this.game._waitForCalloutsDone?.();
+        // Let the result card (with its rank badge) be read on its own — no
+        // overlapping celebration on top of it.
+        await this._sleep(3200);
 
-        // Updated bracket
+        // Move to the bracket, then play ONLY the rare headline moments
+        // (NEW CHAMPION / UPSET) as a center callout over it. Promotions/demotions
+        // already live in the card, so nothing collides.
         this._renderBracket(match.label + ' complete');
         this._show('t-bracket');
-        await this._sleep(match.id === 6 ? 1000 : 3000);
+        const drama = this.game._celebrateResult?.(res?.result, { headlinesOnly: true }) || 0;
+        if (drama) {
+            await this.game._waitForCalloutsDone?.();
+            await this._sleep(match.id === 6 ? 800 : 1200);
+        } else {
+            await this._sleep(match.id === 6 ? 1000 : 2600);
+        }
+    }
+
+    // Rank-movement badge for the result card (winner side).
+    _rankBadge(s) {
+        if (!s || s.rankAfter == null) return '';
+        const after = s.rankAfter;
+        if (s.rankBefore == null) return `<span class="rb-new">NEW · #${after}</span>`;
+        const before = s.rankBefore;
+        if (after < before) {
+            return `<span class="rb-up">${after === 1 ? '👑 ' : '▲ '}#${before} → #${after}</span>`;
+        }
+        if (after > before) return `<span class="rb-down">▼ #${before} → #${after}</span>`;
+        return `<span class="rb-hold">holds #${after}</span>`;
     }
 
     _matchNote(match) {
@@ -263,38 +351,52 @@ export class TournamentManager {
         }
     }
 
+    // Mini bracket = a live-broadcast strip: a hero card (now playing / up next /
+    // champion) over a one-line "up next" + a progress rail that collapses the
+    // whole 7-match tree into a row of nodes. Tap the header ⛶ to zoom to full.
     _renderLiveBracket() {
         if (!this.bracket) return;
 
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        const liveIdx   = this._currentMatchIdx;
+        const isLive    = liveIdx != null && this.bracket[liveIdx] && !this.bracket[liveIdx].winner;
 
-        const sections = [
-            { label: 'QF', ids: [0, 1, 2, 3] },
-            { label: 'SF', ids: [4, 5] },
-            { label: 'Final', ids: [6] },
-        ];
-
-        // The next match in the run order = lowest-id non-completed match with both slots filled, excluding the live one
         const upNextId = this.bracket.findIndex((m, i) =>
-            !m.winner && i !== this._currentMatchIdx && m.p1 && m.p2
-        );
+            !m.winner && i !== liveIdx && m.p1 && m.p2);
 
-        // Live data — only meaningful while a match is in progress
-        const liveScores = (this._currentMatchIdx != null && this.game.simulation)
-            ? this.game.simulation.finalScore()
-            : null;
-        const liveRound  = this._currentMatchIdx != null ? this.game.turns?.round : null;
+        const championDone = !!this.bracket[6]?.winner;
 
-        let html = '';
-        for (const sec of sections) {
-            html += `<div class="lb-section">${sec.label}</div>`;
-            for (const id of sec.ids) {
-                html += this._renderLiveMatch(this.bracket[id], id, upNextId, liveScores, liveRound);
-            }
+        // Hero = the match that matters right now.
+        let heroId;
+        if (isLive)              heroId = liveIdx;
+        else if (championDone)   heroId = 6;
+        else if (upNextId !== -1) heroId = upNextId;
+        else                     heroId = Math.max(0, this.bracket.findIndex(m => !m.winner));
+
+        const liveScores = (isLive && this.game.simulation) ? this.game.simulation.finalScore() : null;
+        const liveRound  = isLive ? this.game.turns?.round : null;
+
+        const hero = championDone && heroId === 6
+            ? this._lbnChampionHero(this.bracket[6])
+            : this._lbnHero(this.bracket[heroId], heroId, { isLive: heroId === liveIdx && isLive, liveScores, liveRound });
+
+        // "Up next" line — only while a match is live and another is queued.
+        let nextLine = '';
+        if (isLive && upNextId !== -1) {
+            const u = this.bracket[upNextId];
+            nextLine = `<div class="lbn-next"><span class="lbn-next-tag">UP NEXT</span>
+                <b>${this._short(u.p1)}</b><span class="lbn-next-vs">vs</span><b>${this._short(u.p2)}</b></div>`;
         }
 
+        const done = this.bracket.filter(m => m.winner).length;
+        const html = `<div class="lbn">
+            ${hero}
+            ${nextLine}
+            ${this._lbnRail(liveIdx, upNextId, done)}
+        </div>`;
+
         const panelContent = document.getElementById('bt-bracket-content');
-        if (panelContent) panelContent.innerHTML = html;
+        if (panelContent) { panelContent.innerHTML = html; this._paintAvatars(panelContent); }
 
         this.game.setBracketAvailable({
             available: true,
@@ -303,65 +405,89 @@ export class TournamentManager {
         });
     }
 
-    _matchState(m, id, upNextId) {
-        if (m.winner) return 'completed';
-        if (id === this._currentMatchIdx) return 'live';
-        if (!m.p1 || !m.p2) return 'pending';
-        return id === upNextId ? 'upnext' : 'queued';
-    }
+    // Hero card for a live / up-next match.
+    _lbnHero(m, id, { isLive, liveScores, liveRound }) {
+        const state = m.winner ? 'done' : isLive ? 'live' : (m.p1 && m.p2) ? 'upnext' : 'pending';
 
-    _renderLiveMatch(m, id, upNextId, liveScores, liveRound) {
-        const state = this._matchState(m, id, upNextId);
+        const s1 = isLive && liveScores ? liveScores[1].finalScore : null;
+        const s2 = isLive && liveScores ? liveScores[2].finalScore : null;
+        const lead1 = s1 != null && s2 != null && s1 > s2;
+        const lead2 = s1 != null && s2 != null && s2 > s1;
 
-        // Per-side classes — winner/loser only meaningful once a match completes
-        const p1Done   = state === 'completed' && m.winner === m.p1;
-        const p2Done   = state === 'completed' && m.winner === m.p2;
-        const p1Lost   = state === 'completed' && !p1Done;
-        const p2Lost   = state === 'completed' && !p2Done;
+        let tag;
+        if (state === 'live')   tag = `<div class="lbn-tag lbn-tag--live"><span class="lbn-livedot"></span>LIVE · R${liveRound ?? 1}/${this.totalRounds}</div>`;
+        else if (state === 'upnext') tag = `<div class="lbn-tag lbn-tag--next">UP NEXT</div>`;
+        else                    tag = `<div class="lbn-tag lbn-tag--queued">${m.label || 'Match'}</div>`;
 
-        // Live scores — color whichever side is currently leading
-        const p1Live   = state === 'live' && liveScores ? liveScores[1].finalScore : null;
-        const p2Live   = state === 'live' && liveScores ? liveScores[2].finalScore : null;
-        const p1Lead   = state === 'live' && p1Live != null && p2Live != null && p1Live > p2Live;
-        const p2Lead   = state === 'live' && p1Live != null && p2Live != null && p2Live > p1Live;
-
-        // Completed margin — winner's score minus loser's score
-        const margin = state === 'completed' && m.scores
-            ? Math.abs(m.scores[1].finalScore - m.scores[2].finalScore)
-            : null;
-
-        const renderSide = (player, isP1) => {
-            const win  = isP1 ? p1Done : p2Done;
-            const lose = isP1 ? p1Lost : p2Lost;
-            const lead = isP1 ? p1Lead : p2Lead;
-            const live = isP1 ? p1Live : p2Live;
-            const cls  = ['lb-side'];
-            if (win)  cls.push('lb-win');
-            if (lose) cls.push('lb-lose');
-            if (lead) cls.push('lb-leading');
-            const score = live != null ? `<span class="lb-score">${live.toLocaleString()}</span>` : '';
+        const side = (player, isP1) => {
+            const score = isP1 ? s1 : s2;
+            const lead  = isP1 ? lead1 : lead2;
+            const cls = ['lbn-side'];
+            if (lead) cls.push('lbn-lead');
+            const slot = state === 'live' ? (isP1 ? 1 : 2) : undefined;
+            const st = this._statOf(player);
+            const elo = st?.elo != null ? `<span class="lbn-elo">${Math.round(st.elo)}</span>` : '';
+            const sc  = score != null ? `<span class="lbn-score">${score.toLocaleString()}</span>` : '';
             return `<div class="${cls.join(' ')}">
-                <span class="lb-name">${player ? this._short(player) : '—'}</span>
-                ${score}
+                ${this._badge(player, { slot, seed: st?.seed })}
+                <span class="lbn-name">${player ? this._short(player) : '—'}</span>
+                ${elo}${sc}
             </div>`;
         };
 
-        let status = '';
-        if (state === 'live') {
-            const r = liveRound ?? 1;
-            status = `<div class="lb-status lb-playing">LIVE · R${r}/${this.totalRounds}</div>`;
-        } else if (state === 'completed') {
-            const marginStr = margin != null && margin > 0 ? ` · +${margin.toLocaleString()}` : '';
-            status = `<div class="lb-status lb-completed">✓ ${this._short(m.winner)}${marginStr}</div>`;
-        } else if (state === 'upnext') {
-            status = `<div class="lb-status lb-upnext">UP NEXT</div>`;
+        // VS share bar (live only) — P1 share of combined score, fills cyan→orange.
+        let vsbar = '';
+        if (state === 'live' && s1 != null && s2 != null) {
+            const total = s1 + s2 || 1;
+            const p1pct = Math.round((s1 / total) * 100);
+            vsbar = `<div class="lbn-vsbar"><span class="lbn-vsbar-p1" style="width:${p1pct}%"></span></div>`;
         }
-        // 'queued' and 'pending' get no status row — they read as muted
 
-        return `<div class="lb-match lb-${state}">
-            ${renderSide(m.p1, true)}
-            ${renderSide(m.p2, false)}
-            ${status}
+        return `<div class="lbn-hero lbn-hero--${state}">
+            ${tag}
+            ${side(m.p1, true)}
+            ${vsbar}
+            ${side(m.p2, false)}
+        </div>`;
+    }
+
+    // Hero card when the tournament is decided — crowned champion.
+    _lbnChampionHero(fin) {
+        const st = this._statOf(fin.winner);
+        const wins = this.bracket.filter(m => m.winner === fin.winner).length;
+        const elo = st?.elo != null ? `<span class="lbn-champ-elo">${Math.round(st.elo)} ELO</span>` : '';
+        return `<div class="lbn-hero lbn-hero--champ">
+            <div class="lbn-tag lbn-tag--champ">🏆 CHAMPION</div>
+            <div class="lbn-champ-row">
+                ${this._badge(fin.winner, { size: 'lg' })}
+                <div class="lbn-champ-meta">
+                    <div class="lbn-champ-name">${this._short(fin.winner)}</div>
+                    <div class="lbn-champ-sub">${elo}<span class="lbn-champ-wins">${wins} wins</span></div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // Progress rail — the 7 matches as nodes (QF·QF·QF·QF — SF·SF — ★Final).
+    _lbnRail(liveIdx, upNextId, done) {
+        const order = [0, 1, 2, 3, 4, 5, 6];
+        const node = (id) => {
+            const m = this.bracket[id];
+            let st = 'pending';
+            if (m.winner)            st = 'done';
+            else if (id === liveIdx) st = 'live';
+            else if (id === upNextId) st = 'upnext';
+            const final = id === 6 ? ' lbn-node--final' : '';
+            return `<span class="lbn-node lbn-node--${st}${final}"></span>`;
+        };
+        let nodes = '';
+        order.forEach((id, i) => {
+            if (i === 4 || i === 6) nodes += `<span class="lbn-rail-gap"></span>`;
+            nodes += node(id);
+        });
+        return `<div class="lbn-rail">
+            <div class="lbn-rail-nodes">${nodes}</div>
+            <span class="lbn-rail-count">${done} / 7</span>
         </div>`;
     }
 
@@ -431,6 +557,7 @@ export class TournamentManager {
         }
 
         content.innerHTML = html;
+        this._paintAvatars(content);
 
         // Draw mini charts after DOM update
         for (const m of completed) {
@@ -501,74 +628,200 @@ export class TournamentManager {
 
     _renderBracketInto(grid) {
         if (!grid || !this.bracket) return;
-        grid.innerHTML = '';
-        const qf    = this._makeCol('Quarter-Finals', this.bracket.slice(0, 4));
-        const conn1 = this._makeConnectorCol(['→ SF1', '→ SF1', '→ SF2', '→ SF2']);
-        const sf    = this._makeCol('Semi-Finals', this.bracket.slice(4, 6), 'semi');
-        const conn2 = this._makeConnectorCol(['', '→ Final', '']);
-        const fi    = this._makeCol('Final', [this.bracket[6]], 'final');
-        [qf, conn1, sf, conn2, fi].forEach(el => grid.appendChild(el));
+
+        const upNextId = this.bracket.findIndex((m, i) =>
+            !m.winner && i !== this._currentMatchIdx && m.p1 && m.p2);
+        const liveScores = (this._currentMatchIdx != null && this.game.simulation)
+            ? this.game.simulation.finalScore() : null;
+        const liveRound = this._currentMatchIdx != null ? this.game.turns?.round : null;
+        const ctx = { upNextId, liveScores, liveRound };
+
+        // Round 1 (QF) pairs feed into SF; each pair box draws the connector spine.
+        const cell = (id) => `<div class="bt-cell">${this._bracketCard(this.bracket[id], ctx)}</div>`;
+        const pair = (a, b) => `<div class="bt-pair">${cell(a)}${cell(b)}</div>`;
+
+        const qf = `<div class="bt-round bt-round--qf">
+            <div class="bt-round-label">Quarter-Finals</div>
+            <div class="bt-round-body">${pair(0, 1)}${pair(2, 3)}</div>
+        </div>`;
+        const sf = `<div class="bt-round bt-round--sf">
+            <div class="bt-round-label">Semi-Finals</div>
+            <div class="bt-round-body">${pair(4, 5)}</div>
+        </div>`;
+        const fi = `<div class="bt-round bt-round--final">
+            <div class="bt-round-label">Final</div>
+            <div class="bt-round-body"><div class="bt-pair bt-pair--solo">${cell(6)}</div></div>
+        </div>`;
+        const champ = `<div class="bt-round bt-round--champ">
+            <div class="bt-round-label">Champion</div>
+            <div class="bt-round-body">${this._championNode()}</div>
+        </div>`;
+
+        grid.innerHTML = `<div class="bt-stage">
+            ${this._bracketStatbar()}
+            <div class="bracket-tree">${qf}${sf}${fi}${champ}</div>
+        </div>`;
+        this._paintAvatars(grid);
     }
 
-    _makeCol(title, matches, extraClass = '') {
-        const col = document.createElement('div');
-        col.className = `bracket-col ${extraClass}`;
+    // Per-match card with seed/ELO/score for both sides + state-driven framing.
+    _bracketCard(m, ctx) {
+        const isLive = !m.winner && m.id === this._currentMatchIdx;
+        const state = m.winner ? 'done'
+            : isLive ? 'live'
+            : (m.id === ctx.upNextId ? 'upnext'
+            : (m.p1 && m.p2 ? 'queued' : 'pending'));
 
-        const lbl = document.createElement('div');
-        lbl.className = 'bc-label';
-        lbl.textContent = title;
-        col.appendChild(lbl);
-
-        const matchesWrap = document.createElement('div');
-        matchesWrap.className = 'bc-matches';
-
-        for (const m of matches) {
-            const box = document.createElement('div');
-            const isLive = !m.winner && m.id === this._currentMatchIdx;
-            box.className = 'bc-match' +
-                (m.winner ? ' bc-done' : isLive ? ' bc-live' : '');
-
-            const p1 = document.createElement('div');
-            p1.className = 'bc-player' +
-                (m.winner === m.p1 ? ' bc-win' : m.winner ? ' bc-lose' : '');
-            p1.textContent = m.p1 ? this._short(m.p1) : '—';
-
-            const divider = document.createElement('div');
-            divider.className = 'bc-divider';
-
-            const p2 = document.createElement('div');
-            p2.className = 'bc-player' +
-                (m.winner === m.p2 ? ' bc-win' : m.winner ? ' bc-lose' : '');
-            p2.textContent = m.p2 ? this._short(m.p2) : '—';
-
-            box.appendChild(p1);
-            box.appendChild(divider);
-            box.appendChild(p2);
-
-            if (m.winner) {
-                const badge = document.createElement('div');
-                badge.className = 'bc-winner-badge';
-                badge.textContent = '✓ ' + this._short(m.winner);
-                box.appendChild(badge);
+        // Upset read for completed matches — winner's pre-match win probability
+        // by ELO. < 0.5 means the underdog took it; lower = bigger shock.
+        let upset = false, bigUpset = false, wp = null;
+        if (state === 'done' && m.winner) {
+            const wStat = this._statOf(m.winner);
+            const lStat = this._statOf(m.winner === m.p1 ? m.p2 : m.p1);
+            if (wStat?.elo != null && lStat?.elo != null) {
+                wp = expectedScore(wStat.elo, lStat.elo);
+                upset = wp < 0.5;
+                bigUpset = wp < 0.34;
             }
-
-            matchesWrap.appendChild(box);
         }
 
-        col.appendChild(matchesWrap);
-        return col;
+        const cls = ['bt-card', `bt-${state}`];
+        if (state === 'done') cls.push(upset ? 'bt-upset' : 'bt-chalk');
+        if (bigUpset) cls.push('bt-upset-big');
+
+        // Status ribbon (top-right)
+        let ribbon = '';
+        if (state === 'live') {
+            ribbon = `<span class="bt-ribbon bt-ribbon-live">LIVE · R${ctx.liveRound ?? 1}/${this.totalRounds}</span>`;
+        } else if (state === 'upnext') {
+            ribbon = `<span class="bt-ribbon bt-ribbon-next">UP NEXT</span>`;
+        } else if (state === 'done' && upset) {
+            const pct = wp != null ? ` ${Math.round((1 - wp) * 100)}%` : '';
+            ribbon = `<span class="bt-ribbon bt-ribbon-upset">⚡ UPSET${pct}</span>`;
+        } else if (state === 'done') {
+            ribbon = `<span class="bt-ribbon bt-ribbon-chalk">✓</span>`;
+        }
+
+        return `<div class="${cls.join(' ')}">
+            ${ribbon}
+            ${this._bracketSide(m, true, state, ctx)}
+            <div class="bt-card-mid"></div>
+            ${this._bracketSide(m, false, state, ctx)}
+        </div>`;
     }
 
-    _makeConnectorCol(lines) {
-        const col = document.createElement('div');
-        col.className = 'bracket-connector-col';
-        for (const line of lines) {
-            const div = document.createElement('div');
-            div.className = 'bc-conn-line';
-            div.textContent = line;
-            col.appendChild(div);
+    _bracketSide(m, isP1, state, ctx) {
+        const player = isP1 ? m.p1 : m.p2;
+        const stat = this._statOf(player);
+        const isWin = state === 'done' && m.winner === player;
+        const isLose = state === 'done' && m.winner && m.winner !== player;
+
+        // Score: completed → final score; live → current sim score
+        let score = null;
+        if (state === 'done' && m.scores) {
+            score = (isP1 ? m.scores[1] : m.scores[2])?.finalScore;
+        } else if (state === 'live' && ctx.liveScores) {
+            score = (isP1 ? ctx.liveScores[1] : ctx.liveScores[2])?.finalScore;
         }
-        return col;
+        const lead = state === 'live' && ctx.liveScores
+            && score != null
+            && score > (isP1 ? ctx.liveScores[2] : ctx.liveScores[1])?.finalScore;
+
+        const cls = ['bt-side'];
+        if (isWin) cls.push('bt-win');
+        if (isLose) cls.push('bt-lose');
+        if (lead) cls.push('bt-lead');
+
+        // Live match sides carry the P1/P2 accent (cyan/orange) so a running
+        // bracket match looks like the live game; everyone else gets their hue.
+        const slot = state === 'live' ? (isP1 ? 1 : 2) : undefined;
+        const badge = this._badge(player, { slot, seed: stat?.seed });
+        const elo = stat?.elo != null ? `<span class="bt-elo">${Math.round(stat.elo)}</span>` : '';
+        const scoreEl = score != null ? `<span class="bt-score">${score.toLocaleString()}</span>` : '';
+
+        return `<div class="${cls.join(' ')}">
+            ${badge}
+            <span class="bt-name">${player ? this._short(player) : '—'}</span>
+            ${elo}
+            ${scoreEl}
+        </div>`;
+    }
+
+    _championNode() {
+        const fin = this.bracket[6];
+        if (fin?.winner) {
+            const stat = this._statOf(fin.winner);
+            const wins = this.bracket.filter(m => m.winner === fin.winner).length;
+            const elo = stat?.elo != null ? `<div class="bt-champ-elo">${Math.round(stat.elo)} ELO</div>` : '';
+            const seed = stat?.seed != null ? `<span class="bt-champ-seed">Seed ${stat.seed}</span>` : '';
+            return `<div class="bt-champ bt-champ-crowned">
+                <div class="bt-champ-glow" aria-hidden="true"></div>
+                <div class="bt-champ-trophy">🏆</div>
+                ${this._badge(fin.winner, { size: 'lg' })}
+                <div class="bt-champ-name">${this._short(fin.winner)}</div>
+                ${elo}
+                <div class="bt-champ-record">${seed}<span class="bt-champ-wins">${wins} wins</span></div>
+                <div class="bt-champ-plinth" aria-hidden="true"></div>
+            </div>`;
+        }
+        return `<div class="bt-champ bt-champ-tbd">
+            <div class="bt-champ-trophy">🏆</div>
+            <div class="bt-champ-name">—</div>
+            <div class="bt-champ-record">To be crowned</div>
+            <div class="bt-champ-plinth" aria-hidden="true"></div>
+        </div>`;
+    }
+
+    // Header stat strip — field summary, progress, top seed, biggest upset.
+    _bracketStatbar() {
+        const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        const done = this.bracket.filter(m => m.winner).length;
+
+        // Top seed in the field
+        let topSeedChip = '';
+        if (this._pStats) {
+            const top = Object.entries(this._pStats.seedMap).find(([, s]) => s === 1);
+            if (top) {
+                const elo = this._pStats.lookup[top[0]]?.elo;
+                topSeedChip = `<div class="bt-stat">
+                    <span class="bt-stat-k">Top Seed</span>
+                    <span class="bt-stat-v">${top[0]}${elo != null ? ` · ${Math.round(elo)}` : ''}</span>
+                </div>`;
+            }
+        }
+
+        // Biggest upset across completed matches (lowest winner win-prob)
+        let upsetChip = '';
+        let best = null;
+        for (const m of this.bracket) {
+            if (!m.winner) continue;
+            const wStat = this._statOf(m.winner);
+            const lStat = this._statOf(m.winner === m.p1 ? m.p2 : m.p1);
+            if (wStat?.elo == null || lStat?.elo == null) continue;
+            const wp = expectedScore(wStat.elo, lStat.elo);
+            if (wp < 0.5 && (!best || wp < best.wp)) {
+                best = { wp, winner: m.winner, loser: m.winner === m.p1 ? m.p2 : m.p1 };
+            }
+        }
+        if (best) {
+            upsetChip = `<div class="bt-stat bt-stat-upset">
+                <span class="bt-stat-k">⚡ Biggest Upset</span>
+                <span class="bt-stat-v">${this._short(best.winner)} def. ${this._short(best.loser)} · ${Math.round((1 - best.wp) * 100)}%</span>
+            </div>`;
+        }
+
+        return `<div class="bt-statbar">
+            <div class="bt-stat">
+                <span class="bt-stat-k">Field</span>
+                <span class="bt-stat-v">8 models · ${modeLabel} · ${this.totalRounds} rounds</span>
+            </div>
+            <div class="bt-stat">
+                <span class="bt-stat-k">Progress</span>
+                <span class="bt-stat-v">${done} / 7 matches</span>
+            </div>
+            ${topSeedChip}
+            ${upsetChip}
+        </div>`;
     }
 
     // ── Overlay control ─────────────────────────────────────────
@@ -592,6 +845,35 @@ export class TournamentManager {
             .split('/').pop()
             .replace(/-cloud$/, '')
             .replace(/-latest$/, '');
+    }
+
+    // Per-model brand hue from the shared taxonomy, so each competitor keeps one
+    // colour identity across both bracket views (and unknown models still get a
+    // stable hash hue via resolveModel). Live matches add a P1/P2 accent ring.
+    _modelHue(model) {
+        return resolveModel(model).hue;
+    }
+
+    // Hex model badge — carries data-model so _paintAvatars can drop in the baked
+    // cyber-organic portrait after render; until/unless one exists it shows the
+    // brand-hue gradient + initials (the size-appropriate procedural fallback).
+    // slot 1/2 → P1/P2 accent ring (live match). opts: { slot, size:'lg'|'sm', seed }.
+    _badge(model, opts = {}) {
+        const sizeCls = opts.size ? ` bt-badge-${opts.size}` : '';
+        const seedPip = opts.seed != null
+            ? `<span class="bt-badge-seed">${opts.seed}</span>` : '';
+        if (!model) return `<span class="bt-badge bt-badge-empty${sizeCls}">·</span>`;
+        const ini = this.game?._modelInitials
+            ? this.game._modelInitials(model)
+            : this._short(model).slice(0, 2).toUpperCase();
+        const slotCls = opts.slot === 1 ? ' bt-badge-p1' : opts.slot === 2 ? ' bt-badge-p2' : '';
+        const data = `data-model="${model}"`;
+        return `<span class="bt-badge${slotCls}${sizeCls}" ${data} style="--bh:${this._modelHue(model)}">${ini}${seedPip}</span>`;
+    }
+
+    // Drop baked avatars into every badge under `root` (after its innerHTML set).
+    _paintAvatars(root) {
+        root?.querySelectorAll?.('.bt-badge[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
     }
 
     _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

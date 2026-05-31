@@ -1,5 +1,7 @@
 // ELO Rankings — fetches from server, renders leaderboard UI
 
+import { applyAvatar } from './model-avatar.js';
+
 const API = '';
 
 export async function fetchRankings() {
@@ -78,9 +80,11 @@ export function renderRankingsPanel(container, rankings, opts = {}) {
     for (const [name, stats] of Object.entries(rankings)) {
         const medal = rank === 1 ? ' 🥇' : rank === 2 ? ' 🥈' : rank === 3 ? ' 🥉' : '';
         const isYou = humanHandle && name === humanHandle;
+        const ava = isYou ? '<span class="rk-ava rk-ava-you">👤</span>'
+            : `<span class="rk-ava" data-model="${name}"></span>`;
         html += `<tr class="rk-row${rank <= 3 ? ' rk-top' : ''}${isYou ? ' rk-you' : ''}">
             <td class="rk-rank">${rank}</td>
-            <td class="rk-name">${isYou ? '👤 ' : ''}${shorten(name)}${medal}</td>
+            <td class="rk-name">${ava}${shorten(name)}${medal}</td>
             <td class="rk-elo">${stats.elo}</td>
             <td class="rk-w">${stats.wins}</td>
             <td class="rk-l">${stats.losses}</td>
@@ -90,6 +94,7 @@ export function renderRankingsPanel(container, rankings, opts = {}) {
 
     html += '</tbody></table>';
     container.innerHTML = html;
+    _paintRows(container);
 }
 
 export function renderHistoryPanel(container, history) {
@@ -101,14 +106,23 @@ export function renderHistoryPanel(container, history) {
     let html = '<div class="rk-section-title">Recent Matches</div>';
     const recent = history.slice(-20).reverse();
     for (const m of recent) {
+        const loser = m.winner === m.p1 ? m.p2 : m.p1;
         html += `<div class="rk-match">
+            <span class="rk-ava rk-ava-sm" data-model="${m.winner}"></span>
             <span class="rk-m-winner">${shorten(m.winner)}</span>
             <span class="rk-m-beat">def.</span>
-            <span class="rk-m-loser">${shorten(m.winner === m.p1 ? m.p2 : m.p1)}</span>
+            <span class="rk-ava rk-ava-sm" data-model="${loser}"></span>
+            <span class="rk-m-loser">${shorten(loser)}</span>
             <span class="rk-m-scores">${m.p1_score}–${m.p2_score}</span>
         </div>`;
     }
     container.innerHTML = html;
+    _paintRows(container);
+}
+
+// Drop baked avatars into any .rk-ava[data-model] under `root`.
+function _paintRows(root) {
+    root?.querySelectorAll?.('.rk-ava[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
 }
 
 function shorten(model) {
