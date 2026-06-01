@@ -212,12 +212,39 @@
                     <div class="aic-avatar" id="aic-avatar-p1">P1</div>
                     <div class="aic-name-block">
                         <div class="aic-name" id="aic-name-p1">Player 1</div>
+                        <div class="aic-subtitle" id="aic-subtitle-p1"></div>
                         <div class="aic-status" id="aic-status-p1">Waiting</div>
+                    </div>
+                </div>
+                <div class="aic-statblock" id="aic-statblock-p1">
+                    <div class="aic-stat-row" data-stat="might">
+                        <span class="aic-stat-label">MIGHT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="renown">
+                        <span class="aic-stat-label">RENOWN</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="grit">
+                        <span class="aic-stat-label">GRIT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-statfoot">
+                        <span class="aic-tierline" id="aic-tier-p1"></span>
+                        <span class="aic-role" id="aic-role-p1"></span>
                     </div>
                 </div>
                 <div class="aic-banter-wrap">
                     <div class="aic-particles" aria-hidden="true">
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div class="aic-countdown" id="aic-countdown-p1" aria-hidden="true">
+                        <span class="aic-cd-num"></span>
+                        <span class="aic-cd-label">deciding…</span>
+                        <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
                     </div>
                     <div id="ai-banter-p1" class="ai-banter-text"></div>
                 </div>
@@ -231,12 +258,39 @@
                     <div class="aic-avatar" id="aic-avatar-p2">P2</div>
                     <div class="aic-name-block">
                         <div class="aic-name" id="aic-name-p2">Player 2</div>
+                        <div class="aic-subtitle" id="aic-subtitle-p2"></div>
                         <div class="aic-status" id="aic-status-p2">Waiting</div>
+                    </div>
+                </div>
+                <div class="aic-statblock" id="aic-statblock-p2">
+                    <div class="aic-stat-row" data-stat="might">
+                        <span class="aic-stat-label">MIGHT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="renown">
+                        <span class="aic-stat-label">RENOWN</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="grit">
+                        <span class="aic-stat-label">GRIT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-statfoot">
+                        <span class="aic-tierline" id="aic-tier-p2"></span>
+                        <span class="aic-role" id="aic-role-p2"></span>
                     </div>
                 </div>
                 <div class="aic-banter-wrap">
                     <div class="aic-particles" aria-hidden="true">
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div class="aic-countdown" id="aic-countdown-p2" aria-hidden="true">
+                        <span class="aic-cd-num"></span>
+                        <span class="aic-cd-label">deciding…</span>
+                        <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
                     </div>
                     <div id="ai-banter-p2" class="ai-banter-text"></div>
                 </div>
@@ -379,7 +433,7 @@
                 <button class="launcher-mode-card tournament lm-stagger-3" data-launcher-mode="tournament">
                     <div class="lmc-icon">⚔</div>
                     <div class="lmc-name">TOURNAMENT</div>
-                    <div class="lmc-desc">8-model bracket</div>
+                    <div class="lmc-desc">Bracket showdown</div>
                 </button>
             </div>
         </div>
@@ -421,7 +475,24 @@
                 </div>
 
                 <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
-                    <div class="mt-blurb">8 AI models compete in a single-elimination bracket.</div>
+                    <div class="mw-row">
+                        <span class="mw-label">Bracket</span>
+                        <div class="world-seg" id="t-size">
+                            <button type="button" data-val="8">8</button>
+                            <button type="button" data-val="16">Sweet 16</button>
+                            <button type="button" data-val="32">32</button>
+                        </div>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Format</span>
+                        <div class="world-seg world-seg-fmt" id="t-format">
+                            <button type="button" data-val="seeded"><span class="ws-seg-name">Seeded</span></button>
+                            <button type="button" data-val="champions"><span class="ws-seg-name">Champions</span></button>
+                            <button type="button" data-val="davidGoliath"><span class="ws-seg-name">David v Goliath</span></button>
+                            <button type="button" data-val="open"><span class="ws-seg-name">Open Draw</span></button>
+                        </div>
+                    </div>
+                    <div class="mt-blurb" id="t-format-blurb"></div>
                 </div>
 
                 <!-- Shared world settings (size / hex zoom / rounds) — all modes.

@@ -586,6 +586,16 @@ body {
     line-height: 1.15;
 }
 .ws-seg-name { font-size: 11px; font-weight: 700; }
+/* Format segment: 4 options with longer labels — let them wrap to two lines
+   and centre so the row stays the same height as the size/round segments. */
+.world-seg-fmt button {
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; min-height: 30px;
+}
+.world-seg-fmt .ws-seg-name {
+    font-size: 9.5px; font-weight: 700; line-height: 1.12;
+    white-space: normal;
+}
 .ws-seg-dim {
     font-size: 9px; font-weight: 600; opacity: 0.6;
     font-variant-numeric: tabular-nums; letter-spacing: 0;
@@ -2218,15 +2228,30 @@ body {
 }
 
 /* ── AI commentary cards (character-style speech panels) ── */
+/* The board reserves a fixed side-gutter (via .canvas-container padding, which
+   Renderer._fit() already subtracts) so it can never grow over the cards. Each
+   card then fills its protected gutter at a stable width instead of fighting the
+   board for leftover space. Gutters are reserved only when a banter card is in
+   play; pure human-vs-human keeps the board full-bleed. */
+:root { --card-gutter: clamp(300px, 22vw, 360px); }
+/* Reserve each gutter independently — only the side that actually has a visible
+   card pushes the board in, so PLAY (one human, one AI) doesn't waste a margin. */
+.canvas-container.banter-left  { padding-left: var(--card-gutter); }
+.canvas-container.banter-right { padding-right: var(--card-gutter); }
+/* Below ~1100px the twin gutters would starve the board — tighten them and
+   condense the cards so the map keeps a usable middle band. */
+@media (max-width: 1100px) {
+    :root { --card-gutter: clamp(248px, 26vw, 288px); }
+    .ai-overlay .aic-avatar { width: 60px; height: 60px; font-size: 20px; }
+}
+
 .ai-overlay {
-    /* Live in the side gutters BESIDE the board (in the letterbox margins
-       between the board edge and the viewport edge) — flanking the world, not
-       sitting on top of it. Each card pins to its viewport edge and caps its
-       width to its gutter (board-l on the left; the symmetric remainder on the
-       right) so it never spills over the map. */
     position: fixed;
     bottom: calc(100vh - var(--board-t) - var(--board-h) + 14px);
-    width: 300px;
+    width: calc(var(--card-gutter) - 28px);
+    max-height: calc(var(--board-h) - 28px);
+    overflow-y: auto;
+    overflow-x: hidden;
     background: linear-gradient(180deg, rgba(15, 20, 38, 0.92), rgba(10, 12, 26, 0.92));
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -2240,14 +2265,12 @@ body {
 .ai-overlay.p1 {
     left: 14px;
     right: auto;
-    max-width: calc(var(--board-l) - 26px);
     border-left: 3px solid hsl(190, 70%, 50%);
     box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(190, 70%, 50%, 0);
 }
 .ai-overlay.p2 {
     right: 14px;
     left: auto;
-    max-width: calc(100vw - var(--board-l) - var(--board-w) - 26px);
     border-right: 3px solid hsl(25, 75%, 52%);
     box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(25, 75%, 52%, 0);
 }
@@ -2264,24 +2287,25 @@ body {
 .ai-overlay.p2 .aic-header { flex-direction: row-reverse; }
 
 .aic-avatar {
-    width: 34px;
-    height: 34px;
+    width: 78px;
+    height: 78px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: 26px;
     font-weight: 900;
     letter-spacing: -0.01em;
     color: #fff;
-    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    border-radius: 13px;
     flex-shrink: 0;
     text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    box-shadow: 0 0 0 2px hsla(var(--aic-hue, 210), 70%, 60%, 0.55),
+                0 4px 12px rgba(0,0,0,0.45);
 }
-.ai-overlay.p1 .aic-avatar {
-    background: linear-gradient(135deg, hsl(190, 70%, 55%), hsl(170, 65%, 45%));
-}
+.ai-overlay.p1 .aic-avatar,
 .ai-overlay.p2 .aic-avatar {
-    background: linear-gradient(135deg, hsl(25, 80%, 60%), hsl(10, 70%, 50%));
+    background: linear-gradient(135deg,
+        hsl(var(--aic-hue, 210), 70%, 55%), hsl(var(--aic-hue, 210), 60%, 38%));
 }
 /* Baked cyber-organic portrait fills the card avatar; initials hide behind it. */
 .aic-avatar.has-avatar {
@@ -2290,8 +2314,6 @@ body {
     color: transparent;
     text-shadow: none;
 }
-.ai-overlay.p1 .aic-avatar.has-avatar { box-shadow: inset 0 0 0 2px hsl(190, 75%, 60%); }
-.ai-overlay.p2 .aic-avatar.has-avatar { box-shadow: inset 0 0 0 2px hsl(25, 85%, 62%); }
 
 .aic-name-block {
     flex: 1;
@@ -2301,16 +2323,29 @@ body {
 .ai-overlay.p2 .aic-name-block { text-align: right; }
 
 .aic-name {
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 800;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     color: #f0f0fa;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.ai-overlay.p1 .aic-name { color: hsl(190, 70%, 70%); }
-.ai-overlay.p2 .aic-name { color: hsl(25, 75%, 70%); }
+.ai-overlay.p1 .aic-name,
+.ai-overlay.p2 .aic-name { color: hsl(var(--aic-hue, 210), 75%, 72%); }
+
+/* "Class · Origin" — archetype + vendor */
+.aic-subtitle {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: hsla(var(--aic-hue, 210), 40%, 78%, 0.75);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 .aic-status {
     font-size: 9px;
@@ -2328,6 +2363,98 @@ body {
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.4; }
 }
+
+/* ── D&D stat block ── */
+.aic-statblock {
+    margin: 4px 0 2px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: hsla(var(--aic-hue, 210), 30%, 18%, 0.35);
+    border: 1px solid hsla(var(--aic-hue, 210), 40%, 50%, 0.18);
+}
+.aic-stat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+}
+.aic-stat-label {
+    flex: 0 0 52px;
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.55);
+}
+.aic-bar {
+    flex: 1;
+    height: 7px;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.35);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.aic-bar-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 4px;
+    background: linear-gradient(90deg,
+        hsl(var(--aic-hue, 210), 75%, 45%), hsl(var(--aic-hue, 210), 85%, 62%));
+    box-shadow: 0 0 8px hsla(var(--aic-hue, 210), 85%, 60%, 0.5);
+    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.aic-stat-val {
+    flex: 0 0 auto;
+    min-width: 34px;
+    text-align: right;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: #eef0fb;
+}
+.aic-statfoot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid hsla(var(--aic-hue, 210), 40%, 50%, 0.15);
+}
+.aic-tierline {
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: rgba(255,255,255,0.4);
+}
+.aic-role {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.aic-role.odds-fav {
+    color: hsl(45, 95%, 70%);
+    background: hsla(45, 90%, 55%, 0.16);
+    box-shadow: inset 0 0 0 1px hsla(45, 90%, 60%, 0.4), 0 0 10px hsla(45, 90%, 55%, 0.25);
+}
+.aic-role.odds-dog {
+    color: hsl(200, 80%, 74%);
+    background: hsla(200, 80%, 55%, 0.16);
+    box-shadow: inset 0 0 0 1px hsla(200, 75%, 60%, 0.4);
+}
+.aic-role.odds-even {
+    color: rgba(255,255,255,0.7);
+    background: rgba(255,255,255,0.07);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15);
+}
+/* P2 mirrors right-to-left so the portrait stays on the outer edge. */
+.ai-overlay.p2 .aic-statfoot { flex-direction: row-reverse; }
 
 /* Banter section — the star */
 .aic-banter-wrap {
@@ -2429,6 +2556,77 @@ body {
 /* Vary drift direction per particle for organic motion */
 .aic-p:nth-child(odd)  { --drift:  4px; }
 .aic-p:nth-child(even) { --drift: -4px; }
+
+/* ── Move-clock countdown (rides the particle field while thinking) ── */
+.aic-countdown {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+    transition: opacity 0.3s ease;
+    --cd-hue: var(--aic-hue, 200);
+}
+/* Only visible while the card is in its thinking state */
+.aic-banter-wrap:has(.ai-banter-text.thinking) .aic-countdown { opacity: 1; }
+
+.aic-cd-num {
+    font-family: 'Courier New', monospace;
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1;
+    color: hsl(var(--cd-hue), 80%, 72%);
+    text-shadow: 0 0 14px hsla(var(--cd-hue), 85%, 60%, 0.55);
+    font-variant-numeric: tabular-nums;
+}
+.aic-cd-label {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: hsla(var(--cd-hue), 40%, 80%, 0.6);
+}
+.aic-cd-bar {
+    width: 64%;
+    height: 3px;
+    margin-top: 2px;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.35);
+    overflow: hidden;
+}
+.aic-cd-bar-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    border-radius: 3px;
+    background: hsl(var(--cd-hue), 80%, 58%);
+    transition: width 0.25s linear, background-color 0.4s ease;
+}
+/* Final stretch — the clock turns hot and pulses */
+.aic-countdown.urgent { --cd-hue: 6; }
+.aic-countdown.urgent .aic-cd-num { animation: aic-cd-pulse 0.9s ease-in-out infinite; }
+@keyframes aic-cd-pulse {
+    0%, 100% { transform: scale(1);    opacity: 1;   }
+    50%      { transform: scale(1.12); opacity: 0.7; }
+}
+
+/* ── System voice — announcer line shown when a turn degrades (timeout /
+   dropped connection / garbled output / hang) instead of leaving the card mute ── */
+.ai-banter-text.system {
+    font-family: inherit;
+    font-style: normal;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: hsl(40, 70%, 78%);
+    letter-spacing: 0.01em;
+}
+.ai-overlay.p2 .ai-banter-text.system { text-align: right; }
 
 /* Avatar pulses with player-color glow while thinking */
 .ai-overlay:has(.ai-banter-text.thinking) .aic-avatar {
@@ -3224,10 +3422,9 @@ body.event-throne #bracket-expanded {
     background: linear-gradient(180deg, rgba(150,170,210,0.4), rgba(120,140,190,0.22));
     box-shadow: 0 0 8px rgba(120,150,210,0.18);
 }
-/* Outgoing stub: card right edge → column edge (all feeder cells) */
-.bt-round--qf .bt-cell::after,
-.bt-round--sf .bt-cell::after,
-.bt-round--final .bt-cell::after {
+/* Outgoing stub: card right edge → column edge. Every match feeds forward,
+   so every match cell gets one regardless of round depth. */
+.bt-cell::after {
     content: '';
     position: absolute;
     top: 50%;
@@ -3237,9 +3434,9 @@ body.event-throne #bracket-expanded {
     border-radius: 2px;
     background: rgba(150,170,210,0.34);
 }
-/* Incoming stub: column edge → card left edge (downstream rounds) */
-.bt-round--sf .bt-cell::before,
-.bt-round--final .bt-cell::before,
+/* Incoming stub: column edge → card left edge. Every round except the seed
+   round (r0) receives feeders; the champion node also receives one. */
+.bt-round:not(.bt-round--seed) .bt-cell::before,
 .bt-round--champ .bt-champ::before {
     content: '';
     position: absolute;
@@ -3461,6 +3658,75 @@ body.event-throne #bracket-expanded {
     0%   { transform: scale(0.85); opacity: 0; }
     60%  { transform: scale(1.06); opacity: 1; }
     100% { transform: scale(1); }
+}
+
+/* ── Wide brackets (Sweet 16 / 32): compact cards ──────────────
+   The opening column packs 8 matches (R16) or 16 (R32) into one
+   viewport-height column. Shrink every card so the pairs stay
+   separated and legible instead of overlapping into one list. */
+.bracket-tree--rounds-4 .bt-card,
+.bracket-tree--rounds-5 .bt-card {
+    padding: 4px 8px;
+    border-radius: 8px;
+    max-width: 240px;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.bracket-tree--rounds-4 .bt-card-mid,
+.bracket-tree--rounds-5 .bt-card-mid { margin: 3px 2px; }
+.bracket-tree--rounds-4 .bt-side,
+.bracket-tree--rounds-5 .bt-side { padding: 1px 2px; gap: 6px; }
+.bracket-tree--rounds-4 .bt-badge,
+.bracket-tree--rounds-5 .bt-badge { width: 20px; height: 20px; font-size: 8px; }
+.bracket-tree--rounds-4 .bt-name,
+.bracket-tree--rounds-5 .bt-name { font-size: 11.5px; }
+.bracket-tree--rounds-4 .bt-elo,
+.bracket-tree--rounds-5 .bt-elo { font-size: 9px; }
+.bracket-tree--rounds-4 .bt-score,
+.bracket-tree--rounds-5 .bt-score { font-size: 11.5px; min-width: 32px; }
+.bracket-tree--rounds-4 .bt-cell,
+.bracket-tree--rounds-5 .bt-cell { padding: 3px 22px; }
+/* A live card barely scales in a dense column so it can't overlap neighbours */
+.bracket-tree--rounds-4 .bt-live,
+.bracket-tree--rounds-5 .bt-live { transform: scale(1.02); }
+/* ── Mirrored two-sided bracket ─────────────────────────────────
+   The draw splits into a left and right half converging on a centred
+   Final + Champion. The opening round is now 8 matches per side (not 16),
+   so even a 32 fits one screen with no scroll — and the previously-empty
+   right half is filled. Connectors on the right half point inward. */
+.bracket-tree--mirror .bt-cell { padding-left: 13px; padding-right: 13px; }
+.bracket-tree--mirror .bt-cell::after,
+.bracket-tree--mirror .bt-cell::before { width: 13px; }
+
+/* Right half: spine + stubs flip to feed toward the centre (leftward). */
+.bt-round--mirror .bt-pair:not(.bt-pair--solo)::after { right: auto; left: 0; }
+.bt-round--mirror .bt-cell::after { right: auto; left: 0; }
+.bt-round--mirror:not(.bt-round--seed) .bt-cell::before { left: auto; right: 0; }
+
+/* Centre column: the Final card stacked above the Champion node. The Final
+   receives a feed stub on BOTH edges (one semifinal from each side). */
+.bt-round--center { flex: 1.15; }
+.bt-center-body {
+    justify-content: center;
+    gap: 22px;
+}
+.bt-cell--final { flex: 0 0 auto; }
+.bt-cell--final::after { width: 13px; }   /* incoming feed from the right semifinal */
+.bt-champ-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+}
+.bt-champ-wrap::before {                   /* short vertical link Final → Champion */
+    content: '';
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 3px;
+    height: 22px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, rgba(150,170,210,0.4), rgba(120,140,190,0.22));
 }
 
 /* ── Narrow viewports: stack rounds, drop connectors ─────────── */

@@ -54,9 +54,9 @@ export class TournamentManager {
                 lookup[norm(name)] = { elo: s.elo, wins: s.wins, losses: s.losses };
             }
         }
-        // Field = the 8 quarter-final competitors
+        // Field = every competitor in the opening round.
         const field = [];
-        for (const id of [0, 1, 2, 3]) field.push(this.bracket[id].p1, this.bracket[id].p2);
+        for (const m of this.rounds[0]) field.push(m.p1, m.p2);
         const ranked = field
             .filter(Boolean)
             .map(p => ({ key: norm(p), elo: lookup[norm(p)]?.elo ?? null }))
@@ -88,19 +88,21 @@ export class TournamentManager {
         this.game._refreshRightStackVisibility?.();
     }
 
-    async start(models, mode = 'standard', world = null) {
+    async start(models, mode = 'standard', world = null, format = null) {
         if (this.running) return;
         this.running = true;
         this.mode = mode;
+        // The chosen format (field + seed strategy) already ordered `models` into
+        // round-1 pairings — index 2i meets 2i+1 — so the bracket consumes them
+        // as-is. No shuffle here; randomness (if any) lives in the seed strategy.
+        this.format = format;
         // World settings (grid size / hex zoom / rounds) apply to every match in
         // the bracket. Rounds come from the world picker when provided.
         this.world = world;
         this.totalRounds = (world && world.rounds)
             || (mode === 'lightning' ? CONFIG.GAME.LIGHTNING_ROUNDS : CONFIG.GAME.TOTAL_ROUNDS);
 
-        // Shuffle for random seeding
-        const seeded = [...models].sort(() => Math.random() - 0.5);
-        this.bracket = this._buildBracket(seeded);
+        this.bracket = this._buildBracket(models);
 
         // Pull ELO/seed data for the field so the bracket can show ranking
         // context + detect upsets. Fire-and-forget: repaint bracket screens
@@ -133,26 +135,15 @@ export class TournamentManager {
         this._show('t-bracket');
         await this._sleep(4000);
 
-        // Quarter-Finals
-        for (const match of this.bracket.slice(0, 4)) {
+        // Run every match in round-major order; each winner feeds the next round.
+        // Works for any power-of-two field (8 / 16 / 32) since the bracket is a
+        // generated tree, not a fixed 7-match list.
+        for (const match of this.bracket) {
             await this._runMatch(match);
+            this._propagateWinner(match);
         }
 
-        // Semi-Finals
-        this.bracket[4].p1 = this.bracket[0].winner;
-        this.bracket[4].p2 = this.bracket[1].winner;
-        await this._runMatch(this.bracket[4]);
-
-        this.bracket[5].p1 = this.bracket[2].winner;
-        this.bracket[5].p2 = this.bracket[3].winner;
-        await this._runMatch(this.bracket[5]);
-
-        // Final
-        this.bracket[6].p1 = this.bracket[4].winner;
-        this.bracket[6].p2 = this.bracket[5].winner;
-        await this._runMatch(this.bracket[6]);
-
-        this._showChampion(this.bracket[6].winner);
+        this._showChampion(this._finalMatch().winner);
         this.running = false;
         // Tournament finished — bracket stays available so user can review
         // results, but the LIVE indicator stops pulsing.
@@ -163,25 +154,67 @@ export class TournamentManager {
         });
     }
 
+    // Build a single-elimination tree from a power-of-two field. Produces
+    // this.rounds (array of rounds, each an array of match objects) and returns
+    // the flat round-major list used as this.bracket. Match `id` equals its flat
+    // index, so `this.bracket[id]` stays valid. An 8-field yields the same 7
+    // matches / labels as the old hardcoded bracket.
     _buildBracket(models) {
-        return [
-            // Quarter-Finals
-            { id: 0, label: 'QF — Match 1', p1: models[0], p2: models[1], winner: null, scores: null, scoreHistory: null },
-            { id: 1, label: 'QF — Match 2', p1: models[2], p2: models[3], winner: null, scores: null, scoreHistory: null },
-            { id: 2, label: 'QF — Match 3', p1: models[4], p2: models[5], winner: null, scores: null, scoreHistory: null },
-            { id: 3, label: 'QF — Match 4', p1: models[6], p2: models[7], winner: null, scores: null, scoreHistory: null },
-            // Semi-Finals
-            { id: 4, label: 'Semi-Final 1', p1: null, p2: null, winner: null, scores: null, scoreHistory: null },
-            { id: 5, label: 'Semi-Final 2', p1: null, p2: null, winner: null, scores: null, scoreHistory: null },
-            // Final
-            { id: 6, label: 'Final',        p1: null, p2: null, winner: null, scores: null, scoreHistory: null },
-        ];
+        const size = models.length;
+        const rounds = [];
+        let n = size, r = 0, id = 0;
+        while (n >= 2) {
+            const count = n / 2;
+            const round = [];
+            for (let slot = 0; slot < count; slot++) {
+                round.push({ id: id++, round: r, slot, label: '', p1: null, p2: null, winner: null, scores: null, scoreHistory: null });
+            }
+            rounds.push(round);
+            n = count; r++;
+        }
+        // Seed the first round from the (already-ordered) field.
+        rounds[0].forEach((m, i) => { m.p1 = models[2 * i]; m.p2 = models[2 * i + 1]; });
+        // Labels, matching the legacy scheme where it existed.
+        rounds.forEach((round) => {
+            round.forEach((m, si) => { m.label = this._matchLabel(round.length * 2, si); });
+        });
+        this.rounds = rounds;
+        return rounds.flat();
+    }
+
+    // Feed a finished match's winner into its child match in the next round.
+    _propagateWinner(match) {
+        const next = this.rounds[match.round + 1];
+        if (!next) return; // final round has no child
+        const child = next[Math.floor(match.slot / 2)];
+        if (match.slot % 2 === 0) child.p1 = match.winner;
+        else                      child.p2 = match.winner;
+    }
+
+    _finalMatch() { return this.rounds.at(-1)[0]; }
+    _isFinal(match) { return match.round === this.rounds.length - 1; }
+
+    // Round name by participant count — singular section title.
+    // 2→Final, 4→Semi-Finals, 8→Quarter-Finals, 16→Round of 16, 32→Round of 32.
+    _roundTitle(participants) {
+        if (participants <= 2) return 'Final';
+        if (participants === 4) return 'Semi-Finals';
+        if (participants === 8) return 'Quarter-Finals';
+        return `Round of ${participants}`;
+    }
+
+    // Per-match label. Preserves the legacy 8-field labels exactly.
+    _matchLabel(participants, slot) {
+        if (participants <= 2) return 'Final';
+        if (participants === 4) return `Semi-Final ${slot + 1}`;
+        if (participants === 8) return `QF — Match ${slot + 1}`;
+        return `Round of ${participants} — Match ${slot + 1}`;
     }
 
     async _runMatch(match) {
         // Intro screen — fighting-game VS reveal: both fighters' cards slam in with
         // their cyber-organic portraits, the final gets a grander gold treatment.
-        const isFinal = match.id === 6;
+        const isFinal = this._isFinal(match);
         document.getElementById('t-match-label').textContent = match.label.toUpperCase();
         document.getElementById('t-intro-note').textContent = this._matchNote(match);
         const introScreen = document.getElementById('t-match-intro');
@@ -213,7 +246,13 @@ export class TournamentManager {
         this.game._onTournamentTick = () => this._renderLiveBracket();
         const promise = this.game.runFullGame();
         this.game.turns.startGame();
-        const scores = await promise;
+        // Match-level safety net. Per-turn watchdogs already keep any single AI turn
+        // from hanging; this guards the rare freeze that isn't a turn (a stuck
+        // round-end sequence, a wedged simulation) so the bracket always advances.
+        // Generous on purpose — it must never fire during a healthy match.
+        const guard = this._startMatchTimer();
+        const scores = await Promise.race([promise, guard.promise]);
+        clearTimeout(guard.id);   // match resolved (or timed out) — cancel the net
         this.game._onTournamentTick = null;
 
         // Record result — capture score history before it gets cleared on next reset
@@ -257,7 +296,7 @@ export class TournamentManager {
             `<div class="rs-row rs-win">${this._short(match.winner)}<span>${wScore.toLocaleString()}</span></div>
              <div class="rs-row rs-lose">${this._short(loser)}<span>${lScore.toLocaleString()}</span></div>`;
         document.getElementById('t-result-next').textContent =
-            match.id === 6 ? 'Revealing the Champion...' : 'Bracket updating...';
+            isFinal ? 'Revealing the Champion...' : 'Bracket updating...';
         this._show('t-match-result');
 
         // Let the result card (with its rank badge) be read on its own — no
@@ -272,10 +311,28 @@ export class TournamentManager {
         const drama = this.game._celebrateResult?.(res?.result, { headlinesOnly: true }) || 0;
         if (drama) {
             await this.game._waitForCalloutsDone?.();
-            await this._sleep(match.id === 6 ? 800 : 1200);
+            await this._sleep(isFinal ? 800 : 1200);
         } else {
-            await this._sleep(match.id === 6 ? 1000 : 2600);
+            await this._sleep(isFinal ? 1000 : 2600);
         }
+    }
+
+    // Generous match-level timeout. Resolves (never rejects) from the current sim
+    // score and detaches the game's resolver so a late game-over can't double-fire.
+    // Returns { id, promise } so the caller cancels the timer once the match ends.
+    _startMatchTimer() {
+        const perTurnCeil = (this.game.aiPlayers?.[1]?.timeoutMs?.() ?? 30_000) + 15_000;
+        const ms = this.totalRounds * (perTurnCeil * 2 + 20_000) + 60_000;
+        let id;
+        const promise = new Promise(resolve => {
+            id = setTimeout(() => {
+                console.error(`[Tournament] match exceeded ${Math.round(ms / 1000)}s ceiling — resolving from current score`);
+                this.game._matchResolve = null; // detach: _showGameOver won't resolve a dead promise
+                const s = this.game.simulation?.finalScore?.() || { 1: { finalScore: 0 }, 2: { finalScore: 0 } };
+                resolve(s);
+            }, ms);
+        });
+        return { id, promise };
     }
 
     // Rank-movement badge for the result card (winner side).
@@ -292,9 +349,9 @@ export class TournamentManager {
     }
 
     _matchNote(match) {
-        if (match.id === 6) return '🏆 Championship Final';
-        if (match.id === 4 || match.id === 5) return 'Winner advances to the Final';
-        return 'Winner advances to the Semi-Finals';
+        if (this._isFinal(match)) return '🏆 Championship Final';
+        const next = this.rounds[match.round + 1];
+        return `Winner advances to the ${this._roundTitle(next.length * 2)}`;
     }
 
     async _renderIntroOdds(p1, p2) {
@@ -316,7 +373,7 @@ export class TournamentManager {
         const wins = this.bracket.filter(m => m.winner === winner);
         const path = wins.map(m => m.label).join(' → ');
         const finalScore = (() => {
-            const fm = this.bracket[6];
+            const fm = this._finalMatch();
             const isP1 = fm.p1 === winner;
             return (isP1 ? fm.scores[1] : fm.scores[2]).finalScore;
         })();
@@ -377,20 +434,21 @@ export class TournamentManager {
         const upNextId = this.bracket.findIndex((m, i) =>
             !m.winner && i !== liveIdx && m.p1 && m.p2);
 
-        const championDone = !!this.bracket[6]?.winner;
+        const finalMatch = this._finalMatch();
+        const championDone = !!finalMatch?.winner;
 
         // Hero = the match that matters right now.
         let heroId;
         if (isLive)              heroId = liveIdx;
-        else if (championDone)   heroId = 6;
+        else if (championDone)   heroId = finalMatch.id;
         else if (upNextId !== -1) heroId = upNextId;
         else                     heroId = Math.max(0, this.bracket.findIndex(m => !m.winner));
 
         const liveScores = (isLive && this.game.simulation) ? this.game.simulation.finalScore() : null;
         const liveRound  = isLive ? this.game.turns?.round : null;
 
-        const hero = championDone && heroId === 6
-            ? this._lbnChampionHero(this.bracket[6])
+        const hero = championDone && heroId === finalMatch.id
+            ? this._lbnChampionHero(finalMatch)
             : this._lbnHero(this.bracket[heroId], heroId, { isLive: heroId === liveIdx && isLive, liveScores, liveRound });
 
         // "Up next" line — only while a match is live and another is queued.
@@ -481,26 +539,26 @@ export class TournamentManager {
         </div>`;
     }
 
-    // Progress rail — the 7 matches as nodes (QF·QF·QF·QF — SF·SF — ★Final).
+    // Progress rail — every match as a node, with a gap between rounds
+    // (e.g. QF·QF·QF·QF — SF·SF — ★Final). Scales to any bracket size.
     _lbnRail(liveIdx, upNextId, done) {
-        const order = [0, 1, 2, 3, 4, 5, 6];
-        const node = (id) => {
-            const m = this.bracket[id];
+        const node = (m) => {
             let st = 'pending';
-            if (m.winner)            st = 'done';
-            else if (id === liveIdx) st = 'live';
-            else if (id === upNextId) st = 'upnext';
-            const final = id === 6 ? ' lbn-node--final' : '';
+            if (m.winner)             st = 'done';
+            else if (m.id === liveIdx) st = 'live';
+            else if (m.id === upNextId) st = 'upnext';
+            const final = this._isFinal(m) ? ' lbn-node--final' : '';
             return `<span class="lbn-node lbn-node--${st}${final}"></span>`;
         };
         let nodes = '';
-        order.forEach((id, i) => {
-            if (i === 4 || i === 6) nodes += `<span class="lbn-rail-gap"></span>`;
-            nodes += node(id);
-        });
+        let prevRound = 0;
+        for (const m of this.bracket) {
+            if (m.round !== prevRound) { nodes += `<span class="lbn-rail-gap"></span>`; prevRound = m.round; }
+            nodes += node(m);
+        }
         return `<div class="lbn-rail">
             <div class="lbn-rail-nodes">${nodes}</div>
-            <span class="lbn-rail-count">${done} / 7</span>
+            <span class="lbn-rail-count">${done} / ${this.bracket.length}</span>
         </div>`;
     }
 
@@ -515,15 +573,9 @@ export class TournamentManager {
         // Bracket summary
         html += `<div class="tsp-section-title">Bracket</div>`;
         if (this.bracket) {
-            const sections = [
-                { label: 'Quarter-Finals', ids: [0, 1, 2, 3] },
-                { label: 'Semi-Finals',    ids: [4, 5] },
-                { label: 'Final',          ids: [6] },
-            ];
-            for (const sec of sections) {
-                html += `<div class="tsp-bracket-section">${sec.label}</div>`;
-                for (const id of sec.ids) {
-                    const m = this.bracket[id];
+            for (const round of this.rounds) {
+                html += `<div class="tsp-bracket-section">${this._roundTitle(round.length * 2)}</div>`;
+                for (const m of round) {
                     const done = !!m.winner;
                     html += `<div class="tsp-match ${done ? 'tsp-done' : ''}">
                         <div class="tsp-match-label">${m.label}</div>
@@ -639,8 +691,30 @@ export class TournamentManager {
         this._renderBracketInto(document.getElementById('bracket-grid'));
     }
 
+    // One round's column. `matches` is already in pairing order; pairs draw the
+    // connector spine. `seed` suppresses the incoming stub (opening round);
+    // `mirror` flips every connector to point toward the centre (right half).
+    _bracketColumn(matches, titleParticipants, { seed = false, mirror = false } = {}, ctx) {
+        const cell = (m) => `<div class="bt-cell">${this._bracketCard(m, ctx)}</div>`;
+        let body = '';
+        if (matches.length === 1) {
+            body = `<div class="bt-pair bt-pair--solo">${cell(matches[0])}</div>`;
+        } else {
+            for (let i = 0; i < matches.length; i += 2) {
+                body += `<div class="bt-pair">${cell(matches[i])}${cell(matches[i + 1])}</div>`;
+            }
+        }
+        const cls = ['bt-round'];
+        if (seed) cls.push('bt-round--seed');
+        if (mirror) cls.push('bt-round--mirror');
+        return `<div class="${cls.join(' ')}">
+            <div class="bt-round-label">${this._roundTitle(titleParticipants)}</div>
+            <div class="bt-round-body">${body}</div>
+        </div>`;
+    }
+
     _renderBracketInto(grid) {
-        if (!grid || !this.bracket) return;
+        if (!grid || !this.rounds) return;
 
         const upNextId = this.bracket.findIndex((m, i) =>
             !m.winner && i !== this._currentMatchIdx && m.p1 && m.p2);
@@ -649,30 +723,39 @@ export class TournamentManager {
         const liveRound = this._currentMatchIdx != null ? this.game.turns?.round : null;
         const ctx = { upNextId, liveScores, liveRound };
 
-        // Round 1 (QF) pairs feed into SF; each pair box draws the connector spine.
-        const cell = (id) => `<div class="bt-cell">${this._bracketCard(this.bracket[id], ctx)}</div>`;
-        const pair = (a, b) => `<div class="bt-pair">${cell(a)}${cell(b)}</div>`;
+        // Mirrored two-sided draw: every round splits in half — the top half of
+        // each round flows left→centre, the bottom half flows right→centre — and
+        // the two converge on the Final + Champion in the middle. This halves the
+        // opening column's height (8 matches/side, not 16) and fills the screen
+        // width instead of leaving the right half empty.
+        const rounds = this.rounds;
+        const lastIdx = rounds.length - 1;
+        const finalMatch = rounds[lastIdx][0];
+        const inner = rounds.slice(0, lastIdx);   // every round except the Final
 
-        const qf = `<div class="bt-round bt-round--qf">
-            <div class="bt-round-label">Quarter-Finals</div>
-            <div class="bt-round-body">${pair(0, 1)}${pair(2, 3)}</div>
-        </div>`;
-        const sf = `<div class="bt-round bt-round--sf">
-            <div class="bt-round-label">Semi-Finals</div>
-            <div class="bt-round-body">${pair(4, 5)}</div>
-        </div>`;
-        const fi = `<div class="bt-round bt-round--final">
+        const left = inner.map((round, ri) => {
+            const half = round.slice(0, round.length / 2);
+            return this._bracketColumn(half, round.length * 2, { seed: ri === 0 }, ctx);
+        }).join('');
+
+        // Right half mirrors the left: bottom half of each round, ordered
+        // centre→outward (Semis nearest the Final, opening round on the rim).
+        const right = inner.map((round, ri) => {
+            const half = round.slice(round.length / 2);
+            return this._bracketColumn(half, round.length * 2, { seed: ri === 0, mirror: true }, ctx);
+        }).reverse().join('');
+
+        const center = `<div class="bt-round bt-round--center">
             <div class="bt-round-label">Final</div>
-            <div class="bt-round-body"><div class="bt-pair bt-pair--solo">${cell(6)}</div></div>
-        </div>`;
-        const champ = `<div class="bt-round bt-round--champ">
-            <div class="bt-round-label">Champion</div>
-            <div class="bt-round-body">${this._championNode()}</div>
+            <div class="bt-round-body bt-center-body">
+                <div class="bt-cell bt-cell--final">${this._bracketCard(finalMatch, ctx)}</div>
+                <div class="bt-champ-wrap">${this._championNode()}</div>
+            </div>
         </div>`;
 
         grid.innerHTML = `<div class="bt-stage">
             ${this._bracketStatbar()}
-            <div class="bracket-tree">${qf}${sf}${fi}${champ}</div>
+            <div class="bracket-tree bracket-tree--mirror bracket-tree--rounds-${this.rounds.length}">${left}${center}${right}</div>
         </div>`;
         this._paintAvatars(grid);
     }
@@ -761,7 +844,7 @@ export class TournamentManager {
     }
 
     _championNode() {
-        const fin = this.bracket[6];
+        const fin = this._finalMatch();
         if (fin?.winner) {
             const stat = this._statOf(fin.winner);
             const wins = this.bracket.filter(m => m.winner === fin.winner).length;
@@ -823,14 +906,16 @@ export class TournamentManager {
             </div>`;
         }
 
+        const fieldSize = this.rounds[0].length * 2;
+        const fmtLabel = this.format?.label ? `${this.format.label} · ` : '';
         return `<div class="bt-statbar">
             <div class="bt-stat">
                 <span class="bt-stat-k">Field</span>
-                <span class="bt-stat-v">8 models · ${modeLabel} · ${this.totalRounds} rounds</span>
+                <span class="bt-stat-v">${fieldSize} models · ${fmtLabel}${modeLabel} · ${this.totalRounds} rounds</span>
             </div>
             <div class="bt-stat">
                 <span class="bt-stat-k">Progress</span>
-                <span class="bt-stat-v">${done} / 7 matches</span>
+                <span class="bt-stat-v">${done} / ${this.bracket.length} matches</span>
             </div>
             ${topSeedChip}
             ${upsetChip}

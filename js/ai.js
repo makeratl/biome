@@ -393,7 +393,16 @@ JSON format:
         return this._isCloudModel() || /qwen3|glm|kimi|minimax/i.test(this.model);
     }
 
-    async _callOllama(system, user) {
+    // How long a single model call is allowed before we abandon it. Cloud models
+    // need longer for the network roundtrip; thinking models for chain-of-thought.
+    // Exposed so the game-level turn watchdog can derive its own (larger) ceiling.
+    timeoutMs() {
+        return this._isCloudModel() ? 90_000
+             : this._isThinkingModel() ? 75_000
+             : 30_000;
+    }
+
+    async _callOllama(system, user, signal) {
         const url = `${this.ollamaUrl}/api/chat`;
         // Some models ignore think:false and still use thinking tokens,
         // so budget enough for thinking overhead + JSON content
@@ -402,6 +411,10 @@ JSON format:
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            // Aborted by takeTurn when the timeout wins, so a hung/slow request is
+            // torn down cleanly instead of lingering (which left the proxy writing
+            // to a dead socket → BrokenPipeError).
+            signal,
             body: JSON.stringify({
                 model: this.model,
                 messages: [
@@ -515,24 +528,32 @@ JSON format:
         console.log('[AI] Prompt:', user);
 
         let response;
+        const controller = new AbortController();
+        let timer;
         try {
-            // Cloud models need longer for network roundtrip;
-            // thinking models (qwen3, glm) need longer for chain-of-thought
-            const timeoutMs = this._isCloudModel() ? 90_000
-                            : this._isThinkingModel() ? 75_000
-                            : 30_000;
-            const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error(`AI timeout (${timeoutMs/1000}s)`)), timeoutMs)
-            );
-            response = await Promise.race([this._callOllama(system, user), timeout]);
+            const timeoutMs = this.timeoutMs();
+            const timeout = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    controller.abort();   // tear the fetch down, don't just abandon it
+                    reject(new Error(`AI timeout (${timeoutMs / 1000}s)`));
+                }, timeoutMs);
+            });
+            response = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
         } catch (err) {
             console.error('[AI] Ollama error:', err.message);
-            return this._fallback(candidates);
+            // Classify so the card can speak to *what* went wrong, not just go mute.
+            const msg = err.message || '';
+            const reason = /timeout/i.test(msg) ? 'timeout'
+                : /no valid json/i.test(msg) ? 'badjson'
+                : 'offline';
+            return this._fallback(candidates, reason);
+        } finally {
+            clearTimeout(timer);
         }
 
         if (!response?.actions) {
             console.error('[AI] Bad response (no actions):', JSON.stringify(response));
-            return this._fallback(candidates);
+            return this._fallback(candidates, 'badjson');
         }
 
         console.log('[AI] Response:', JSON.stringify(response));
@@ -612,7 +633,7 @@ JSON format:
     }
 
     // Fallback if LLM is unavailable
-    _fallback(candidates) {
+    _fallback(candidates, reason = 'offline') {
         const tm = this.game.turns;
         const plants = candidates.filter(c => c.type === 'plant');
         const results = [];
@@ -630,7 +651,13 @@ JSON format:
         }
 
         this.game.renderer.render();
-        return { reasoning: 'LLM unavailable — fallback to grass', actions: results, model: this.model };
+        return {
+            reasoning: 'LLM unavailable — fallback to grass',
+            actions: results,
+            model: this.model,
+            degraded: true,
+            failReason: reason,
+        };
     }
 
     // Post-game final statement

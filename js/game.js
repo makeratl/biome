@@ -9,8 +9,19 @@ import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
 import { TournamentManager } from './tournament.js';
+import { buildField, FORMATS, DEFAULT_FORMAT } from './tournament-format.js';
+
+// Models excluded from tournaments: embeddings, vision / vision-language, and
+// code specialists. They can't follow the game's JSON action protocol or aren't
+// fair general-reasoning competitors. Shared by the field builder and the
+// format picker's live "eligible models" note.
+//   *embed*/nomic/mxbai  → embeddings
+//   moondream/llava/*-vl → vision & vision-language
+//   *coder*/codellama    → code specialists
+const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
 import { applyAvatar, clearAvatar, preloadAvatars } from './model-avatar.js';
+import { resolveModel, paramLabel, mightLevel, titleCase } from './model-identity.js';
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
 import { playSound, setMuted, isMuted } from './sound.js';
@@ -482,47 +493,129 @@ class Game {
     }
 
     _setAICardIdentity(playerNum) {
+        const overlayEl = document.getElementById(`ai-overlay-p${playerNum}`);
         const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
         const nameEl = document.getElementById(`aic-name-p${playerNum}`);
+        const subEl = document.getElementById(`aic-subtitle-p${playerNum}`);
+        const tierEl = document.getElementById(`aic-tier-p${playerNum}`);
         const statusEl = document.getElementById(`aic-status-p${playerNum}`);
         if (!avatarEl || !nameEl) return;
 
         const ai = this.aiPlayers[playerNum];
         if (ai) {
+            if (overlayEl) overlayEl.style.display = '';
+            const id = resolveModel(ai.model);
             avatarEl.textContent = this._modelInitials(ai.model);   // fallback under the avatar
             applyAvatar(avatarEl, ai.model);                         // baked PNG if one exists
             nameEl.textContent = this._prettyModelName(ai.model);
+            // Tint the whole card with the model's brand hue (bars, frame, role glow).
+            if (overlayEl) overlayEl.style.setProperty('--aic-hue', id.hue);
+            // Subtitle: "Class · Origin" — the creature archetype + the vendor
+            // (drop the vendor when it's the unknown-family placeholder).
+            if (subEl) {
+                const cls = titleCase(id.family.archetype);
+                subEl.textContent = id.vendor && id.vendor !== '—' ? `${cls} · ${id.vendor}` : cls;
+            }
+            // Deployment tier line.
+            if (tierEl) tierEl.textContent = /cloud/i.test(ai.model) ? 'CLOUD' : 'LOCAL';
+            // MIGHT is static (size-derived) — set it immediately.
+            this._setStatRow(playerNum, 'might', mightLevel(ai.model), paramLabel(ai.model));
             if (statusEl) {
                 // Show rank/place status (persistent — fetched async below)
                 statusEl.textContent = '— ELO · — W —L';
                 statusEl.className = 'aic-status';
             }
-            // Async populate rank/place
-            this._updateAIRankStatus(playerNum);
+            // Async populate ranking-dependent stats (RENOWN, GRIT, status, role).
+            this._updateAICardStats(playerNum);
         } else {
-            clearAvatar(avatarEl);                                   // humans keep the P1/P2 chip
+            // Human slots get no fighter card — hide the whole overlay.
+            if (overlayEl) overlayEl.style.display = 'none';
+            clearAvatar(avatarEl);
             avatarEl.textContent = `P${playerNum}`;
             nameEl.textContent = `Player ${playerNum}`;
+            if (subEl) subEl.textContent = '';
             if (statusEl) {
                 statusEl.textContent = 'Human';
                 statusEl.className = 'aic-status';
             }
         }
+        this._syncBanterMode();
     }
 
-    async _updateAIRankStatus(playerNum) {
+    // Reserve side gutters (so the board can't grow over the cards) only when at
+    // least one banter card is in play. _refitBoard() recomputes against the new
+    // container padding; pure human-vs-human keeps the board full-bleed.
+    _syncBanterMode() {
+        const container = document.querySelector('.canvas-container');
+        if (!container) return;
+        const leftAI = !!this.aiPlayers[1], rightAI = !!this.aiPlayers[2];
+        const changed = container.classList.contains('banter-left') !== leftAI
+            || container.classList.contains('banter-right') !== rightAI;
+        container.classList.toggle('banter-left', leftAI);
+        container.classList.toggle('banter-right', rightAI);
+        if (changed) this._refitBoard();
+    }
+
+    // Set one stat row's bar fill (level 0..5) and raw value label.
+    _setStatRow(playerNum, stat, level, value) {
+        const row = document.querySelector(`#aic-statblock-p${playerNum} [data-stat="${stat}"]`);
+        if (!row) return;
+        const fill = row.querySelector('.aic-bar-fill');
+        const val = row.querySelector('.aic-stat-val');
+        if (fill) fill.style.width = `${Math.max(0, Math.min(5, level)) / 5 * 100}%`;
+        if (val) val.textContent = value;
+    }
+
+    async _updateAICardStats(playerNum) {
         const ai = this.aiPlayers[playerNum];
         const statusEl = document.getElementById(`aic-status-p${playerNum}`);
-        if (!ai || !statusEl) return;
+        if (!ai) return;
         const r = await this._fetchRanking(ai.model);
         // Make sure the AI for this slot didn't change mid-fetch
         if (this.aiPlayers[playerNum]?.model !== ai.model) return;
+
         if (r) {
-            const rankPrefix = r.rank ? `#${r.rank} · ` : '';
-            statusEl.textContent = `${rankPrefix}${Math.round(r.elo)} ELO · ${r.wins}W ${r.losses}L`;
+            // RENOWN — ELO mapped to a 1..5 bar (≈800 floor, ≈1450 ceiling).
+            const renown = Math.max(1, Math.min(5, Math.round((r.elo - 800) / 130)));
+            this._setStatRow(playerNum, 'renown', renown, Math.round(r.elo));
+            // GRIT — win-rate over a provisional ledger (<3 games stays at one pip).
+            const games = (r.wins || 0) + (r.losses || 0);
+            const grit = games < 3 ? 1 : Math.max(1, Math.min(5, Math.round((r.wins / games) * 5)));
+            this._setStatRow(playerNum, 'grit', grit, `${r.wins}-${r.losses}`);
+            if (statusEl) {
+                const rankPrefix = r.rank ? `#${r.rank} · ` : '';
+                statusEl.textContent = `${rankPrefix}${Math.round(r.elo)} ELO · ${r.wins}W ${r.losses}L`;
+            }
         } else {
-            statusEl.textContent = 'Unranked';
+            this._setStatRow(playerNum, 'renown', 1, '—');
+            this._setStatRow(playerNum, 'grit', 1, '—');
+            if (statusEl) statusEl.textContent = 'Unranked';
         }
+        this._renderRole(playerNum, r, this._matchupOdds);
+    }
+
+    // The narrative odds/role pill — calls out reigning champ, favorite, underdog,
+    // wildcard, etc. from rank + record + live head-to-head odds.
+    _renderRole(playerNum, ranking, odds) {
+        const el = document.getElementById(`aic-role-p${playerNum}`);
+        if (!el) return;
+        const pWin = odds ? (playerNum === 1 ? odds.p1Win : odds.p2Win) : null;
+        const rank = ranking?.rank;
+        const games = (ranking?.wins || 0) + (ranking?.losses || 0);
+        let text, cls;
+        if (rank === 1) { text = 'REIGNING #1'; cls = 'fav'; }
+        else if (pWin != null && pWin >= 0.65) { text = 'HEAVY FAVORITE'; cls = 'fav'; }
+        else if (pWin != null && pWin <= 0.35) { text = 'LONGSHOT'; cls = 'dog'; }
+        else if (rank && rank <= 3) { text = 'CONTENDER'; cls = 'fav'; }
+        else if (!ranking || games < 3) { text = 'WILDCARD'; cls = 'even'; }
+        else if (pWin != null) {
+            if (Math.abs(pWin - 0.5) < 0.02) { text = 'EVEN'; cls = 'even'; }
+            else if (pWin > 0.5) { text = 'FAVORITE'; cls = 'fav'; }
+            else { text = 'UNDERDOG'; cls = 'dog'; }
+        } else { text = 'CHALLENGER'; cls = 'even'; }
+        if (pWin != null) text += ` · ${Math.round(pWin * 100)}%`;
+        el.textContent = text;
+        el.className = `aic-role odds-${cls}`;
     }
 
     // Fetch both models' ELO and compute the head-to-head win probability for the
@@ -538,6 +631,9 @@ class Game {
         const p1Win = expectedScore(r1.elo, r2.elo);
         this._matchupOdds = { p1Win, p2Win: 1 - p1Win };
         this._updateScoreboard();
+        // Refresh the card role pills now that live odds exist.
+        this._renderRole(1, r1, this._matchupOdds);
+        this._renderRole(2, r2, this._matchupOdds);
     }
 
     _resetAICard(playerNum) {
@@ -735,7 +831,7 @@ class Game {
             }
             // Check if P1 is AI
             if (this.aiPlayers[1]) {
-                this._runAITurn(1);
+                this._runAITurn(1).catch(e => this._failTurn(1, e));
             }
         } else if (phase === PHASE.PLAYER_2_TURN) {
             if (aiVsAi) {
@@ -749,7 +845,7 @@ class Game {
             this._updateCensus();
             // Check if P2 is AI
             if (this.aiPlayers[2]) {
-                this._runAITurn(2);
+                this._runAITurn(2).catch(e => this._failTurn(2, e));
             } else {
                 this._log('P1 placements hidden — place your organisms');
             }
@@ -1885,6 +1981,10 @@ class Game {
         const ai = this.aiPlayers[playerNum];
         if (!ai) return;
 
+        // Per-turn guard: the finally below ends the turn exactly once. Reset here
+        // so a fresh turn can advance again. (Human turns never reach this method,
+        // so their manual end-turn flow is untouched.)
+        this._turnEnded = false;
         this._aiThinking = true;
         this._log(`P${playerNum} AI (${ai.model}) thinking...`);
 
@@ -1909,68 +2009,198 @@ class Game {
             toggle.setAttribute('aria-expanded', 'false');
         }
 
+        // Start the move-clock countdown so the wait has stakes — it ticks toward
+        // the same deadline the model call self-limits to.
+        this._startThinkingCountdown(playerNum, ai.timeoutMs());
+
         this._updateTurnUI();
 
         // Brief delay so the UI updates before the async call
         await this._sleep(300);
 
-        const result = await ai.takeTurn();
+        try {
+            // Game-level watchdog. takeTurn() self-limits (and now aborts) its model
+            // call, but if it ever fails to settle at all — a never-resolving await —
+            // this forces the turn to fail rather than freeze the entire match (and,
+            // in a tournament, the whole bracket). Ceiling sits above the model-call
+            // timeout so it only fires on a genuine hang, never a slow-but-fine call.
+            const watchdog = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('turn watchdog tripped')), ai.timeoutMs() + 15_000));
+            const result = await Promise.race([ai.takeTurn(), watchdog]);
 
+            // Move resolved — stop the clock and drop the thinking state.
+            this._stopThinkingCountdown(playerNum);
+            if (bEl) { bEl.classList.remove('thinking', 'system'); }
+            if (bEl && result.degraded) {
+                // The model didn't really answer — speak to it in the game's voice
+                // instead of leaving the response area mute.
+                bEl.textContent = this._degradedQuip(playerNum, result.failReason);
+                bEl.classList.add('system');
+                bEl.classList.remove('entering');
+                void bEl.offsetWidth;
+                bEl.classList.add('entering');
+                if (toggle) toggle.style.display = 'none';
+            } else if (bEl && result.banter) {
+                bEl.textContent = result.banter;
+                bEl.classList.remove('entering');
+                void bEl.offsetWidth;
+                bEl.classList.add('entering');
+                if (sEl && result.reasoning) {
+                    sEl.textContent = result.reasoning;
+                    // Reasoning stays collapsed by default but the toggle becomes available
+                    if (toggle) toggle.style.display = '';
+                }
+            } else if (bEl) {
+                bEl.textContent = '';
+            }
+            // Status stays as rank/place — no temporary overwrite
+
+            // Log banter to action log too
+            if (result.degraded) {
+                this._logStyled(`P${playerNum} ⚠ ${result.failReason} — fell back to grass`, `banter p${playerNum}`);
+            } else if (result.banter) {
+                this._logStyled(`P${playerNum}: "${result.banter}"`, `banter p${playerNum}`);
+            }
+            if (result.reasoning && !result.degraded) {
+                this._logStyled(`P${playerNum} strategy: ${result.reasoning}`, 'strategy');
+            }
+
+            // Log individual actions
+            const okActions = result.actions.filter(a => a.ok);
+            const species = {};
+            for (const a of okActions) {
+                const match = a.msg.match(/^(?:Auto: |Fallback: )?(\w+) at/);
+                if (match) species[match[1]] = (species[match[1]] || 0) + 1;
+            }
+            const summary = Object.entries(species).map(([s, n]) => `${n}× ${s}`).join(', ');
+            if (summary) this._log(`P${playerNum} placed: ${summary}`);
+
+            this.renderer.render();
+
+            // Burst + sound staggered for each successful placement
+            for (let i = 0; i < okActions.length; i++) {
+                const a = okActions[i];
+                if (!a.cell) continue;
+                setTimeout(() => {
+                    this.renderer.placementBurst(a.cell, playerNum);
+                    this._playSound('place');
+                }, i * 140);
+            }
+            this._updateCensus();
+            this._updateTurnUI();
+
+            // Longer pause in AI vs AI so spectator can study each player's moves
+            const pause = this._isAIvsAI() ? 2000 : 800;
+            await this._sleep(pause);
+        } catch (err) {
+            // A failed AI turn must never freeze the game. Log it and let the finally
+            // advance — the player simply forfeits this turn's placements.
+            console.error(`[AI] P${playerNum} turn failed — advancing anyway:`, err);
+            this._log(`P${playerNum} turn error (${err.message}) — turn skipped`);
+            // Speak to the hang in the game's voice rather than leaving it mute.
+            this._stopThinkingCountdown(playerNum);
+            if (bEl) {
+                bEl.classList.remove('thinking');
+                bEl.textContent = this._degradedQuip(playerNum, 'hang');
+                bEl.classList.add('system');
+                void bEl.offsetWidth;
+                bEl.classList.add('entering');
+            }
+            if (toggle) toggle.style.display = 'none';
+        } finally {
+            this._teardownAITurn(playerNum);
+        }
+    }
+
+    // End an AI turn exactly once, clearing the "thinking" state regardless of how
+    // the turn finished (success, exception, or watchdog). This is the single
+    // chokepoint that guarantees the phase machine always advances.
+    _teardownAITurn(playerNum) {
         this._aiThinking = false;
-
-        // Banter container is no longer "thinking" — placeholder/text takes over
+        this._stopThinkingCountdown(playerNum);
+        const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         if (bEl) bEl.classList.remove('thinking');
-        if (bEl && result.banter) {
-            bEl.textContent = result.banter;
-            bEl.classList.remove('entering');
-            void bEl.offsetWidth;
-            bEl.classList.add('entering');
-        } else if (bEl) {
-            bEl.textContent = '';
-        }
-        if (sEl && result.reasoning) {
-            sEl.textContent = result.reasoning;
-            // Reasoning stays collapsed by default but the toggle becomes available
-            if (toggle) toggle.style.display = '';
-        }
-        // Status stays as rank/place — no temporary overwrite
-
-        // Log banter to action log too
-        if (result.banter) {
-            this._logStyled(`P${playerNum}: "${result.banter}"`, `banter p${playerNum}`);
-        }
-        if (result.reasoning) {
-            this._logStyled(`P${playerNum} strategy: ${result.reasoning}`, 'strategy');
-        }
-
-        // Log individual actions
-        const okActions = result.actions.filter(a => a.ok);
-        const species = {};
-        for (const a of okActions) {
-            const match = a.msg.match(/^(?:Auto: |Fallback: )?(\w+) at/);
-            if (match) species[match[1]] = (species[match[1]] || 0) + 1;
-        }
-        const summary = Object.entries(species).map(([s, n]) => `${n}× ${s}`).join(', ');
-        if (summary) this._log(`P${playerNum} placed: ${summary}`);
-
-        this.renderer.render();
-
-        // Burst + sound staggered for each successful placement
-        for (let i = 0; i < okActions.length; i++) {
-            const a = okActions[i];
-            if (!a.cell) continue;
-            setTimeout(() => {
-                this.renderer.placementBurst(a.cell, playerNum);
-                this._playSound('place');
-            }, i * 140);
-        }
-        this._updateCensus();
-        this._updateTurnUI();
-
-        // Longer pause in AI vs AI so spectator can study each player's moves
-        const pause = this._isAIvsAI() ? 2000 : 800;
-        await this._sleep(pause);
+        if (this._turnEnded) return;
+        this._turnEnded = true;
         this.turns.endTurn();
+    }
+
+    // ── Move-clock countdown ─────────────────────────────────────
+    // Tick a card's countdown toward the model's deadline so the wait has stakes;
+    // it turns "urgent" (hot + pulsing) in the final stretch.
+    _startThinkingCountdown(playerNum, totalMs) {
+        this._cdTimers = this._cdTimers || {};
+        this._stopThinkingCountdown(playerNum);
+        const el = document.getElementById(`aic-countdown-p${playerNum}`);
+        if (!el) return;
+        const numEl = el.querySelector('.aic-cd-num');
+        const fillEl = el.querySelector('.aic-cd-bar-fill');
+        const start = Date.now();
+        // Urgent in the last 20% of the budget (but at least the final 10s).
+        const urgentAt = Math.max(10_000, totalMs * 0.2);
+        const tick = () => {
+            const remaining = Math.max(0, totalMs - (Date.now() - start));
+            if (numEl) numEl.textContent = `${Math.ceil(remaining / 1000)}s`;
+            if (fillEl) fillEl.style.width = `${(remaining / totalMs) * 100}%`;
+            el.classList.toggle('urgent', remaining <= urgentAt);
+        };
+        tick();
+        this._cdTimers[playerNum] = setInterval(tick, 250);
+    }
+
+    _stopThinkingCountdown(playerNum) {
+        if (this._cdTimers && this._cdTimers[playerNum]) {
+            clearInterval(this._cdTimers[playerNum]);
+            delete this._cdTimers[playerNum];
+        }
+        const el = document.getElementById(`aic-countdown-p${playerNum}`);
+        if (el) el.classList.remove('urgent');
+    }
+
+    // A concise character name for system-voice lines (family label when known,
+    // else the properly-cased first word of the display name).
+    _aiCharacterName(model) {
+        const id = resolveModel(model);
+        if (id.family.id !== 'generic') return id.family.label;
+        return id.displayName.split(' ')[0] || 'The challenger';
+    }
+
+    // Game-friendly announcer line for a degraded turn — keeps the card in-character
+    // instead of going silent when the model times out, drops, or babbles.
+    _degradedQuip(playerNum, reason) {
+        const ai = this.aiPlayers[playerNum];
+        const name = ai ? this._aiCharacterName(ai.model) : `Player ${playerNum}`;
+        const pools = {
+            timeout: [
+                `⏱ ${name} overthought it — the clock ran out and instinct scattered grass.`,
+                `⏱ Too slow! ${name} missed the window and fell back on muscle memory.`,
+                `⏱ ${name} is still calculating… the round moved on without them.`,
+            ],
+            offline: [
+                `📡 Lost contact with ${name} — autopilot planted grass to hold the line.`,
+                `📡 ${name} dropped off the grid this round. Instinct took the wheel.`,
+                `📡 Signal to ${name} flickered out — a reflex move keeps them in the game.`,
+            ],
+            badjson: [
+                `💬 ${name} muttered something unparseable and defaulted to grass.`,
+                `💬 ${name}'s plan came out as gibberish — grass it is.`,
+                `💬 ${name} fumbled the playbook; reflexes planted grass instead.`,
+            ],
+            hang: [
+                `🧊 ${name} froze solid — the match pressed on without their move.`,
+                `🧊 ${name} locked up completely. No move this round.`,
+            ],
+        };
+        const pool = pools[reason] || pools.offline;
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    // Backstop for the fire-and-forget _runAITurn launches in _onPhaseChange: if the
+    // promise rejects before its own try/finally can run (e.g. a throw in setup),
+    // this still tears the turn down so the match can't stall.
+    _failTurn(playerNum, err) {
+        console.error(`[AI] P${playerNum} turn crashed before it could run — advancing:`, err);
+        this._teardownAITurn(playerNum);
     }
 
     setAI(playerNum, model) {
@@ -2100,6 +2330,63 @@ class Game {
 
         this._populateModelPickers();
         this._initWorldControls();
+        this._initTournamentControls();
+    }
+
+    // Tournament format picker: bracket size (8/16/32) + format (field+seed
+    // strategy). Round count lives in the shared World picker, not here.
+    _initTournamentControls() {
+        this._tournamentSize = 8;
+        this._tournamentFormat = DEFAULT_FORMAT;
+
+        const bindSeg = (id, set) => {
+            const box = document.getElementById(id);
+            if (!box) return;
+            box.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-val]');
+                if (!btn) return;
+                set(btn.dataset.val);
+                this._syncTournamentControls();
+            });
+        };
+        bindSeg('t-size', (v) => { this._tournamentSize = Number(v); });
+        bindSeg('t-format', (v) => { this._tournamentFormat = v; });
+        this._syncTournamentControls();
+    }
+
+    // Highlight the active size/format buttons, show the format blurb, and an
+    // honest one-liner on the bracket the current install can actually field.
+    _syncTournamentControls() {
+        const mark = (id, val) => {
+            const box = document.getElementById(id);
+            box?.querySelectorAll('button[data-val]').forEach(b =>
+                b.classList.toggle('on', b.dataset.val === String(val)));
+        };
+        mark('t-size', this._tournamentSize);
+        mark('t-format', this._tournamentFormat);
+
+        const fmt = FORMATS[this._tournamentFormat] || FORMATS[DEFAULT_FORMAT];
+        const blurbEl = document.getElementById('t-format-blurb');
+        if (!blurbEl) return;
+
+        const eligible = this._eligibleModelNames();
+        let note = fmt.blurb;
+        if (eligible.length) {
+            const cap = this._largestBracketFor(eligible.length);
+            const actual = Math.min(this._tournamentSize, cap);
+            if (actual < this._tournamentSize) {
+                note += ` — only ${eligible.length} eligible models, capped to a ${actual}-model bracket.`;
+            } else if (eligible.length < actual) {
+                note += ` — ${eligible.length} models, ${actual - eligible.length} slots filled by repeats.`;
+            }
+        }
+        blurbEl.textContent = note;
+    }
+
+    // Models that can actually compete: chat models only (no embeddings, vision,
+    // or code specialists — they can't follow the JSON action protocol fairly).
+    _eligibleModelNames(models = this._installedModels || []) {
+        return models.filter(m => !TOURNAMENT_EXCLUDE.test(m.name)).map(m => m.name);
     }
 
     // World settings: grid size / hex zoom / round count, shared across modes.
@@ -2204,6 +2491,9 @@ class Game {
         if (mode === 'tournament') startBtn.textContent = 'Start Tournament ▶';
         else if (mode === 'watch') startBtn.textContent = 'Start Watch Match ▶';
         else startBtn.textContent = 'Start Match ▶';
+        // Refresh the format picker's "eligible models" note — the model list may
+        // have finished loading since the controls were first initialised.
+        if (mode === 'tournament') this._syncTournamentControls?.();
     }
 
     // Current world settings (grid size / hex zoom / round count), falling back
@@ -2912,6 +3202,15 @@ class Game {
         return new Promise(resolve => { this._matchResolve = resolve; });
     }
 
+    // Largest power-of-two bracket the eligible pool can fill without heavy
+    // duplication. Floored at 8 (a sparse install still pads up to 8, as before)
+    // and capped at 32 — so picking "32" with only 12 models quietly runs a 16.
+    _largestBracketFor(poolCount) {
+        let best = 8;
+        for (const s of [16, 32]) { if (poolCount >= s) best = s; }
+        return best;
+    }
+
     async _startTournament() {
         if (this.tournament?.running) return;
         // Rounds (and grid size / hex zoom) come from the World settings picker
@@ -2920,45 +3219,40 @@ class Game {
         const mode = world.rounds <= CONFIG.GAME.LIGHTNING_ROUNDS ? 'lightning' : 'standard';
 
         const models = await listOllamaModels();
-        // Exclude non-chat models: embeddings, vision / vision-language, and
-        // code specialists. They either can't follow the game's JSON action
-        // protocol or aren't fair general-reasoning competitors.
-        //   *embed*/nomic/mxbai  → embeddings
-        //   moondream/llava/*-vl → vision & vision-language
-        //   *coder*/codellama    → code specialists
-        const EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
-        const eligible = models
-            .filter(m => !EXCLUDE.test(m.name))
-            .map(m => m.name);
+        this._installedModels = models;
+        const eligible = this._eligibleModelNames(models);
 
         if (eligible.length < 2) {
             alert('Need at least 2 models for a tournament.');
             return;
         }
 
-        // Rank-aware field: take the top 8 eligible models by current ELO so the
-        // strongest installed models make the bracket — instead of whoever
-        // happens to sit first in Ollama's list. Never-played models fall back
-        // to the server's base rating so a fresh install still fields a bracket.
+        // Build the rating-aware pool, then let the chosen format decide WHO gets
+        // in (field strategy) and HOW they pair (seed strategy). Never-played
+        // models fall back to the server's base rating with zero games so a fresh
+        // install still fields a bracket (and is correctly excluded from a
+        // Champions field until it has earned a record).
         const rankings = await fetchRankings().catch(() => null);
         const norm = (m) => m
             ? m.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '')
             : '';
-        const eloLookup = {};
+        const stats = {};
         if (rankings) {
-            for (const [name, s] of Object.entries(rankings)) eloLookup[norm(name)] = s.elo;
+            for (const [name, s] of Object.entries(rankings)) {
+                stats[norm(name)] = { elo: s.elo, games: (s.wins ?? 0) + (s.losses ?? 0) };
+            }
         }
         const BASE_ELO = 1000;   // mirrors server.py base rating
-        const field = eligible
-            .map((name, i) => ({ name, i, elo: eloLookup[norm(name)] ?? BASE_ELO }))
-            .sort((a, b) => (b.elo - a.elo) || (a.i - b.i))   // ELO desc, stable on ties
-            .slice(0, 8)
-            .map(x => x.name);
+        const pool = eligible.map((name) => {
+            const s = stats[norm(name)];
+            return { name, elo: s?.elo ?? BASE_ELO, games: s?.games ?? 0 };
+        });
 
-        // Pad to 8 with random repeats if fewer than 8 eligible models.
-        while (field.length < 8) field.push(field[Math.floor(Math.random() * field.length)]);
+        const size = Math.min(this._tournamentSize || 8, this._largestBracketFor(pool.length));
+        const formatKey = this._tournamentFormat || DEFAULT_FORMAT;
+        const field = buildField(pool, size, formatKey);
 
-        this.tournament.start(field, mode, world);
+        this.tournament.start(field, mode, world, FORMATS[formatKey]);
     }
 }
 

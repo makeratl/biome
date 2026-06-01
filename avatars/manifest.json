@@ -28,7 +28,11 @@
     "starcoder-large": "avatars/cyber-organic/starcoder-large.png",
     "smollm-small": "avatars/cyber-organic/smollm-small.png",
     "baichuan-mid": "avatars/cyber-organic/baichuan-mid.png",
-    "stablelm-mid": "avatars/cyber-organic/stablelm-mid.png"
+    "stablelm-mid": "avatars/cyber-organic/stablelm-mid.png",
+    "yi-mid": "avatars/cyber-organic/yi-mid.png",
+    "gemma-cloud": "avatars/cyber-organic/gemma-cloud.png",
+    "generic-cloud": "avatars/cyber-organic/generic-cloud.png",
+    "gpt-cloud": "avatars/cyber-organic/gpt-cloud.png"
   },
   "creature-feature": {
     "deepseek-cloud": "avatars/creature-feature/deepseek-cloud.png",

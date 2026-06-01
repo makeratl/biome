@@ -212,6 +212,42 @@ export function parseTier(name) {
     return 'mid';
 }
 
+// Short raw parameter label for a stat card — "14B" / "3.5B" / "Cloud", else the
+// tier label as a fallback (e.g. "Mid") when the name carries no explicit count.
+export function paramLabel(name) {
+    const lower = (name || '').toLowerCase();
+    if (/cloud/.test(lower)) return 'Cloud';
+    const tag = lower.includes(':') ? lower.split(':').slice(1).join(':') : '';
+    const m = (tag || lower).match(/(\d+(?:\.\d+)?)\s*b\b/);
+    if (m) return `${m[1]}B`;
+    return SIZE_TIERS[parseTier(name)].label;
+}
+
+// "MIGHT" stat — a 2..5 bar level derived from parameter scale (cloud giants and
+// the largest locals top out; sub-5B models sit lowest). Mirrors parseTier's parse.
+export function mightLevel(name) {
+    const lower = (name || '').toLowerCase();
+    if (/cloud/.test(lower)) return 5;
+    const tag = lower.includes(':') ? lower.split(':').slice(1).join(':') : '';
+    const search = tag || lower;
+    const m = search.match(/(\d+(?:\.\d+)?)\s*b\b/);
+    if (m) {
+        const n = parseFloat(m[1]);
+        if (n < 5) return 2;
+        if (n < 14) return 3;
+        if (n < 33) return 4;
+        return 5;
+    }
+    if (/\b(mini|small|tiny|nano)\b/.test(search)) return 2;
+    if (/\b(large|xl|huge|max)\b/.test(search)) return 4;
+    return 3;
+}
+
+// Title-case a single word (e.g. archetype "luna moth" → "Luna Moth").
+export function titleCase(s) {
+    return (s || '').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export function familyFor(name) {
     return MODEL_FAMILIES.find(f => f.match.test(name || '')) || MODEL_FAMILIES[MODEL_FAMILIES.length - 1];
 }
