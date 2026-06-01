@@ -469,13 +469,13 @@
             <div class="bracket-grid" id="bracket-grid"></div>
         </div>
 
-        <!-- Match intro -->
+        <!-- Match intro — fighting-game VS reveal (player cards slam in) -->
         <div class="t-screen t-hidden" id="t-match-intro">
             <div class="t-match-label" id="t-match-label">ROUND 1 — MATCH 1</div>
-            <div class="t-vs-row">
-                <div class="t-model t-m-p1" id="t-intro-p1">—</div>
-                <div class="t-vs">VS</div>
-                <div class="t-model t-m-p2" id="t-intro-p2">—</div>
+            <div class="prematch-row t-intro-row">
+                <div id="t-intro-p1-card" class="player-card p1"></div>
+                <div class="prematch-vs">VS</div>
+                <div id="t-intro-p2-card" class="player-card p2"></div>
             </div>
             <div class="odds-row t-intro-odds">
                 <span id="t-intro-odds-p1" class="odds-side"></span>
@@ -499,6 +499,7 @@
         <div class="t-screen t-hidden" id="t-champion">
             <div class="t-champ-pre">BIOME CHAMPIONSHIP WINNER</div>
             <div class="t-champ-crown">👑</div>
+            <div class="t-champ-avatar" id="t-champ-avatar"></div>
             <div class="t-champ-name" id="t-champ-name">—</div>
             <div class="t-champ-record" id="t-champ-record"></div>
             <div id="t-champ-actions" class="t-champ-actions"></div>

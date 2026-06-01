@@ -43,7 +43,7 @@ export function avatarUrl(manifest, modelName, style = 'cyber-organic') {
 // element's brand hue (`--bh`) and leaves the existing gradient + initials as the
 // procedural fallback. Re-entrant: tags `el.dataset.model` and bails if the slot
 // was reassigned to a different model before the manifest resolved.
-export async function applyAvatar(el, modelName, { style = 'cyber-organic' } = {}) {
+export async function applyAvatar(el, modelName, { style = 'cyber-organic', cover = true } = {}) {
     if (!el) return;
     if (!modelName) { clearAvatar(el); return; }
     const resolved = resolveModel(modelName);
@@ -54,12 +54,15 @@ export async function applyAvatar(el, modelName, { style = 'cyber-organic' } = {
     if (el.dataset.model !== modelName) return;    // slot changed under us
     const url = avatarUrl(manifest, modelName, style);
     if (url) {
-        // Set sizing inline too: some slot selectors (e.g. .ai-overlay.p1 .aic-avatar)
-        // use a `background` shorthand that out-specifies a .has-avatar background-size
-        // rule and would reset it to `auto`. Inline wins regardless of specificity.
         el.style.backgroundImage = `url("${url}")`;
-        el.style.backgroundSize = 'cover';
-        el.style.backgroundPosition = 'center';
+        // For hex chips, force cover sizing inline: some slot selectors (e.g.
+        // .ai-overlay.p1 .aic-avatar) use a `background` shorthand that out-specifies
+        // a .has-avatar background-size rule. Callers that style the texture
+        // themselves (the scoreboard bleed) pass cover:false.
+        if (cover) {
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+        }
         el.classList.add('has-avatar');
     } else {
         el.style.backgroundImage = '';

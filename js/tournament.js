@@ -179,13 +179,24 @@ export class TournamentManager {
     }
 
     async _runMatch(match) {
-        // Intro screen
+        // Intro screen — fighting-game VS reveal: both fighters' cards slam in with
+        // their cyber-organic portraits, the final gets a grander gold treatment.
+        const isFinal = match.id === 6;
         document.getElementById('t-match-label').textContent = match.label.toUpperCase();
-        document.getElementById('t-intro-p1').textContent  = this._short(match.p1);
-        document.getElementById('t-intro-p2').textContent  = this._short(match.p2);
         document.getElementById('t-intro-note').textContent = this._matchNote(match);
+        const introScreen = document.getElementById('t-match-intro');
+        introScreen.classList.toggle('t-intro-champ', isFinal);
         this._show('t-match-intro');
+        await Promise.all([
+            this.game._renderPlayerCard('t-intro-p1-card', { player: 1, model: match.p1 }),
+            this.game._renderPlayerCard('t-intro-p2-card', { player: 2, model: match.p2 }),
+        ]);
         this._renderIntroOdds(match.p1, match.p2); // async — fills the odds line once ELO is fetched
+        // Re-trigger the slam-in animation by reflow, with a matching sound sting.
+        introScreen.classList.remove('pm-enter');
+        void introScreen.offsetWidth;
+        introScreen.classList.add('pm-enter');
+        this.game._playSound?.(isFinal ? 'champion' : 'vs');
 
         // Surface in the bracket panel that THIS match is now the live one
         this._currentMatchIdx = match.id;
@@ -300,6 +311,8 @@ export class TournamentManager {
 
     _showChampion(winner) {
         document.getElementById('t-champ-name').textContent = this._short(winner);
+        const champAva = document.getElementById('t-champ-avatar');
+        if (champAva) { applyAvatar(champAva, winner); champAva.classList.add('show'); }
         const wins = this.bracket.filter(m => m.winner === winner);
         const path = wins.map(m => m.label).join(' → ');
         const finalScore = (() => {

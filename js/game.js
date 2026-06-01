@@ -1101,7 +1101,7 @@ class Game {
     _syncSbAvatar(el, model) {
         if (!el) return;
         if (model) {
-            if (el.dataset.model !== model) applyAvatar(el, model);
+            if (el.dataset.model !== model) applyAvatar(el, model, { cover: false });
             el.style.display = '';
         } else {
             clearAvatar(el);
@@ -2920,8 +2920,15 @@ class Game {
         const mode = world.rounds <= CONFIG.GAME.LIGHTNING_ROUNDS ? 'lightning' : 'standard';
 
         const models = await listOllamaModels();
+        // Exclude non-chat models: embeddings, vision / vision-language, and
+        // code specialists. They either can't follow the game's JSON action
+        // protocol or aren't fair general-reasoning competitors.
+        //   *embed*/nomic/mxbai  → embeddings
+        //   moondream/llava/*-vl → vision & vision-language
+        //   *coder*/codellama    → code specialists
+        const EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
         const eligible = models
-            .filter(m => !m.name.match(/embed|nomic|mxbai|moondream|coder/i))
+            .filter(m => !EXCLUDE.test(m.name))
             .map(m => m.name);
 
         if (eligible.length < 2) {
@@ -2929,9 +2936,27 @@ class Game {
             return;
         }
 
-        // Pad to 8 with random repeats if fewer than 8 models
-        while (eligible.length < 8) eligible.push(eligible[Math.floor(Math.random() * eligible.length)]);
-        const field = eligible.slice(0, 8);
+        // Rank-aware field: take the top 8 eligible models by current ELO so the
+        // strongest installed models make the bracket — instead of whoever
+        // happens to sit first in Ollama's list. Never-played models fall back
+        // to the server's base rating so a fresh install still fields a bracket.
+        const rankings = await fetchRankings().catch(() => null);
+        const norm = (m) => m
+            ? m.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '')
+            : '';
+        const eloLookup = {};
+        if (rankings) {
+            for (const [name, s] of Object.entries(rankings)) eloLookup[norm(name)] = s.elo;
+        }
+        const BASE_ELO = 1000;   // mirrors server.py base rating
+        const field = eligible
+            .map((name, i) => ({ name, i, elo: eloLookup[norm(name)] ?? BASE_ELO }))
+            .sort((a, b) => (b.elo - a.elo) || (a.i - b.i))   // ELO desc, stable on ties
+            .slice(0, 8)
+            .map(x => x.name);
+
+        // Pad to 8 with random repeats if fewer than 8 eligible models.
+        while (field.length < 8) field.push(field[Math.floor(Math.random() * field.length)]);
 
         this.tournament.start(field, mode, world);
     }
