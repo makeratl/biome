@@ -23,7 +23,7 @@ import { openLeaderboard } from './leaderboard.js';
 const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
 import { applyAvatar, clearAvatar, preloadAvatars } from './model-avatar.js';
-import { resolveModel, paramLabel, mightLevel, titleCase } from './model-identity.js';
+import { resolveModel, paramLabel, mightLevel, titleCase, resolvePlayerPalettes } from './model-identity.js';
 import { shortId } from './util.js';
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
@@ -45,6 +45,12 @@ class Game {
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.aiPlayers = {};   // { playerNum: AIPlayer }
         this._aiThinking = false;
+        // Pristine cyan/orange player palette, snapshotted before any match can
+        // mutate CONFIG. Human-vs-human and human slots fall back to these.
+        this._defaultPalettes = {
+            1: { ...CONFIG.PLAYER_1.PRIMARY },
+            2: { ...CONFIG.PLAYER_2.PRIMARY },
+        };
         this._scoreHistory = []; // [{ round, p1, p2 }, ...]
         this._matchResolve = null; // set during tournament games
         this.tournament = new TournamentManager(this);
@@ -296,6 +302,7 @@ class Game {
                 if (action === 'new-match') this._openLauncherWelcome();
                 else if (action === 'manage-models') this._openModelConfigModal();
                 else if (action === 'rankings') document.getElementById('btn-rankings')?.click();
+                else if (action === 'labs') this._openLabsChooser();
                 else if (action === 'field-guide') openCodex();
             });
         }
@@ -1770,8 +1777,8 @@ class Game {
             ctx.fill();
         };
 
-        drawLine('p1', 'hsl(190, 70%, 60%)');
-        drawLine('p2', 'hsl(25, 75%, 62%)');
+        drawLine('p1', `hsl(${CONFIG.PLAYER_1.PRIMARY.h}, 70%, 60%)`);
+        drawLine('p2', `hsl(${CONFIG.PLAYER_2.PRIMARY.h}, 75%, 62%)`);
     }
 
     _updateCensus() {
@@ -2803,6 +2810,10 @@ class Game {
             }
         }
 
+        // Color the board organisms by model identity (anchored higher-rank, with
+        // terrain + collision guards). Runs after AI assignment, before play.
+        await this._applyPlayerPalettes();
+
         // Clear AI cards (banter, reasoning, identity)
         this._resetAICard(1);
         this._resetAICard(2);
@@ -2822,6 +2833,39 @@ class Game {
         this.turns.startGame();
 
         console.log(`Match started: mode=${config.mode}, p1=${config.p1Model || 'human'}, p2=${config.p2Model || 'human'}`);
+    }
+
+    // Map each player's model to its identity hue for the board organisms, then
+    // write the result into CONFIG.PLAYER_x.PRIMARY — the single source the
+    // renderer and organism art already read. Human slots restore the cyan/orange
+    // defaults. The higher-ELO model anchors its true hue on a color collision;
+    // ELO is a best-effort lookup, falling back to anchoring Player 1.
+    async _applyPlayerPalettes() {
+        const p1Model = this.aiPlayers[1]?.model || null;
+        const p2Model = this.aiPlayers[2]?.model || null;
+
+        let anchor = 1;
+        if (p1Model && p2Model) {
+            try {
+                const [r1, r2] = await Promise.all([
+                    this._fetchRanking(p1Model), this._fetchRanking(p2Model),
+                ]);
+                if (r2 && (!r1 || r2.elo > r1.elo)) anchor = 2;
+            } catch (_) { /* anchor stays P1 */ }
+        }
+
+        const pal = resolvePlayerPalettes(p1Model, p2Model, {
+            anchor,
+            fallback: this._defaultPalettes,
+        });
+        Object.assign(CONFIG.PLAYER_1.PRIMARY, pal[1]);
+        Object.assign(CONFIG.PLAYER_2.PRIMARY, pal[2]);
+        // Drive the CSS HUD theme (scoreboard, stat bars, census, towers, etc.)
+        // off the same hues. Rules keep their own sat/light; only the hue swaps.
+        const root = document.documentElement.style;
+        root.setProperty('--p1-hue', pal[1].h);
+        root.setProperty('--p2-hue', pal[2].h);
+        if (this.renderer) this.renderer.render();
     }
 
     _collapseMatchSection() {
@@ -3283,6 +3327,26 @@ class Game {
         document.getElementById('btn-launcher-howto')?.addEventListener('click', () => openCodex());
         document.getElementById('btn-launcher-demo')?.addEventListener('click', () => this._startDemo());
         document.getElementById('btn-launcher-rankings')?.addEventListener('click', () => this._showRankingsScene());
+        document.getElementById('btn-launcher-labs')?.addEventListener('click', () => this._openLabsChooser());
+    }
+
+    // ── Labs chooser ─────────────────────────────────────────
+    // Front door for the standalone labs (AI Vision Lab, Icon/Avatar labs,
+    // Analytics). Each entry is a plain link to its own page; this just toggles
+    // the overlay. Wired once on first open.
+    _openLabsChooser() {
+        const overlay = document.getElementById('labs-overlay');
+        if (!overlay) return;
+        if (!overlay._wired) {
+            overlay._wired = true;
+            for (const c of overlay.querySelectorAll('[data-labs-close]')) {
+                c.addEventListener('click', () => overlay.classList.add('labs-hidden'));
+            }
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') overlay.classList.add('labs-hidden');
+            });
+        }
+        overlay.classList.remove('labs-hidden');
     }
 
     // ── Full-screen leaderboard scene ────────────────────────

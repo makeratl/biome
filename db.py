@@ -343,8 +343,19 @@ def get_dashboard():
             'head_to_head': _head_to_head(conn),
             'factors': _factors(conn),
             'recent': _recent(conn),
+            'match_points': _match_points(conn),
             'highlights': _highlights(conn),
         }
+
+
+def _match_points(conn, limit=1500):
+    """Compact per-match feed for the particle-field panels (biome scores, match
+    conditions, decisiveness). Scores are the players' final ecosystem totals."""
+    rows = conn.execute(
+        """SELECT winner, loser, p1, p2, p1_score, p2_score, margin,
+                  map_size, rounds, mode, played_at
+           FROM matches ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _totals(conn):

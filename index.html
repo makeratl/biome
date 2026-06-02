@@ -162,6 +162,9 @@
                         <button class="hc-menu-item" data-hc-menu="rankings" type="button">
                             <span class="hc-mi-icon">🏆</span><span>Rankings</span>
                         </button>
+                        <button class="hc-menu-item" data-hc-menu="labs" type="button">
+                            <span class="hc-mi-icon">🧪</span><span>Labs</span>
+                        </button>
                         <button class="hc-menu-item" data-hc-menu="manage-models" type="button">
                             <span class="hc-mi-icon">⚙</span><span>Manage Models</span>
                         </button>
@@ -447,6 +450,7 @@
                 <button class="launcher-learn-btn" id="btn-launcher-demo">▶ Learn the game</button>
                 <button class="launcher-learn-btn ghost" id="btn-launcher-howto">❔ How to Play</button>
                 <button class="launcher-learn-btn ghost" id="btn-launcher-rankings">🏆 Rankings</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-labs">🧪 Labs</button>
             </div>
         </div>
 
@@ -608,6 +612,34 @@
             <button id="btn-t-stats-close" class="tsp-close" title="Close">×</button>
         </div>
         <div id="tsp-content" class="tsp-content"></div>
+    </div>
+
+    <!-- Labs chooser overlay — front door for all standalone labs -->
+    <div id="labs-overlay" class="labs-hidden">
+        <div class="labs-backdrop" data-labs-close></div>
+        <div class="labs-panel" role="dialog" aria-modal="true" aria-labelledby="labs-title">
+            <button class="labs-close" data-labs-close aria-label="Close">✕</button>
+            <h2 class="labs-title" id="labs-title">🧪 Labs</h2>
+            <p class="labs-sub">Sandboxes &amp; tools for exploring Biome's AI and art.</p>
+            <div class="labs-list">
+                <a class="labs-card" href="/vision-lab.html">
+                    <span class="labs-card-glyph">👁</span>
+                    <span class="labs-card-text"><b>AI Vision Lab</b><span>Chat with a model about a sandbox map — watch it highlight &amp; reason over the grid.</span></span>
+                </a>
+                <a class="labs-card" href="/lab/icons.html">
+                    <span class="labs-card-glyph">🎨</span>
+                    <span class="labs-card-text"><b>Icon Lab</b><span>Tune the procedural organism art shared by the game and renderer.</span></span>
+                </a>
+                <a class="labs-card" href="/lab/avatars.html">
+                    <span class="labs-card-glyph">🧬</span>
+                    <span class="labs-card-text"><b>Avatar Lab</b><span>Generate per-model biome-creature avatars for every installed model.</span></span>
+                </a>
+                <a class="labs-card" href="/dashboard.html">
+                    <span class="labs-card-glyph">📊</span>
+                    <span class="labs-card-text"><b>Analytics Dashboard</b><span>Live ELO, standings, and match-condition fields across all models.</span></span>
+                </a>
+            </div>
+        </div>
     </div>
 
     <!-- Rankings panel (side drawer) -->

@@ -53,16 +53,62 @@
             <div class="db-lb-scroll"><table class="db-lb" id="db-lb"></table></div>
         </section>
 
-        <!-- Head to head -->
-        <section class="db-card db-h2h">
-            <div class="db-card-head"><h2>Head&nbsp;to&nbsp;Head</h2><span class="db-hint">cell = row's record vs column</span><button class="db-expand" data-panel="h2h" title="Expand">⤢</button></div>
-            <div class="db-h2h-wrap" id="db-h2h"></div>
-        </section>
+        <!-- Particle-field wall — responsive tiles, each a focused visual -->
+        <section class="db-fields">
+            <!-- Performance field — win rate × ELO (the hero, spans wide) -->
+            <section class="db-card db-field db-perf">
+                <div class="db-card-head">
+                    <h2>Performance&nbsp;Field</h2>
+                    <span class="db-hint">win rate × ELO · cluster = games · hue = family</span>
+                    <button class="db-expand" data-panel="cloud" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-cloud"></div>
+            </section>
 
-        <!-- Factor breakdowns -->
-        <section class="db-card db-factors">
-            <div class="db-card-head"><h2>By the Numbers</h2><button class="db-expand" data-panel="factors" title="Expand">⤢</button></div>
-            <div class="db-factor-cols" id="db-factors"></div>
+            <!-- Biome scores — best ecosystem score × ELO -->
+            <section class="db-card db-field">
+                <div class="db-card-head">
+                    <h2>Biome&nbsp;Scores</h2>
+                    <span class="db-hint">best score × ELO · records →</span>
+                    <button class="db-expand" data-panel="biome" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-biome"></div>
+            </section>
+
+            <!-- Match conditions — grouped by map size / rounds -->
+            <section class="db-card db-field">
+                <div class="db-card-head">
+                    <h2>Match&nbsp;Conditions</h2>
+                    <span class="db-seg-mini" id="db-cond-seg">
+                        <button class="db-seg-mini-b on" data-group="map_size">Map size</button>
+                        <button class="db-seg-mini-b" data-group="rounds">Rounds</button>
+                    </span>
+                    <button class="db-expand" data-panel="conditions" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-conditions"></div>
+            </section>
+
+            <!-- Decisiveness — margin × total biomass -->
+            <section class="db-card db-field">
+                <div class="db-card-head">
+                    <h2>Decisiveness</h2>
+                    <span class="db-hint">margin × total biomass</span>
+                    <button class="db-expand" data-panel="decisive" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-decisive"></div>
+            </section>
+
+            <!-- Head to head — locked square heatmap -->
+            <section class="db-card db-field db-h2h">
+                <div class="db-card-head"><h2>Head&nbsp;to&nbsp;Head</h2><button class="db-expand" data-panel="h2h" title="Expand">⤢</button></div>
+                <div class="db-h2h-wrap" id="db-h2h"></div>
+            </section>
+
+            <!-- Factor breakdowns -->
+            <section class="db-card db-field db-factors">
+                <div class="db-card-head"><h2>By the Numbers</h2><button class="db-expand" data-panel="factors" title="Expand">⤢</button></div>
+                <div class="db-factor-cols" id="db-factors"></div>
+            </section>
         </section>
 
         <!-- Recent feed -->

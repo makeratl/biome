@@ -2,6 +2,7 @@
 
 import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
+import { extractJSON } from './util.js';
 
 // How long a warmed/active model is asked to stay resident in Ollama. Long
 // enough to outlast a full match (and the short gap to its next match in a
@@ -553,38 +554,9 @@ JSON format:
         const content = data.message.content?.trim() || '';
         const thinking = data.message.thinking?.trim() || '';
 
-        // Try to extract valid JSON from a string. Approaches, in order:
-        // 1. Direct parse (model obeyed "respond ONLY with JSON")
-        // 2. Strip markdown code fences (```json ... ``` or ``` ... ```)
-        // 3. Brace-matching scan right-to-left (for models that wrap JSON in prose)
-        const extractJSON = (str) => {
-            // Try direct parse first
-            try { return JSON.parse(str); } catch {}
-
-            // Strip markdown code fences
-            const fenced = str.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-            if (fenced) {
-                try { return JSON.parse(fenced[1].trim()); } catch {}
-            }
-
-            // Right-to-left brace scan — get the model's final JSON output
-            const opens = [...str.matchAll(/\{/g)].map(m => m.index).reverse();
-            for (const start of opens) {
-                // Find the matching closing brace by tracking depth
-                let depth = 0;
-                for (let i = start; i < str.length; i++) {
-                    if (str[i] === '{') depth++;
-                    else if (str[i] === '}') depth--;
-                    if (depth === 0) {
-                        try { return JSON.parse(str.slice(start, i + 1)); } catch { break; }
-                    }
-                }
-            }
-            return null;
-        };
-
         // Prefer content field; fall back to thinking field for models that
-        // exhaust their token budget on chain-of-thought
+        // exhaust their token budget on chain-of-thought. extractJSON is the
+        // shared 3-tier parser (direct → strip fences → right-to-left brace scan).
         const result = extractJSON(content) || extractJSON(thinking);
         if (!result) {
             throw new Error(`No valid JSON found in response (content:${content.length}b, thinking:${thinking.length}b)`);

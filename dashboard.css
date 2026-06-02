@@ -90,14 +90,29 @@ body {
 }
 .db-highlights { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .db-elochart { grid-column: 1; }
-.db-leaderboard { grid-column: 2; grid-row: 2 / 4; }
-.db-h2h { grid-column: 1; }
-.db-factors { grid-column: 2; }
+.db-leaderboard { grid-column: 2; }
+.db-fields { grid-column: 1 / -1; }
 .db-recent { grid-column: 1 / -1; }
+
+.db-leaderboard .db-lb-scroll { max-height: 600px; }
+
+/* Fields wall — responsive square-ish tiles; the hero spans full width on top */
+.db-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px;
+}
+.db-field { display: flex; flex-direction: column; }
+.db-field .db-cloud-host { flex: 1; min-height: 300px; height: auto; }
+.db-perf { grid-column: 1 / -1; }
+.db-perf .db-cloud-host { min-height: 340px; }
+/* Head-to-Head: a locked square, centered in its tile — no stretch, no dead space */
+.db-fields .db-h2h .db-h2h-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
 
 @media (max-width: 1040px) {
     .db-grid { grid-template-columns: 1fr; }
-    .db-elochart, .db-leaderboard, .db-h2h, .db-factors, .db-recent { grid-column: 1; grid-row: auto; }
+    .db-elochart, .db-leaderboard, .db-fields, .db-recent { grid-column: 1; }
+    .db-leaderboard .db-lb-scroll { max-height: 520px; }
 }
 
 /* ── Cards ── */
@@ -409,6 +424,22 @@ body.db-modal-open { overflow: hidden; }
 
 .db-modal-body::-webkit-scrollbar { width: 8px; }
 .db-modal-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+
+/* ── Particle fields (cloud panels) ── */
+.db-cloud-host { position: relative; width: 100%; min-height: 300px; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse 80% 80% at 50% 50%, rgba(20,28,52,0.4), rgba(7,8,20,0.2)); }
+
+/* mini segmented toggle inside a card head (Match Conditions group-by) */
+.db-seg-mini { display: inline-flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 7px; padding: 2px; margin-left: auto; }
+.db-seg-mini-b { background: transparent; border: none; color: var(--ink-faint); font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; cursor: pointer; }
+.db-seg-mini-b.on { background: rgba(255,255,255,0.12); color: var(--ink); }
+.db-card-head .db-expand { margin-left: auto; }
+.db-card-head .db-seg-mini + .db-expand { margin-left: 8px; }
+.dd-cloud-canvas { display: block; width: 100%; height: 100%; }
+.dd-cloud-detail { display: flex; flex-direction: column; gap: 10px; }
+.dd-cloud-detail .dd-cloud-host { height: min(68vh, 660px); }
+.dd-cloud-caption { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.02em; }
+.dd-cloud-caption b { color: var(--ink); }
+.dd-cloud-caption .dd-dim { color: var(--ink-faint); }
 
 @media (prefers-reduced-motion: reduce) {
     .db-glyph, .db-live-dot, .db-feed-new, .db-modal-fresh { animation: none; }

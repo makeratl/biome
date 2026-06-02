@@ -303,6 +303,99 @@ export function resolveModel(name) {
     };
 }
 
+// ── Board palettes: organism color = model identity ─────────
+//
+// The game board historically painted Player 1 cyan and Player 2 orange. But the
+// HUD, avatars, and leaderboard all color by the model's identity hue — so the
+// board was the one place that didn't match. resolvePlayerPalettes() maps each
+// player's model to its identity hue for the organisms, with two guards:
+//
+//   1. Terrain legibility — model hues that land in the grassland/fertile green
+//      band would camouflage into the board, so we nudge them clear of it.
+//   2. Collision — same-family models (two Qwens, etc.) resolve to the SAME hue.
+//      When the two players are too close, the higher-ranked model keeps its true
+//      hue (the anchor) and the other is rotated away until they're distinct.
+//
+// Human players have no identity hue, so they fall back to the classic cyan/orange
+// and act as the movable side if a model happens to collide with them.
+
+const TERRAIN_HUES = [80, 130];   // grassland + fertile — see CONFIG.COLORS
+const TERRAIN_GUARD = 18;         // keep organism hues this far from terrain
+const MIN_SEPARATION = 75;        // floor between the two players' hues (so same-family / cool-vs-cool pairs stay distinct after per-species shifts)
+const ORG_SAT = 80, ORG_LIGHT = 58;
+
+const norm360 = (h) => ((h % 360) + 360) % 360;
+function hueDist(a, b) {
+    const d = Math.abs(norm360(a) - norm360(b)) % 360;
+    return d > 180 ? 360 - d : d;
+}
+
+// Push a hue out of the terrain keep-out band(s), to the nearer legal edge.
+function legalizeHue(h, terrainHues = TERRAIN_HUES, guard = TERRAIN_GUARD) {
+    h = norm360(h);
+    for (let iter = 0; iter < 4; iter++) {
+        let moved = false;
+        for (const t of terrainHues) {
+            let diff = norm360(h) - norm360(t);
+            if (diff > 180) diff -= 360;
+            if (diff < -180) diff += 360;
+            if (Math.abs(diff) < guard) {
+                h = norm360(t + (diff >= 0 ? guard : -guard));
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return h;
+}
+
+// Rotate `moveH` away from `anchorH` to at least `floor`, staying terrain-legal
+// and as close to its original hue as possible.
+function separateFrom(anchorH, moveH, floor, terrainHues, guard) {
+    const candidates = [floor, -floor, floor * 1.4, -floor * 1.4, floor * 1.8, -floor * 1.8];
+    let best = null, bestScore = -Infinity;
+    for (const off of candidates) {
+        const legal = legalizeHue(anchorH + off, terrainHues, guard);
+        const sep = hueDist(anchorH, legal);
+        const score = (sep >= floor * 0.9 ? 100 : sep) - hueDist(moveH, legal) * 0.1;
+        if (score > bestScore) { bestScore = score; best = legal; }
+    }
+    return best;
+}
+
+// Resolve the two board palettes for a match. `p1Model`/`p2Model` are model names
+// (or null for a human). Returns { 1: {h,s,l}, 2: {h,s,l} }.
+export function resolvePlayerPalettes(p1Model, p2Model, opts = {}) {
+    const {
+        anchor = 1,                 // which player keeps its true hue on collision (both-model case)
+        fallback = { 1: { h: 190, s: 80, l: 58 }, 2: { h: 25, s: 85, l: 60 } },
+        terrainHues = TERRAIN_HUES,
+        guard = TERRAIN_GUARD,
+        minSeparation = MIN_SEPARATION,
+    } = opts;
+
+    const slot = (model, fb) => model
+        ? { h: legalizeHue(resolveModel(model).hue, terrainHues, guard), s: ORG_SAT, l: ORG_LIGHT }
+        : { ...fb };
+    const p1 = slot(p1Model, fallback[1]);
+    const p2 = slot(p2Model, fallback[2]);
+
+    // Enforce a minimum hue gap between the two sides. Anchor the slot whose
+    // color carries identity (a model), preferring the chosen one when both do;
+    // a human's generic color is always the one that yields.
+    if (hueDist(p1.h, p2.h) < minSeparation) {
+        let anchorSlot;
+        if (p1Model && p2Model) anchorSlot = anchor === 2 ? 2 : 1;
+        else if (p1Model) anchorSlot = 1;
+        else if (p2Model) anchorSlot = 2;
+        else anchorSlot = 1;
+        const keep = anchorSlot === 2 ? p2 : p1;
+        const move = anchorSlot === 2 ? p1 : p2;
+        move.h = separateFrom(keep.h, move.h, minSeparation, terrainHues, guard);
+    }
+    return { 1: p1, 2: p2 };
+}
+
 // Build the image-generation prompt for a resolved model + chosen visual style.
 // The cyber-organic blend is the headline style; the pure styles are for the lab
 // to compare against. STYLE_PRESETS describes the suffix + the Comfy LoRA to use.

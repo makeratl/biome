@@ -9,6 +9,11 @@
 import { resolveModel, paramLabel } from './model-identity.js';
 import { applyAvatar, preloadAvatars } from './model-avatar.js';
 import { initDetail, notifyDetail, openModel } from './dashboard-detail.js';
+import { createField, perfSpec, biomeSpec, conditionsSpec, decisivenessSpec } from './dashboard-cloud.js';
+
+const ELO_SUMMARY_TOP = 15;   // summary ELO chart shows the leaders; detail shows all
+const fields = {};            // ambient particle fields on the summary panels
+let condGroup = 'map_size';   // Match Conditions group-by toggle
 
 const POLL_MS = 4000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -71,6 +76,16 @@ function render(data) {
     renderH2H(data.head_to_head, data.leaderboard);
     renderFactors(data.factors);
     renderFeed(data.recent, newMatch);
+    renderFields(data);
+}
+
+function renderFields(data) {
+    if (!$('db-cloud')) return;
+    if (!fields.perf) fields.perf = createField($('db-cloud'), { spec: perfSpec() });
+    if (!fields.biome) fields.biome = createField($('db-biome'), { spec: biomeSpec() });
+    if (!fields.conditions) fields.conditions = createField($('db-conditions'), { spec: conditionsSpec(condGroup) });
+    if (!fields.decisive) fields.decisive = createField($('db-decisive'), { spec: decisivenessSpec() });
+    for (const f of Object.values(fields)) f.update(data);
 }
 
 function renderEmpty() {
@@ -80,9 +95,10 @@ function renderEmpty() {
             <div class="db-empty-head">Waiting for the first match</div>
             <div class="db-empty-sub">Start a tournament or a ranked Solo/Watch game — this board fills in live as results land.</div>
         </div>`;
-    for (const id of ['db-legend', 'db-h2h', 'db-factors', 'db-feed']) $(id).innerHTML = '';
+    for (const id of ['db-legend', 'db-h2h', 'db-factors', 'db-feed'] ) $(id).innerHTML = '';
     $('db-lb').innerHTML = '';
     $('db-elo-svg').innerHTML = '';
+    for (const k of Object.keys(fields)) { fields[k]?.destroy(); delete fields[k]; }
 }
 
 // ── highlight cards ──────────────────────────────────────────
@@ -123,13 +139,15 @@ function renderEloChart(timeline, leaderboard) {
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.innerHTML = '';
 
-    const models = Object.keys(timeline);
-    if (!models.length) return;
+    // Summary chart focuses on the leaders — the full field is in the detail view.
+    const shown = leaderboard.map(r => r.model).filter(mm => timeline[mm]).slice(0, ELO_SUMMARY_TOP);
+    if (!shown.length) return;
+    const hiddenCount = leaderboard.filter(r => timeline[r.model]).length - shown.length;
 
     // Prepend the implicit 1000 origin so every line starts from the baseline.
     const series = {};
     let xMax = 1, yMin = Infinity, yMax = -Infinity;
-    for (const model of models) {
+    for (const model of shown) {
         const pts = [{ n: 0, elo: 1000 }, ...timeline[model].map(p => ({ n: p.n, elo: p.elo }))];
         series[model] = pts;
         for (const p of pts) { xMax = Math.max(xMax, p.n); yMin = Math.min(yMin, p.elo); yMax = Math.max(yMax, p.elo); }
@@ -156,9 +174,10 @@ function renderEloChart(timeline, leaderboard) {
         text(svg, x, H - m.b + 18, Math.round(v), 'db-axis-label', 'middle');
     }
     text(svg, m.l, H - 6, 'games played →', 'db-axis-title', 'start');
+    if (hiddenCount > 0) text(svg, W - m.r, H - 6, `top ${ELO_SUMMARY_TOP} · +${hiddenCount} more in detail →`, 'db-axis-title', 'end');
 
     // Draw lines (dim non-isolated when isolating)
-    const ranked = leaderboard.map(r => r.model).filter(mm => series[mm]);
+    const ranked = shown;
     for (const model of ranked) {
         const pts = series[model];
         const hue = hueOf(model);
@@ -250,7 +269,7 @@ function renderLeaderboard(rows) {
 
 // ── head-to-head heatmap ─────────────────────────────────────
 function renderH2H(pairs, leaderboard) {
-    const models = leaderboard.slice(0, 10).map(r => r.model);
+    const models = leaderboard.slice(0, 8).map(r => r.model);   // compact square for the tile; full grid in detail
     if (models.length < 2) { $('db-h2h').innerHTML = '<div class="db-mini-empty">Not enough matchups yet</div>'; return; }
 
     // Build lookup: wins[a][b] = times a beat b
@@ -391,6 +410,14 @@ document.addEventListener('click', (e) => {
     if (!el) return;
     openModel(el.dataset.openModel);
 });
+
+// Match Conditions group-by toggle (map size ↔ rounds)
+const condSeg = $('db-cond-seg');
+if (condSeg) condSeg.querySelectorAll('.db-seg-mini-b').forEach(b => b.addEventListener('click', () => {
+    condGroup = b.dataset.group;
+    condSeg.querySelectorAll('.db-seg-mini-b').forEach(x => x.classList.toggle('on', x === b));
+    if (fields.conditions) { fields.conditions.setSpec(conditionsSpec(condGroup)); if (lastData) fields.conditions.update(lastData); }
+}));
 
 // ── go ───────────────────────────────────────────────────────
 initDetail(() => lastData);

@@ -1,5 +1,15 @@
 /* Biome — game styles */
 
+/* Per-player hue. Defaults to the classic cyan (P1) / orange (P2); the game
+   overrides --p1-hue / --p2-hue per match from each model's identity color so
+   the whole HUD — scoreboard, stat bars, score graph, census, towers — matches
+   the board organisms and the player cards. Saturation/lightness stay per-rule
+   so everything keeps its tuned contrast on the dark UI. */
+:root {
+    --p1-hue: 190;
+    --p2-hue: 25;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -395,12 +405,12 @@ body {
     border-left: 3px solid transparent;
 }
 .census-player.p1 {
-    background: linear-gradient(to right, hsla(190, 70%, 50%, 0.08), transparent);
-    border-left-color: hsl(190, 70%, 50%);
+    background: linear-gradient(to right, hsla(var(--p1-hue), 70%, 50%, 0.08), transparent);
+    border-left-color: hsl(var(--p1-hue), 70%, 50%);
 }
 .census-player.p2 {
-    background: linear-gradient(to right, hsla(25, 75%, 52%, 0.08), transparent);
-    border-left-color: hsl(25, 75%, 52%);
+    background: linear-gradient(to right, hsla(var(--p2-hue), 75%, 52%, 0.08), transparent);
+    border-left-color: hsl(var(--p2-hue), 75%, 52%);
 }
 
 .census-label {
@@ -412,8 +422,8 @@ body {
     border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
-.census-player.p1 .census-label { color: hsl(190, 80%, 65%); }
-.census-player.p2 .census-label { color: hsl(25, 85%, 67%); }
+.census-player.p1 .census-label { color: hsl(var(--p1-hue), 80%, 65%); }
+.census-player.p2 .census-label { color: hsl(var(--p2-hue), 85%, 67%); }
 
 /* Census magnitude bar — visible behind each top-level row */
 .info-row.bar-row {
@@ -437,8 +447,8 @@ body {
     position: relative;
     z-index: 1;
 }
-.census-player.p1 .info-row.bar-row { --bar-color: hsla(190, 70%, 50%, 0.14); }
-.census-player.p2 .info-row.bar-row { --bar-color: hsla(25, 75%, 52%, 0.14); }
+.census-player.p1 .info-row.bar-row { --bar-color: hsla(var(--p1-hue), 70%, 50%, 0.14); }
+.census-player.p2 .info-row.bar-row { --bar-color: hsla(var(--p2-hue), 75%, 52%, 0.14); }
 
 /* Species cards (Phase 2+) */
 .species-card {
@@ -491,8 +501,8 @@ body {
     border-left: 2px solid rgba(255,255,255,0.05);
     margin-bottom: 1px;
 }
-.action-log .entry.p1 { border-left-color: hsla(190, 70%, 50%, 0.5); }
-.action-log .entry.p2 { border-left-color: hsla(25, 75%, 52%, 0.5); }
+.action-log .entry.p1 { border-left-color: hsla(var(--p1-hue), 70%, 50%, 0.5); }
+.action-log .entry.p2 { border-left-color: hsla(var(--p2-hue), 75%, 52%, 0.5); }
 .action-log .entry.system { border-left-color: rgba(255, 255, 255, 0.15); color: #9a9abe; }
 
 /* ── Match section: segmented mode switcher ─────────────────── */
@@ -630,8 +640,8 @@ body {
     text-transform: uppercase;
     margin-bottom: 3px;
 }
-.mmp-label.p1 { color: hsl(190, 70%, 60%); }
-.mmp-label.p2 { color: hsl(25, 75%, 62%); }
+.mmp-label.p1 { color: hsl(var(--p1-hue), 70%, 60%); }
+.mmp-label.p2 { color: hsl(var(--p2-hue), 75%, 62%); }
 
 /* Live avatar preview beside a model picker (the select can't hold an image). */
 .mmp-row { display: flex; align-items: center; gap: 8px; }
@@ -641,8 +651,8 @@ body {
     clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
     background: linear-gradient(135deg, hsl(var(--bh, 210), 55%, 56%), hsl(var(--bh, 210), 48%, 40%));
 }
-.mmp-ava.p1 { box-shadow: inset 0 0 0 2px hsl(190, 70%, 55%); }
-.mmp-ava.p2 { box-shadow: inset 0 0 0 2px hsl(25, 75%, 55%); }
+.mmp-ava.p1 { box-shadow: inset 0 0 0 2px hsl(var(--p1-hue), 70%, 55%); }
+.mmp-ava.p2 { box-shadow: inset 0 0 0 2px hsl(var(--p2-hue), 75%, 55%); }
 
 .match-model-picker {
     width: 100%;
@@ -663,8 +673,8 @@ body {
 }
 .match-model-picker:hover { border-color: #4a4a7e; }
 .match-model-picker:focus { outline: none; border-color: #c8a86e; }
-.match-model-picker.p1 { border-left: 3px solid hsl(190, 70%, 50%); }
-.match-model-picker.p2 { border-left: 3px solid hsl(25, 75%, 52%); }
+.match-model-picker.p1 { border-left: 3px solid hsl(var(--p1-hue), 70%, 50%); }
+.match-model-picker.p2 { border-left: 3px solid hsl(var(--p2-hue), 75%, 52%); }
 
 /* ── Match section: blurb (tournament mode) ────────────────── */
 .mt-blurb {
@@ -841,8 +851,8 @@ body {
     gap: 6px;
     background: rgba(10, 10, 26, 0.85);
     backdrop-filter: blur(6px);
-    border: 1px solid hsla(190, 70%, 50%, 0.35);
-    border-left: 3px solid hsl(190, 70%, 55%);
+    border: 1px solid hsla(var(--p1-hue), 70%, 50%, 0.35);
+    border-left: 3px solid hsl(var(--p1-hue), 70%, 55%);
     border-radius: 6px;
     padding: 8px 12px;
     box-shadow: 0 4px 14px rgba(0,0,0,0.4);
@@ -850,17 +860,17 @@ body {
     font-family: inherit;
 }
 .ap-chip.p2 {
-    border-color: hsla(25, 75%, 52%, 0.35);
-    border-left-color: hsl(25, 75%, 55%);
+    border-color: hsla(var(--p2-hue), 75%, 52%, 0.35);
+    border-left-color: hsl(var(--p2-hue), 75%, 55%);
 }
 .ap-chip-label {
     font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.16em;
-    color: hsl(190, 70%, 65%);
+    color: hsl(var(--p1-hue), 70%, 65%);
     text-transform: uppercase;
 }
-.ap-chip.p2 .ap-chip-label { color: hsl(25, 75%, 65%); }
+.ap-chip.p2 .ap-chip-label { color: hsl(var(--p2-hue), 75%, 65%); }
 .ap-chip-value {
     font-size: 22px;
     font-weight: 900;
@@ -1059,12 +1069,12 @@ body {
 }
 .sb-bar {
     position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
-    background: linear-gradient(90deg, hsl(25, 80%, 52%), hsl(10, 72%, 46%));  /* P2 track */
+    background: linear-gradient(90deg, hsl(var(--p2-hue), 80%, 52%), hsl(calc(var(--p2-hue) - 15), 72%, 46%));  /* P2 track */
     overflow: hidden;
 }
 .sb-bar-p1 {
     position: absolute; left: 0; top: 0; bottom: 0; width: 50%;
-    background: linear-gradient(90deg, hsl(190, 72%, 50%), hsl(170, 66%, 44%));  /* P1 fill */
+    background: linear-gradient(90deg, hsl(var(--p1-hue), 72%, 50%), hsl(calc(var(--p1-hue) - 20), 66%, 44%));  /* P1 fill */
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5);
     transition: width 0.55s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
@@ -1081,15 +1091,15 @@ body {
 }
 .sb-player.p1 .sb-name { text-align: right; }
 .sb-player.p2 .sb-name { text-align: left; }
-.sb-player.p1 .sb-name { color: hsl(190, 70%, 55%); }
-.sb-player.p2 .sb-name { color: hsl(25, 75%, 58%); }
+.sb-player.p1 .sb-name { color: hsl(var(--p1-hue), 70%, 55%); }
+.sb-player.p2 .sb-name { color: hsl(var(--p2-hue), 75%, 58%); }
 .sb-score {
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.02em;
 }
-.sb-player.p1 .sb-score { color: hsl(190, 70%, 65%); }
-.sb-player.p2 .sb-score { color: hsl(25, 75%, 65%); }
+.sb-player.p1 .sb-score { color: hsl(var(--p1-hue), 70%, 65%); }
+.sb-player.p2 .sb-score { color: hsl(var(--p2-hue), 75%, 65%); }
 .sb-score.winning { filter: brightness(1.25); }
 .sb-middle {
     display: flex;
@@ -1115,12 +1125,12 @@ body {
     --lead-intensity: 0;
 }
 .sb-lead.p1 {
-    color: hsl(190, 70%, 60%);
-    text-shadow: 0 0 calc(8px * var(--lead-intensity)) hsla(190, 80%, 60%, calc(0.5 + 0.5 * var(--lead-intensity)));
+    color: hsl(var(--p1-hue), 70%, 60%);
+    text-shadow: 0 0 calc(8px * var(--lead-intensity)) hsla(var(--p1-hue), 80%, 60%, calc(0.5 + 0.5 * var(--lead-intensity)));
 }
 .sb-lead.p2 {
-    color: hsl(25, 75%, 60%);
-    text-shadow: 0 0 calc(8px * var(--lead-intensity)) hsla(25, 80%, 60%, calc(0.5 + 0.5 * var(--lead-intensity)));
+    color: hsl(var(--p2-hue), 75%, 60%);
+    text-shadow: 0 0 calc(8px * var(--lead-intensity)) hsla(var(--p2-hue), 80%, 60%, calc(0.5 + 0.5 * var(--lead-intensity)));
 }
 .sb-lead.tied { color: rgba(255,255,255,0.4); }
 
@@ -1143,12 +1153,12 @@ body {
     opacity: 0.55;
 }
 .sb-odds.p1 {
-    color: hsl(190, 70%, 60%);
-    text-shadow: 0 0 7px hsla(190, 80%, 60%, 0.45);
+    color: hsl(var(--p1-hue), 70%, 60%);
+    text-shadow: 0 0 7px hsla(var(--p1-hue), 80%, 60%, 0.45);
 }
 .sb-odds.p2 {
-    color: hsl(25, 75%, 60%);
-    text-shadow: 0 0 7px hsla(25, 80%, 60%, 0.45);
+    color: hsl(var(--p2-hue), 75%, 60%);
+    text-shadow: 0 0 7px hsla(var(--p2-hue), 80%, 60%, 0.45);
 }
 .sb-odds.even { color: rgba(255, 255, 255, 0.5); }
 
@@ -1184,8 +1194,8 @@ body {
 .sb-score.score-flash {
     animation: score-flash-anim 0.5s ease-out;
 }
-.sb-player.p1 .sb-score.score-flash { --flash-color: hsl(190, 80%, 60%); }
-.sb-player.p2 .sb-score.score-flash { --flash-color: hsl(25, 80%, 60%); }
+.sb-player.p1 .sb-score.score-flash { --flash-color: hsl(var(--p1-hue), 80%, 60%); }
+.sb-player.p2 .sb-score.score-flash { --flash-color: hsl(var(--p2-hue), 80%, 60%); }
 @keyframes score-flash-anim {
     0%   { text-shadow: 0 0 0 var(--flash-color); transform: scale(1); }
     35%  { text-shadow: 0 0 18px var(--flash-color); transform: scale(1.12); }
@@ -1688,12 +1698,12 @@ body {
     border-radius: 2px;
 }
 .bt-bar.bt-p1 .bt-fill {
-    background: linear-gradient(90deg, hsla(190, 70%, 55%, 0.25), hsl(190, 80%, 55%));
-    box-shadow: 0 0 6px hsla(190, 80%, 55%, 0.4);
+    background: linear-gradient(90deg, hsla(var(--p1-hue), 70%, 55%, 0.25), hsl(var(--p1-hue), 80%, 55%));
+    box-shadow: 0 0 6px hsla(var(--p1-hue), 80%, 55%, 0.4);
 }
 .bt-bar.bt-p2 .bt-fill {
-    background: linear-gradient(90deg, hsl(25, 85%, 55%), hsla(25, 75%, 55%, 0.25));
-    box-shadow: 0 0 6px hsla(25, 85%, 55%, 0.4);
+    background: linear-gradient(90deg, hsl(var(--p2-hue), 85%, 55%), hsla(var(--p2-hue), 75%, 55%, 0.25));
+    box-shadow: 0 0 6px hsla(var(--p2-hue), 85%, 55%, 0.4);
 }
 .bt-count {
     position: absolute;
@@ -1739,8 +1749,8 @@ body {
     letter-spacing: 0.1em;
     color: rgba(255, 255, 255, 0.4);
 }
-.bt-health.bt-health-p1 .bt-h-tag { color: hsl(190, 70%, 60%); }
-.bt-health.bt-health-p2 .bt-h-tag { color: hsl(25, 75%, 60%); }
+.bt-health.bt-health-p1 .bt-h-tag { color: hsl(var(--p1-hue), 70%, 60%); }
+.bt-health.bt-health-p2 .bt-h-tag { color: hsl(var(--p2-hue), 75%, 60%); }
 .bt-h-icon { font-size: 11px; line-height: 1; }
 
 .bt-health[data-state="ok"] {
@@ -1830,8 +1840,8 @@ body {
     border-radius: 50%;
     flex-shrink: 0;
 }
-.ct-org-dot.p1 { background: hsl(190, 80%, 60%); box-shadow: 0 0 4px hsla(190, 80%, 60%, 0.5); }
-.ct-org-dot.p2 { background: hsl(25, 85%, 60%); box-shadow: 0 0 4px hsla(25, 85%, 60%, 0.5); }
+.ct-org-dot.p1 { background: hsl(var(--p1-hue), 80%, 60%); box-shadow: 0 0 4px hsla(var(--p1-hue), 80%, 60%, 0.5); }
+.ct-org-dot.p2 { background: hsl(var(--p2-hue), 85%, 60%); box-shadow: 0 0 4px hsla(var(--p2-hue), 85%, 60%, 0.5); }
 .ct-org-name { flex: 1; }
 .ct-org-energy {
     font-size: 10px;
@@ -1907,11 +1917,11 @@ body {
     animation: at-slidein 0.32s cubic-bezier(0.2, 0.9, 0.4, 1) forwards;
     text-align: left;
 }
-.at-entry.p1 { border-left-color: hsl(190, 80%, 50%); }
-.at-entry.p2 { border-left-color: hsl(25, 85%, 55%); }
+.at-entry.p1 { border-left-color: hsl(var(--p1-hue), 80%, 50%); }
+.at-entry.p2 { border-left-color: hsl(var(--p2-hue), 85%, 55%); }
 .at-entry.system { border-left-color: rgba(255, 255, 255, 0.2); }
-.at-entry.p1 .at-text { color: hsl(190, 75%, 78%); }
-.at-entry.p2 .at-text { color: hsl(25, 80%, 75%); }
+.at-entry.p1 .at-text { color: hsl(var(--p1-hue), 75%, 78%); }
+.at-entry.p2 .at-text { color: hsl(var(--p2-hue), 80%, 75%); }
 .at-entry.system .at-text { color: rgba(255, 255, 255, 0.6); }
 .at-text {
     font-size: 11px;
@@ -1995,8 +2005,8 @@ body {
     color: rgba(255, 255, 255, 0.7);
     line-height: 1.4;
 }
-.alm-entry.p1 { border-left-color: hsl(190, 80%, 50%); color: hsl(190, 75%, 80%); }
-.alm-entry.p2 { border-left-color: hsl(25, 85%, 55%); color: hsl(25, 80%, 78%); }
+.alm-entry.p1 { border-left-color: hsl(var(--p1-hue), 80%, 50%); color: hsl(var(--p1-hue), 75%, 80%); }
+.alm-entry.p2 { border-left-color: hsl(var(--p2-hue), 85%, 55%); color: hsl(var(--p2-hue), 80%, 78%); }
 .alm-entry.system { border-left-color: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.5); }
 .alm-time {
     font-size: 9px;
@@ -2293,14 +2303,14 @@ body {
 .ai-overlay.p1 {
     left: 14px;
     right: auto;
-    border-left: 3px solid hsl(190, 70%, 50%);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(190, 70%, 50%, 0);
+    border-left: 3px solid hsl(var(--p1-hue), 70%, 50%);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(var(--p1-hue), 70%, 50%, 0);
 }
 .ai-overlay.p2 {
     right: 14px;
     left: auto;
-    border-right: 3px solid hsl(25, 75%, 52%);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(25, 75%, 52%, 0);
+    border-right: 3px solid hsl(var(--p2-hue), 75%, 52%);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 0 hsla(var(--p2-hue), 75%, 52%, 0);
 }
 
 /* Header: avatar + name + status */
@@ -2491,8 +2501,8 @@ body {
     min-height: 64px;
 }
 /* Player color tokens (used by particles + avatar pulse) */
-.ai-overlay.p1 { --quote-color: hsl(190, 70%, 65%); }
-.ai-overlay.p2 { --quote-color: hsl(25, 75%, 65%); }
+.ai-overlay.p1 { --quote-color: hsl(var(--p1-hue), 70%, 65%); }
+.ai-overlay.p2 { --quote-color: hsl(var(--p2-hue), 75%, 65%); }
 /* During thinking, give the bubble room for particles to fill */
 .aic-banter-wrap:has(.ai-banter-text.thinking) {
     min-height: 120px;
@@ -2544,7 +2554,7 @@ body {
     position: absolute;
     width: 4px;
     height: 4px;
-    background: var(--quote-color, hsl(190, 70%, 65%));
+    background: var(--quote-color, hsl(var(--p1-hue), 70%, 65%));
     border-radius: 50%;
     box-shadow: 0 0 6px var(--quote-color), 0 0 14px var(--quote-color);
     opacity: 0;
@@ -2749,11 +2759,11 @@ body {
 }
 
 .action-log .entry.banter.p1 {
-    border-color: hsl(190, 80%, 50%);
+    border-color: hsl(var(--p1-hue), 80%, 50%);
 }
 
 .action-log .entry.banter.p2 {
-    border-color: hsl(25, 85%, 50%);
+    border-color: hsl(var(--p2-hue), 85%, 50%);
 }
 
 .action-log .entry.strategy {
@@ -2779,12 +2789,12 @@ body {
     overflow: hidden;
 }
 .player-card.p1 {
-    border-color: hsl(190, 70%, 45%);
-    box-shadow: 0 6px 24px hsla(190, 70%, 45%, 0.2);
+    border-color: hsl(var(--p1-hue), 70%, 45%);
+    box-shadow: 0 6px 24px hsla(var(--p1-hue), 70%, 45%, 0.2);
 }
 .player-card.p2 {
-    border-color: hsl(25, 75%, 50%);
-    box-shadow: 0 6px 24px hsla(25, 75%, 50%, 0.2);
+    border-color: hsl(var(--p2-hue), 75%, 50%);
+    box-shadow: 0 6px 24px hsla(var(--p2-hue), 75%, 50%, 0.2);
 }
 .player-card.p1::before,
 .player-card.p2::before {
@@ -2793,8 +2803,8 @@ body {
     top: 0; left: 0; right: 0;
     height: 4px;
 }
-.player-card.p1::before { background: linear-gradient(to right, hsl(190, 80%, 60%), hsl(170, 70%, 55%)); }
-.player-card.p2::before { background: linear-gradient(to right, hsl(25, 85%, 60%), hsl(10, 75%, 55%)); }
+.player-card.p1::before { background: linear-gradient(to right, hsl(var(--p1-hue), 80%, 60%), hsl(calc(var(--p1-hue) - 20), 70%, 55%)); }
+.player-card.p2::before { background: linear-gradient(to right, hsl(var(--p2-hue), 85%, 60%), hsl(calc(var(--p2-hue) - 15), 75%, 55%)); }
 
 .pc-avatar {
     width: 64px;
@@ -2811,12 +2821,12 @@ body {
     text-shadow: 0 1px 2px rgba(0,0,0,0.4);
 }
 .player-card.p1 .pc-avatar {
-    --avatar-from: hsl(190, 70%, 55%);
-    --avatar-to:   hsl(170, 65%, 45%);
+    --avatar-from: hsl(var(--p1-hue), 70%, 55%);
+    --avatar-to:   hsl(calc(var(--p1-hue) - 20), 65%, 45%);
 }
 .player-card.p2 .pc-avatar {
-    --avatar-from: hsl(25, 80%, 60%);
-    --avatar-to:   hsl(10, 70%, 50%);
+    --avatar-from: hsl(var(--p2-hue), 80%, 60%);
+    --avatar-to:   hsl(calc(var(--p2-hue) - 15), 70%, 50%);
 }
 /* Baked cyber-organic portrait fills the hex; initials hide behind it. */
 .pc-avatar.has-avatar { color: transparent; text-shadow: none; }
@@ -2828,8 +2838,8 @@ body {
     color: rgba(255,255,255,0.4);
     text-transform: uppercase;
 }
-.player-card.p1 .pc-role { color: hsl(190, 70%, 65%); }
-.player-card.p2 .pc-role { color: hsl(25, 75%, 65%); }
+.player-card.p1 .pc-role { color: hsl(var(--p1-hue), 70%, 65%); }
+.player-card.p2 .pc-role { color: hsl(var(--p2-hue), 75%, 65%); }
 
 .pc-name {
     font-size: 16px;
@@ -2913,22 +2923,22 @@ body {
    solo/watch prematch AND the tournament match intro (both use .prematch-row). */
 .prematch-row .pc-avatar { width: 104px; height: 104px; font-size: 42px; }
 .prematch-row .player-card.p1 .pc-avatar.has-avatar {
-    box-shadow: inset 0 0 0 3px hsl(190, 72%, 60%);
-    filter: drop-shadow(0 0 14px hsla(190, 72%, 55%, 0.55));
+    box-shadow: inset 0 0 0 3px hsl(var(--p1-hue), 72%, 60%);
+    filter: drop-shadow(0 0 14px hsla(var(--p1-hue), 72%, 55%, 0.55));
 }
 .prematch-row .player-card.p2 .pc-avatar.has-avatar {
-    box-shadow: inset 0 0 0 3px hsl(25, 82%, 62%);
-    filter: drop-shadow(0 0 14px hsla(25, 82%, 58%, 0.55));
+    box-shadow: inset 0 0 0 3px hsl(var(--p2-hue), 82%, 62%);
+    filter: drop-shadow(0 0 14px hsla(var(--p2-hue), 82%, 58%, 0.55));
 }
 
 /* Championship final — step it up: bigger portraits, gold aura on the VS clash
    and the match label, a heavier slam. */
 .t-intro-champ .prematch-row .pc-avatar { width: 144px; height: 144px; font-size: 56px; }
 .t-intro-champ .player-card.p1 .pc-avatar.has-avatar {
-    filter: drop-shadow(0 0 20px hsla(190, 72%, 55%, 0.6)) drop-shadow(0 0 34px hsla(45, 90%, 60%, 0.45));
+    filter: drop-shadow(0 0 20px hsla(var(--p1-hue), 72%, 55%, 0.6)) drop-shadow(0 0 34px hsla(45, 90%, 60%, 0.45));
 }
 .t-intro-champ .player-card.p2 .pc-avatar.has-avatar {
-    filter: drop-shadow(0 0 20px hsla(25, 82%, 58%, 0.6)) drop-shadow(0 0 34px hsla(45, 90%, 60%, 0.45));
+    filter: drop-shadow(0 0 20px hsla(var(--p2-hue), 82%, 58%, 0.6)) drop-shadow(0 0 34px hsla(45, 90%, 60%, 0.45));
 }
 .t-intro-champ .prematch-vs {
     font-size: 56px; color: hsl(45, 92%, 72%);
@@ -2986,8 +2996,8 @@ body {
    warming resolves and the class is removed — so the effect lasts exactly as
    long as the load actually takes. Pseudo-element / avatar driven so it never
    clashes with the one-shot .pm-enter slam on the cards themselves. */
-.t-warming .player-card.p1 .pc-avatar { --warm-glow: 190 90% 55%; }
-.t-warming .player-card.p2 .pc-avatar { --warm-glow: 22 90% 56%; }
+.t-warming .player-card.p1 .pc-avatar { --warm-glow: var(--p1-hue) 90% 55%; }
+.t-warming .player-card.p2 .pc-avatar { --warm-glow: var(--p2-hue) 90% 56%; }
 .t-warming .pc-avatar {
     animation: warm-charge 1.5s ease-in-out infinite;
     will-change: transform, filter;
@@ -3034,8 +3044,8 @@ body {
 .t-warming .t-intro-note {
     color: transparent;
     background: linear-gradient(100deg,
-        hsl(190,80%,70%) 0%, rgba(255,255,255,0.96) 30%,
-        hsl(22,85%,66%) 60%, hsl(190,80%,70%) 100%);
+        hsl(var(--p1-hue),80%,70%) 0%, rgba(255,255,255,0.96) 30%,
+        hsl(22,85%,66%) 60%, hsl(var(--p1-hue),80%,70%) 100%);
     background-size: 220% 100%;
     -webkit-background-clip: text;
     background-clip: text;
@@ -3058,7 +3068,7 @@ body {
     height: 2px;
     transform: translateX(-50%);
     border-radius: 2px;
-    background: linear-gradient(90deg, transparent, hsl(190,80%,60%), hsl(22,85%,58%), transparent);
+    background: linear-gradient(90deg, transparent, hsl(var(--p1-hue),80%,60%), hsl(22,85%,58%), transparent);
     background-size: 200% 100%;
     animation: warm-bar 1.3s linear infinite;
 }
@@ -3295,7 +3305,7 @@ body {
      --aur-1 / --aur-2  ribbon hues   --aur-glow  centre pool */
 .event-stage {
     /* Cool default — teal × violet, calm and premium */
-    --aur-1: hsl(190, 85%, 52%);
+    --aur-1: hsl(var(--p1-hue), 85%, 52%);
     --aur-2: hsl(265, 75%, 58%);
     --aur-glow: hsla(220, 80%, 50%, 0.18);
     position: relative;
@@ -3894,8 +3904,8 @@ body.event-promote #game-over-overlay {
     font-weight: 800;
     letter-spacing: -0.02em;
 }
-.t-m-p1 { color: hsl(190, 70%, 65%); }
-.t-m-p2 { color: hsl(25, 75%, 65%); }
+.t-m-p1 { color: hsl(var(--p1-hue), 70%, 65%); }
+.t-m-p2 { color: hsl(var(--p2-hue), 75%, 65%); }
 .t-vs {
     font-size: 20px;
     font-weight: 900;
@@ -4512,18 +4522,18 @@ body.event-promote #game-over-overlay {
 }
 
 #callout.tone-p1 .co-text {
-    background: linear-gradient(135deg, hsl(190, 80%, 70%), hsl(170, 70%, 55%));
+    background: linear-gradient(135deg, hsl(var(--p1-hue), 80%, 70%), hsl(calc(var(--p1-hue) - 20), 70%, 55%));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    --co-glow: hsla(190, 80%, 60%, 0.5);
+    --co-glow: hsla(var(--p1-hue), 80%, 60%, 0.5);
 }
 #callout.tone-p2 .co-text {
-    background: linear-gradient(135deg, hsl(25, 85%, 65%), hsl(10, 75%, 55%));
+    background: linear-gradient(135deg, hsl(var(--p2-hue), 85%, 65%), hsl(calc(var(--p2-hue) - 15), 75%, 55%));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    --co-glow: hsla(25, 85%, 60%, 0.5);
+    --co-glow: hsla(var(--p2-hue), 85%, 60%, 0.5);
 }
 #callout.tone-alert .co-text {
     background: linear-gradient(135deg, hsl(0, 80%, 65%), hsl(15, 85%, 55%));
@@ -4652,8 +4662,8 @@ body.event-promote #game-over-overlay {
     font-size: 12px;
     padding: 1px 0;
 }
-.rc-line.rc-p1 { color: hsl(190, 70%, 70%); }
-.rc-line.rc-p2 { color: hsl(25, 75%, 70%); }
+.rc-line.rc-p1 { color: hsl(var(--p1-hue), 70%, 70%); }
+.rc-line.rc-p2 { color: hsl(var(--p2-hue), 75%, 70%); }
 .rc-line .rc-tag {
     font-size: 9px;
     font-weight: 800;
@@ -4662,8 +4672,8 @@ body.event-promote #game-over-overlay {
     border-radius: 3px;
     padding: 1px 5px;
 }
-.rc-line.rc-p1 .rc-tag { background: hsla(190, 70%, 50%, 0.18); color: hsl(190, 70%, 75%); }
-.rc-line.rc-p2 .rc-tag { background: hsla(25, 75%, 52%, 0.18); color: hsl(25, 75%, 75%); }
+.rc-line.rc-p1 .rc-tag { background: hsla(var(--p1-hue), 70%, 50%, 0.18); color: hsl(var(--p1-hue), 70%, 75%); }
+.rc-line.rc-p2 .rc-tag { background: hsla(var(--p2-hue), 75%, 52%, 0.18); color: hsl(var(--p2-hue), 75%, 75%); }
 .rc-line .rc-delta {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -4703,8 +4713,8 @@ body.event-promote #game-over-overlay {
     text-align: left;
     margin-right: 4px;
 }
-.tc-row.tc-p1 .tc-row-tag { color: hsl(190, 70%, 65%); }
-.tc-row.tc-p2 .tc-row-tag { color: hsl(25, 75%, 65%); }
+.tc-row.tc-p1 .tc-row-tag { color: hsl(var(--p1-hue), 70%, 65%); }
+.tc-row.tc-p2 .tc-row-tag { color: hsl(var(--p2-hue), 75%, 65%); }
 .tc-node {
     display: inline-flex;
     align-items: center;
@@ -4734,13 +4744,13 @@ body.event-promote #game-over-overlay {
     margin: 0 2px;
 }
 .tc-row.tc-p1 .tc-link.tc-active {
-    background: linear-gradient(90deg, hsl(190, 80%, 55%), hsl(170, 70%, 60%));
-    box-shadow: 0 0 6px hsla(190, 80%, 60%, 0.5);
+    background: linear-gradient(90deg, hsl(var(--p1-hue), 80%, 55%), hsl(calc(var(--p1-hue) - 20), 70%, 60%));
+    box-shadow: 0 0 6px hsla(var(--p1-hue), 80%, 60%, 0.5);
     animation: tc-pulse 1.6s ease-in-out infinite;
 }
 .tc-row.tc-p2 .tc-link.tc-active {
-    background: linear-gradient(90deg, hsl(25, 85%, 55%), hsl(10, 75%, 60%));
-    box-shadow: 0 0 6px hsla(25, 85%, 60%, 0.5);
+    background: linear-gradient(90deg, hsl(var(--p2-hue), 85%, 55%), hsl(calc(var(--p2-hue) - 15), 75%, 60%));
+    box-shadow: 0 0 6px hsla(var(--p2-hue), 85%, 60%, 0.5);
     animation: tc-pulse 1.6s ease-in-out infinite;
 }
 .tc-link.tc-broken {
@@ -4766,8 +4776,8 @@ body.event-promote #game-over-overlay {
     padding-left: 9px;
     border-left: 2px solid currentColor;
 }
-.rc-head.rc-p1 { color: hsl(190, 72%, 72%); }
-.rc-head.rc-p2 { color: hsl(25, 78%, 72%); }
+.rc-head.rc-p1 { color: hsl(var(--p1-hue), 72%, 72%); }
+.rc-head.rc-p2 { color: hsl(var(--p2-hue), 78%, 72%); }
 .rc-head.tone-alert { color: hsl(0, 75%, 70%); }
 .rc-head.tone-gold  { color: hsl(45, 90%, 66%); }
 
@@ -4781,8 +4791,8 @@ body.event-promote #game-over-overlay {
     margin-bottom: 2px;
     border-bottom: 1px solid rgba(255,255,255,0.08);
 }
-.rc-leader.rc-p1 { color: hsl(190, 70%, 74%); }
-.rc-leader.rc-p2 { color: hsl(25, 75%, 74%); }
+.rc-leader.rc-p1 { color: hsl(var(--p1-hue), 70%, 74%); }
+.rc-leader.rc-p2 { color: hsl(var(--p2-hue), 75%, 74%); }
 .rc-leader.rc-even { color: rgba(255,255,255,0.55); justify-content: center; }
 .rc-leader .rc-lead-txt { font-weight: 600; color: rgba(255,255,255,0.78); }
 
@@ -4867,8 +4877,8 @@ body.event-promote #game-over-overlay {
     letter-spacing: 0.1em;
     text-transform: uppercase;
 }
-.rt-subline.p1 { color: hsl(190, 70%, 65%); }
-.rt-subline.p2 { color: hsl(25, 75%, 65%); }
+.rt-subline.p1 { color: hsl(var(--p1-hue), 70%, 65%); }
+.rt-subline.p2 { color: hsl(var(--p2-hue), 75%, 65%); }
 
 @keyframes rt-anim {
     0%   { opacity: 0; transform: scale(0.7); }
@@ -4914,7 +4924,9 @@ body.event-promote #game-over-overlay {
     inset: 0;
     z-index: 1050;
     padding: 28px clamp(30px, 5vw, 72px) 32px;
-    overflow: auto;
+    /* A full-screen stage, not a scroll pane — the tree is sized to fit the
+       viewport (see #be-grid below), so clip rather than ever show scrollbars. */
+    overflow: hidden;
     animation: be-fadein 0.28s ease;
     display: flex;
     flex-direction: column;
@@ -4964,6 +4976,12 @@ body.event-promote #game-over-overlay {
 .be-close:hover { color: rgba(255,255,255,0.9); border-color: rgba(255,255,255,0.2); }
 
 #be-grid { flex: 1; align-items: stretch; min-height: 0; }
+/* In the full-screen overlay the tree fills the available height instead of
+   asserting the shared 540px floor — that floor + statbar + header overflowed
+   the viewport on shorter windows and forced scrollbars. The between-match
+   in-panel #bracket-grid keeps the floor (it lives in a sized panel). */
+#be-grid .bt-stage { min-height: 0; }
+#be-grid .bracket-tree { min-height: 0; height: 100%; }
 
 /* ── Hex model badge — shared identity token across both bracket views ── */
 .bt-badge {
@@ -4977,8 +4995,8 @@ body.event-promote #game-over-overlay {
     background: linear-gradient(135deg, hsl(var(--bh, 210), 58%, 56%), hsl(var(--bh, 210), 52%, 40%));
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
 }
-.bt-badge-p1 { background: linear-gradient(135deg, hsl(190, 70%, 55%), hsl(170, 65%, 45%)); }
-.bt-badge-p2 { background: linear-gradient(135deg, hsl(25, 80%, 60%), hsl(10, 70%, 50%)); }
+.bt-badge-p1 { background: linear-gradient(135deg, hsl(var(--p1-hue), 70%, 55%), hsl(calc(var(--p1-hue) - 20), 65%, 45%)); }
+.bt-badge-p2 { background: linear-gradient(135deg, hsl(var(--p2-hue), 80%, 60%), hsl(calc(var(--p2-hue) - 15), 70%, 50%)); }
 
 /* Baked avatar fills the hex and replaces the initials; seed pip stays visible.
    The background-image url is set inline by model-avatar.applyAvatar. */
@@ -4989,8 +5007,8 @@ body.event-promote #game-over-overlay {
     text-shadow: none;
 }
 /* In a live match the avatar keeps a P1/P2 accent ring so sides stay readable. */
-.bt-badge-p1.has-avatar { box-shadow: inset 0 0 0 2px hsl(190, 75%, 60%); }
-.bt-badge-p2.has-avatar { box-shadow: inset 0 0 0 2px hsl(25, 85%, 62%); }
+.bt-badge-p1.has-avatar { box-shadow: inset 0 0 0 2px hsl(var(--p1-hue), 75%, 60%); }
+.bt-badge-p2.has-avatar { box-shadow: inset 0 0 0 2px hsl(var(--p2-hue), 85%, 62%); }
 .bt-badge-empty { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.3); }
 .bt-badge-lg { width: 40px; height: 40px; font-size: 15px; }
 .bt-badge-sm { width: 20px; height: 20px; font-size: 8px; }
@@ -5070,12 +5088,12 @@ body.event-promote #game-over-overlay {
 
 .lbn-vsbar {
     height: 5px; border-radius: 3px;
-    background: linear-gradient(90deg, hsl(25,80%,55%), hsl(10,72%,48%)); /* P2 fills remainder */
+    background: linear-gradient(90deg, hsl(var(--p2-hue),80%,55%), hsl(calc(var(--p2-hue) - 15),72%,48%)); /* P2 fills remainder */
     overflow: hidden;
 }
 .lbn-vsbar-p1 {
     display: block; height: 100%;
-    background: linear-gradient(90deg, hsl(190,75%,55%), hsl(175,68%,46%));
+    background: linear-gradient(90deg, hsl(var(--p1-hue),75%,55%), hsl(175,68%,46%));
     border-right: 2px solid rgba(255,255,255,0.55);
     transition: width 0.5s cubic-bezier(0.25,1,0.5,1);
 }
@@ -6358,3 +6376,43 @@ body.event-promote #game-over-overlay {
 @media (prefers-reduced-motion: reduce) {
     .lb-pod, .lb-title-row .lt-glyph { animation: none; }
 }
+
+/* ── Labs chooser overlay — front door for all standalone labs ── */
+#labs-overlay {
+    position: fixed; inset: 0; z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 1; transition: opacity .18s ease;
+}
+#labs-overlay.labs-hidden { opacity: 0; pointer-events: none; }
+.labs-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(4, 6, 14, 0.72); backdrop-filter: blur(6px);
+}
+.labs-panel {
+    position: relative; z-index: 1;
+    width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
+    background: linear-gradient(170deg, rgba(20, 28, 52, 0.96), rgba(12, 16, 34, 0.96));
+    border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 18px;
+    padding: 26px 26px 30px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+.labs-close {
+    position: absolute; top: 14px; right: 16px;
+    background: transparent; border: none; color: rgba(231, 235, 245, 0.5);
+    font-size: 18px; cursor: pointer;
+}
+.labs-close:hover { color: #e7ebf5; }
+.labs-title { margin: 0 0 4px; font-size: 22px; font-weight: 900; letter-spacing: 0.08em; }
+.labs-sub { margin: 0 0 18px; font-size: 13px; color: rgba(231, 235, 245, 0.5); }
+.labs-list { display: flex; flex-direction: column; gap: 10px; }
+.labs-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px; text-decoration: none; color: #e7ebf5;
+    background: rgba(10, 14, 30, 0.7); border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px; transition: border-color .15s, transform .15s, background .15s;
+}
+.labs-card:hover { border-color: hsl(180, 62%, 64%); transform: translateY(-1px); background: rgba(16, 22, 44, 0.85); }
+.labs-card-glyph { font-size: 26px; flex: 0 0 auto; }
+.labs-card-text { display: flex; flex-direction: column; gap: 3px; }
+.labs-card-text b { font-size: 15px; font-weight: 700; }
+.labs-card-text span { font-size: 12px; color: rgba(231, 235, 245, 0.55); line-height: 1.4; }

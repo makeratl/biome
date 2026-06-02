@@ -16,6 +16,7 @@
 
 import { resolveModel, paramLabel } from './model-identity.js';
 import { applyAvatar } from './model-avatar.js';
+import { createField, perfSpec, biomeSpec, conditionsSpec, decisivenessSpec } from './dashboard-cloud.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -49,9 +50,11 @@ export function initDetail(latestGetter) {
     });
 }
 
-// Called by the poll loop on every fresh payload — only flips the "new" pill.
+// Called by the poll loop on every fresh payload. The particle field animates
+// live (no re-render needed); other views just flip the "new results" pill.
 export function notifyDetail(data) {
     if (MODAL.hidden) return;
+    if (detailCloud && data?.leaderboard) { detailCloud.update(data); return; }
     const v = current();
     if (v && v.loadedMatches != null && (data?.totals?.matches ?? 0) > v.loadedMatches)
         FRESH.hidden = false;
@@ -69,7 +72,12 @@ export function openModel(name) {
 const PANEL_TITLES = {
     elo: 'ELO Over Time', standings: 'Standings',
     h2h: 'Head to Head', factors: 'By the Numbers', feed: 'Match Log',
+    cloud: 'Performance Field', biome: 'Biome Scores',
+    conditions: 'Match Conditions', decisive: 'Decisiveness',
 };
+
+let detailCloud = null;   // interactive particle field while the cloud view is open
+function killCloud() { if (detailCloud) { detailCloud.destroy(); detailCloud = null; } }
 
 function mkView(kind, title) {
     return { kind, title, ui: {}, fetched: null, loadedMatches: matchCount() };
@@ -88,6 +96,7 @@ function openModal() {
     requestAnimationFrame(() => MODAL.classList.add('show'));
 }
 function close() {
+    killCloud();
     MODAL.classList.remove('show');
     document.body.classList.remove('db-modal-open');
     stack = [];
@@ -96,6 +105,7 @@ function close() {
 function back() { if (stack.length > 1) { stack.pop(); renderCurrent(); } }
 
 async function renderCurrent() {
+    killCloud();   // any view change tears down a running particle field
     const v = current();
     if (!v) return;
     BACK.hidden = stack.length <= 1;
@@ -113,6 +123,10 @@ async function renderCurrent() {
     else if (v.kind === 'standings') renderStandings(v, data);
     else if (v.kind === 'h2h') renderH2HDetail(v, data);
     else if (v.kind === 'factors') renderFactorsDetail(v, data);
+    else if (v.kind === 'cloud') renderFieldDetail(v, perfSpec(), '<b>↑ ELO</b> · <b>→ win rate</b> · cluster = games played · hue = family');
+    else if (v.kind === 'biome') renderFieldDetail(v, biomeSpec(), '<b>↑ ELO</b> · <b>→ best biome score</b> (records to the right) · cluster = games · hue = family');
+    else if (v.kind === 'decisive') renderFieldDetail(v, decisivenessSpec(), '<b>↑ total biomass</b> · <b>→ victory margin</b> (close → blowout) · each puff = one match · hue = winner family');
+    else if (v.kind === 'conditions') renderConditionsDetail(v);
 }
 
 const emptyMsg = (t) => `<div class="dd-empty">${esc(t)}</div>`;
@@ -177,12 +191,17 @@ function renderStandings(v, data) {
     if (!ui.sort) ui.sort = { k: 'elo', dir: -1 };
     const q = (ui.search || '').toLowerCase();
 
-    TOOLS.innerHTML = `<input class="dd-search" id="dd-st-q" placeholder="search model / family…" value="${esc(ui.search || '')}">`;
+    const fams = [...new Set(data.leaderboard.map(r => familyOf(r.model)))].sort();
+    const classes = CLASS_ORDER.filter(c => data.leaderboard.some(r => classOf(r.model) === c));
+    TOOLS.innerHTML = `<input class="dd-search" id="dd-st-q" placeholder="search model…" value="${esc(ui.search || '')}">
+        ${selectFor('dd-st-fam', 'family', fams, ui.family, null, 'All families')}
+        ${selectFor('dd-st-cls', 'class', classes, ui.cls, cap, 'All classes')}`;
 
     let rows = data.leaderboard.filter(r => {
-        if (!q) return true;
-        const rm = resolveModel(r.model);
-        return short(r.model).toLowerCase().includes(q) || (rm.family.label || '').toLowerCase().includes(q);
+        if (ui.family && familyOf(r.model) !== ui.family) return false;
+        if (ui.cls && classOf(r.model) !== ui.cls) return false;
+        if (q && !(short(r.model).toLowerCase().includes(q) || familyOf(r.model).toLowerCase().includes(q))) return false;
+        return true;
     });
     const col = STAND_COLS.find(c => c.k === ui.sort.k) || STAND_COLS[2];
     rows = rows.slice().sort((a, b) => {
@@ -190,10 +209,11 @@ function renderStandings(v, data) {
         return (x < y ? -1 : x > y ? 1 : 0) * ui.sort.dir;
     });
 
-    // ELO ranking bars — quick visual of the spread.
+    // ELO ranking bars — quick visual of the spread (reflects the active filter).
     const elos = data.leaderboard.map(r => r.elo);
     const lo = Math.min(...elos, 1000) - 10, hi = Math.max(...elos, 1000) + 10;
-    const bars = data.leaderboard.slice(0, 24).map(r => {
+    const barRows = (ui.family || ui.cls || q) ? rows : data.leaderboard;
+    const bars = barRows.slice(0, 24).map(r => {
         const pct = Math.round(((r.elo - lo) / (hi - lo)) * 100);
         return `<div class="dd-rankbar db-clickable" data-open-model="${esc(r.model)}" style="--bh:${hueOf(r.model)}">
             <span class="dd-rb-name">${esc(short(r.model))}</span>
@@ -212,7 +232,7 @@ function renderStandings(v, data) {
     BODY.innerHTML = `<div class="dd-stack">
         <details class="dd-graph" open><summary>ELO ranking</summary><div class="dd-rankbars">${bars}</div></details>
         <div class="dd-tablewrap"><table class="dd-table dd-standings"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
-        <div class="dd-count">${rows.length} model${rows.length === 1 ? '' : 's'}</div>
+        <div class="dd-count">${rows.length} of ${data.leaderboard.length} models</div>
     </div>`;
 
     BODY.querySelectorAll('.dd-th[data-sort]').forEach(th => th.addEventListener('click', () => {
@@ -221,18 +241,44 @@ function renderStandings(v, data) {
         else ui.sort = { k, dir: STAND_COLS.find(c => c.k === k).num ? -1 : 1 };
         renderStandings(v, getLatest());
     }));
-    wireSearch('dd-st-q', v, () => renderStandings(v, getLatest()));
+    const rerender = () => renderStandings(v, getLatest());
+    wireSearch('dd-st-q', v, rerender);
+    wireSelect('dd-st-fam', v, 'family', rerender);
+    wireSelect('dd-st-cls', v, 'cls', rerender);
     paintAvatars(BODY);
 }
 
-// ── Head to head (full matrix, searchable) ───────────────────
+// ── Head to head (filterable matrix with grid tools) ─────────
 function renderH2HDetail(v, data) {
-    const q = (v.ui.search || '').toLowerCase();
-    let models = data.leaderboard.map(r => r.model);
-    if (q) models = models.filter(m => short(m).toLowerCase().includes(q));
-    TOOLS.innerHTML = `<input class="dd-search" id="dd-h2h-q" placeholder="filter models…" value="${esc(v.ui.search || '')}">`;
+    const ui = v.ui;
+    if (ui.topN == null) ui.topN = 12;
+    const q = (ui.search || '').toLowerCase();
+    const fams = [...new Set(data.leaderboard.map(r => familyOf(r.model)))].sort();
+    const classes = CLASS_ORDER.filter(c => data.leaderboard.some(r => classOf(r.model) === c));
+    const topOpts = [8, 12, 16, 24, 999];
 
-    if (models.length < 2) { BODY.innerHTML = emptyMsg('Not enough models to compare.'); wireSearch('dd-h2h-q', v, () => renderH2HDetail(v, getLatest())); return; }
+    TOOLS.innerHTML = `<input class="dd-search" id="dd-h2h-q" placeholder="filter models…" value="${esc(ui.search || '')}">
+        ${selectFor('dd-h2h-fam', 'family', fams, ui.family, null, 'All families')}
+        ${selectFor('dd-h2h-cls', 'class', classes, ui.cls, cap, 'All classes')}
+        <select class="dd-sel" id="dd-h2h-top">${topOpts.map(n =>
+            `<option value="${n}"${ui.topN === n ? ' selected' : ''}>${n >= 999 ? 'All models' : 'Top ' + n}</option>`).join('')}</select>`;
+
+    const rerender = () => renderH2HDetail(v, getLatest());
+    const wireTools = () => {
+        wireSearch('dd-h2h-q', v, rerender);
+        wireSelect('dd-h2h-fam', v, 'family', rerender);
+        wireSelect('dd-h2h-cls', v, 'cls', rerender);
+        $('dd-h2h-top')?.addEventListener('change', (e) => { ui.topN = parseInt(e.target.value, 10); rerender(); });
+    };
+
+    const models = data.leaderboard.filter(r => {
+        if (ui.family && familyOf(r.model) !== ui.family) return false;
+        if (ui.cls && classOf(r.model) !== ui.cls) return false;
+        if (q && !short(r.model).toLowerCase().includes(q)) return false;
+        return true;
+    }).map(r => r.model).slice(0, ui.topN);
+
+    if (models.length < 2) { BODY.innerHTML = emptyMsg('Fewer than two models match — widen the filter.'); wireTools(); return; }
 
     const wins = {};
     for (const m of models) wins[m] = {};
@@ -241,6 +287,7 @@ function renderH2HDetail(v, data) {
         if (wins[p.b] && p.a in wins) wins[p.b][p.a] = p.b_wins;
     }
 
+    let met = 0, pairs = 0;
     let html = `<div class="dd-tablewrap"><table class="dd-table dd-h2h"><thead><tr><th class="dd-h2h-corner"></th>`;
     for (const c of models) html += `<th class="dd-h2h-col"><span class="db-ava db-ava-xs" data-model="${esc(c)}" title="${esc(short(c))}"></span></th>`;
     html += `</tr></thead><tbody>`;
@@ -259,8 +306,12 @@ function renderH2HDetail(v, data) {
         html += `</tr>`;
     }
     html += `</tbody></table></div>`;
-    BODY.innerHTML = html;
-    wireSearch('dd-h2h-q', v, () => renderH2HDetail(v, getLatest()));
+    for (let i = 0; i < models.length; i++) for (let j = i + 1; j < models.length; j++) {
+        pairs++;
+        if (((wins[models[i]]?.[models[j]] ?? 0) + (wins[models[j]]?.[models[i]] ?? 0)) > 0) met++;
+    }
+    BODY.innerHTML = html + `<div class="dd-count">${models.length} models · ${met}/${pairs} matchups played</div>`;
+    wireTools();
     paintAvatars(BODY);
 }
 
@@ -288,6 +339,34 @@ function renderFactorsDetail(v, data) {
     }
     html += '</div>';
     BODY.innerHTML = html;
+}
+
+// ── Particle-field detail views (interactive) ────────────────
+function renderFieldDetail(v, spec, caption) {
+    killCloud();
+    BODY.innerHTML = `<div class="dd-cloud-detail">
+        <div class="dd-cloud-host" id="dd-cloud-host"></div>
+        <div class="dd-cloud-caption">${caption} &nbsp;·&nbsp; <span class="dd-dim">hover for detail, click to drill in</span></div>
+    </div>`;
+    detailCloud = createField($('dd-cloud-host'), { spec, interactive: true, onPick: openModel, initial: getLatest() });
+}
+
+// Match Conditions has a map-size ↔ rounds group-by toggle in the toolbar.
+function renderConditionsDetail(v) {
+    killCloud();
+    const group = v.ui.group || 'map_size';
+    TOOLS.innerHTML = `<span class="dd-seg" id="dd-cond-seg">
+        ${[['map_size', 'Map size'], ['rounds', 'Rounds']].map(([k, l]) =>
+            `<button class="dd-seg-b${group === k ? ' on' : ''}" data-k="${k}">${l}</button>`).join('')}
+    </span>`;
+    BODY.innerHTML = `<div class="dd-cloud-detail">
+        <div class="dd-cloud-host" id="dd-cloud-host"></div>
+        <div class="dd-cloud-caption"><b>↑ total biome score</b> · <b>→ grouped by ${group === 'rounds' ? 'round count' : 'map size'}</b> · each puff = one match · hue = winner family &nbsp;·&nbsp; <span class="dd-dim">hover for detail</span></div>
+    </div>`;
+    detailCloud = createField($('dd-cloud-host'), { spec: conditionsSpec(group), interactive: true, onPick: openModel, initial: getLatest() });
+    $('dd-cond-seg').querySelectorAll('.dd-seg-b').forEach(b => b.addEventListener('click', () => {
+        v.ui.group = b.dataset.k; renderConditionsDetail(v);
+    }));
 }
 
 // ── Match log (full, filterable) ─────────────────────────────
@@ -461,6 +540,9 @@ function modelCell(model, r) {
         <span class="dd-mc-id"><b>${esc(short(model))}</b><i>${esc(rm.family.label)} · ${esc(paramLabel(model))}</i></span></span>`;
 }
 function medalOrRank(rank) { return rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank; }
+const CLASS_ORDER = ['small', 'mid', 'large', 'cloud'];
+const familyOf = (m) => resolveModel(m).family.label || '—';
+const classOf = (m) => resolveModel(m).sizeTier || 'mid';
 function streakCell(s) {
     if (s > 0) return `<span class="dd-streak-w">${s}W</span>`;
     if (s < 0) return `<span class="dd-streak-l">${-s}L</span>`;
@@ -471,8 +553,9 @@ function fmtScore(m) {
     const a = Math.round(m.p1_score ?? 0), b = Math.round(m.p2_score ?? 0);
     return m.winner === m.p1 ? `${a}–${b}` : `${b}–${a}`;
 }
-function selectFor(id, key, opts, cur, fmt) {
-    return `<select class="dd-sel" id="${id}"><option value="">All ${key}s</option>` +
+function selectFor(id, key, opts, cur, fmt, allLabel) {
+    const all = allLabel || `All ${key}s`;
+    return `<select class="dd-sel" id="${id}"><option value="">${esc(all)}</option>` +
         opts.map(o => `<option value="${esc(o)}"${cur === o ? ' selected' : ''}>${esc(fmt ? fmt(o) : o)}</option>`).join('') + `</select>`;
 }
 function wireSearch(id, v, rerender) {
