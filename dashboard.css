@@ -96,23 +96,34 @@ body {
 
 .db-leaderboard .db-lb-scroll { max-height: 600px; }
 
-/* Fields wall — responsive square-ish tiles; the hero spans full width on top */
+/* Fields wall — an explicit 6-column grid so rows compose cleanly:
+   hero spans all 6 · the three particle fields take 2 each (thirds) ·
+   Head-to-Head + By-the-Numbers take 3 each (halves). */
 .db-fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    grid-template-columns: repeat(6, 1fr);
     gap: 16px;
 }
 .db-field { display: flex; flex-direction: column; }
 .db-field .db-cloud-host { flex: 1; min-height: 300px; height: auto; }
-.db-perf { grid-column: 1 / -1; }
+.db-perf { grid-column: span 6; }
 .db-perf .db-cloud-host { min-height: 340px; }
+.db-third { grid-column: span 2; }                 /* Biome · Conditions · Decisiveness */
+.db-fields .db-h2h { grid-column: span 3; }          /* Head to Head — half */
+.db-fields .db-factors { grid-column: span 3; }      /* By the Numbers — half */
 /* Head-to-Head: a locked square, centered in its tile — no stretch, no dead space */
 .db-fields .db-h2h .db-h2h-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
 
+/* Medium widths: thirds become a 2-up, halves stay; hero still full. */
+@media (max-width: 1240px) {
+    .db-third { grid-column: span 3; }
+}
 @media (max-width: 1040px) {
     .db-grid { grid-template-columns: 1fr; }
     .db-elochart, .db-leaderboard, .db-fields, .db-recent { grid-column: 1; }
     .db-leaderboard .db-lb-scroll { max-height: 520px; }
+    .db-fields { grid-template-columns: 1fr; }
+    .db-perf, .db-third, .db-fields .db-h2h, .db-fields .db-factors { grid-column: 1; }
 }
 
 /* ── Cards ── */
@@ -412,6 +423,9 @@ body.db-modal-open { overflow: hidden; }
 .dd-split-v { font-size: 10.5px; color: var(--ink-faint); text-align: right; }
 .dd-res-w { color: var(--win); font-weight: 800; font-size: 11px; }
 .dd-res-l { color: var(--loss); font-weight: 800; font-size: 11px; }
+/* Lens control: a labelled segmented toggle in the detail toolbar. */
+.dd-lens { display: inline-flex; align-items: center; gap: 6px; }
+.dd-lens-label { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
 .dd-seg { display: inline-flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 8px; padding: 2px; }
 .dd-seg-b { background: transparent; border: none; color: var(--ink-dim); font-size: 10.5px; font-weight: 700; padding: 4px 11px; border-radius: 6px; cursor: pointer; }
 .dd-seg-b.on { background: rgba(255,255,255,0.12); color: var(--ink); }
@@ -429,6 +443,9 @@ body.db-modal-open { overflow: hidden; }
 .db-cloud-host { position: relative; width: 100%; min-height: 300px; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse 80% 80% at 50% 50%, rgba(20,28,52,0.4), rgba(7,8,20,0.2)); }
 
 /* mini segmented toggle inside a card head (Match Conditions group-by) */
+/* Vision-lens tag on the Standings heading when a derived ladder is active. */
+.db-vis-tag { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: hsl(180,60%,68%); background: hsla(180,60%,55%,0.14); padding: 2px 7px; border-radius: 5px; margin-left: 8px; vertical-align: middle; }
 .db-seg-mini { display: inline-flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 7px; padding: 2px; margin-left: auto; }
 .db-seg-mini-b { background: transparent; border: none; color: var(--ink-faint); font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; cursor: pointer; }
 .db-seg-mini-b.on { background: rgba(255,255,255,0.12); color: var(--ink); }

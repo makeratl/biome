@@ -235,19 +235,37 @@ export function createField(container, opts = {}) {
 // ── field specs (build + axes) ───────────────────────────────
 const NX = (f) => 0.08 + clamp01(f) * 0.84;   // pad the data range off the edges
 
-// Performance Field — model clusters: win rate × ELO.
-export function perfSpec() {
+// Performance Field — model clusters against ELO (Y). The X axis and the cluster
+// size are both lensable: X ∈ {win rate, games, avg score}, size ∈ {games, wins}.
+export function perfSpec(opts = {}) {
+    const x = opts.x || 'winrate';     // winrate | games | avgscore
+    const size = opts.size || 'games'; // games | wins
     return {
-        axes: { xLabel: 'WIN RATE →', yLabel: 'ELO →', xTicks: [0, 25, 50, 75, 100].map(w => ({ f: NX(w / 100), label: w + '%' })) },
+        // axes is a getter so xTicks (only meaningful for the % lens) re-read per swap.
+        get axes() {
+            const a = { yLabel: 'ELO →' };
+            if (x === 'winrate') { a.xLabel = 'WIN RATE →'; a.xTicks = [0, 25, 50, 75, 100].map(w => ({ f: NX(w / 100), label: w + '%' })); }
+            else if (x === 'games') a.xLabel = 'GAMES PLAYED →';
+            else a.xLabel = 'AVG BIOME SCORE →';
+            return a;
+        },
         build(data) {
-            const rows = (data?.leaderboard || []).filter(r => r.matches > 0);
+            let rows = (data?.leaderboard || []).filter(r => r.matches > 0);
+            if (!rows.length) return [];
+            const agg = (x === 'avgscore') ? scoreAgg(data?.match_points || []) : null;
+            if (agg) rows = rows.filter(r => agg[r.model]);
             if (!rows.length) return [];
             const { lo, hi } = eloDomain(rows);
             const maxG = Math.max(...rows.map(r => r.matches), 1);
+            const maxW = Math.max(...rows.map(r => r.wins), 1);
+            const maxAvg = agg ? Math.max(...rows.map(r => agg[r.model].sum / agg[r.model].n), 1) : 1;
+            const xVal = (r) => x === 'games' ? r.matches / maxG
+                : x === 'avgscore' ? (agg[r.model].sum / agg[r.model].n) / maxAvg
+                : r.winrate / 100;
             return rows.map(r => ({
                 key: r.model, hue: hueOf(r.model),
-                nx: NX(r.winrate / 100), ny: NX((r.elo - lo) / (hi - lo)),
-                weight: 4 + (r.matches / maxG) * 20,
+                nx: NX(xVal(r)), ny: NX((r.elo - lo) / (hi - lo)),
+                weight: 4 + (size === 'wins' ? r.wins / maxW : r.matches / maxG) * 20,
                 label: short(r.model), labelPriority: r.rank, pick: r.model,
                 tip: [short(r.model), `ELO ${r.elo} · ${r.winrate}%`, `${r.wins}-${r.losses} · ${r.matches} games`],
             }));
@@ -255,26 +273,30 @@ export function perfSpec() {
     };
 }
 
-// Biome Scores — model clusters: best ecosystem score × ELO.
-export function biomeSpec() {
+// Biome Scores — model clusters: ecosystem score (X) × ELO (Y). The score lens
+// picks which aggregate drives X: best single game, average, or career total.
+export function biomeSpec(opts = {}) {
+    const x = opts.x || 'best';   // best | avg | total
+    const xOf = (a) => x === 'avg' ? a.sum / a.n : x === 'total' ? a.sum : a.best;
+    const xLabel = x === 'avg' ? 'AVG BIOME SCORE →' : x === 'total' ? 'TOTAL BIOME SCORE →' : 'BEST BIOME SCORE →';
     return {
-        axes: { xLabel: 'BEST BIOME SCORE →', yLabel: 'ELO →' },
+        get axes() { return { xLabel, yLabel: 'ELO →' }; },
         build(data) {
             const rows = (data?.leaderboard || []).filter(r => r.matches > 0);
             const agg = scoreAgg(data?.match_points || []);
             const scored = rows.filter(r => agg[r.model]);
             if (!scored.length) return [];
             const { lo, hi } = eloDomain(scored);
-            const maxBest = Math.max(...scored.map(r => agg[r.model].best), 1);
+            const maxX = Math.max(...scored.map(r => xOf(agg[r.model])), 1);
             const maxG = Math.max(...scored.map(r => r.matches), 1);
             return scored.map(r => {
                 const a = agg[r.model];
                 return {
                     key: r.model, hue: hueOf(r.model),
-                    nx: NX(a.best / maxBest), ny: NX((r.elo - lo) / (hi - lo)),
+                    nx: NX(xOf(a) / maxX), ny: NX((r.elo - lo) / (hi - lo)),
                     weight: 4 + (r.matches / maxG) * 20,
-                    label: short(r.model), labelPriority: maxBest - a.best, pick: r.model,
-                    tip: [short(r.model), `best ${fmtK(a.best)} · avg ${fmtK(a.sum / a.n)}`, `ELO ${r.elo} · ${a.n} games`],
+                    label: short(r.model), labelPriority: maxX - xOf(a), pick: r.model,
+                    tip: [short(r.model), `best ${fmtK(a.best)} · avg ${fmtK(a.sum / a.n)} · total ${fmtK(a.sum)}`, `ELO ${r.elo} · ${a.n} games`],
                 };
             });
         },
@@ -283,6 +305,8 @@ export function biomeSpec() {
 
 // Match Conditions — one puff per match, columned by map size or round count.
 const MAP_ORDER = ['auto', 'small', 'medium', 'large'];
+const STRATEGY_ORDER = ['mediated', 'ascii', 'raw'];
+
 export function conditionsSpec(groupBy = 'map_size') {
     const fmtGroup = (g) => groupBy === 'rounds' ? `${g} rounds` : (g === 'auto' ? 'fit screen' : cap(g));
     return {
@@ -293,6 +317,8 @@ export function conditionsSpec(groupBy = 'map_size') {
             let groups = [...new Set(mp.map(m => String(m[groupBy])))];
             groups.sort(groupBy === 'rounds'
                 ? (a, b) => Number(a) - Number(b)
+                : groupBy === 'map_strategy'
+                ? (a, b) => STRATEGY_ORDER.indexOf(a) - STRATEGY_ORDER.indexOf(b)
                 : (a, b) => MAP_ORDER.indexOf(a) - MAP_ORDER.indexOf(b));
             this._groups = groups;
             const maxTot = Math.max(...mp.map(m => (m.p1_score || 0) + (m.p2_score || 0)), 1);
@@ -314,7 +340,7 @@ export function conditionsSpec(groupBy = 'map_size') {
             const groups = this._groups || [];
             const slot = groups.length ? 1 / groups.length : 1;
             return {
-                xLabel: groupBy === 'rounds' ? 'ROUNDS →' : 'MAP SIZE →', yLabel: 'TOTAL BIOME SCORE →',
+                xLabel: groupBy === 'rounds' ? 'ROUNDS →' : groupBy === 'map_strategy' ? 'MAP VISION →' : 'MAP SIZE →', yLabel: 'TOTAL BIOME SCORE →',
                 xTicks: groups.map((g, i) => ({ f: NX((i + 0.5) * slot), label: fmtGroup(g) })),
                 dividers: groups.slice(1).map((_, i) => NX((i + 1) * slot)),
             };
@@ -322,24 +348,29 @@ export function conditionsSpec(groupBy = 'map_size') {
     };
 }
 
-// Decisiveness — one puff per match: victory margin × total biomass.
-export function decisivenessSpec() {
+// Decisiveness — one puff per match. Both axes lens: X ∈ {margin, margin % of
+// total}, Y ∈ {total biomass, rounds played}.
+export function decisivenessSpec(opts = {}) {
+    const x = opts.x || 'margin';    // margin | marginpct
+    const y = opts.y || 'biomass';   // biomass | rounds
+    const total = (m) => (m.p1_score || 0) + (m.p2_score || 0);
+    const xOf = (m) => x === 'marginpct' ? (total(m) ? (m.margin || 0) / total(m) : 0) : (m.margin || 0);
+    const yOf = (m) => y === 'rounds' ? (m.rounds || 0) : total(m);
+    const xLabel = x === 'marginpct' ? 'MARGIN % OF TOTAL →' : 'MARGIN (close → blowout) →';
+    const yLabel = y === 'rounds' ? 'ROUNDS →' : 'TOTAL BIOMASS →';
     return {
-        axes: { xLabel: 'MARGIN (close → blowout) →', yLabel: 'TOTAL BIOMASS →' },
+        get axes() { return { xLabel, yLabel }; },
         build(data) {
             const mp = (data?.match_points || []).filter(m => (m.p1_score || m.p2_score));
             if (!mp.length) return [];
-            const maxM = Math.max(...mp.map(m => m.margin || 0), 1);
-            const maxT = Math.max(...mp.map(m => (m.p1_score || 0) + (m.p2_score || 0)), 1);
-            return mp.map((m, i) => {
-                const total = (m.p1_score || 0) + (m.p2_score || 0);
-                return {
-                    key: `${m.played_at}|${m.winner}|${m.loser}|${i}`, hue: hueOf(m.winner), weight: 1,
-                    nx: NX((m.margin || 0) / maxM), ny: NX(total / maxT), pick: m.winner,
-                    tip: [`${short(m.winner)} beat ${short(m.loser)}`, `margin ${fmtK(m.margin)} · total ${fmtK(total)}`,
-                          `${cap(m.mode || '')} · ${m.map_size === 'auto' ? 'fit' : m.map_size} · ${m.rounds}r`],
-                };
-            });
+            const maxX = Math.max(...mp.map(xOf), x === 'marginpct' ? 1e-6 : 1);
+            const maxY = Math.max(...mp.map(yOf), 1);
+            return mp.map((m, i) => ({
+                key: `${m.played_at}|${m.winner}|${m.loser}|${i}`, hue: hueOf(m.winner), weight: 1,
+                nx: NX(xOf(m) / maxX), ny: NX(yOf(m) / maxY), pick: m.winner,
+                tip: [`${short(m.winner)} beat ${short(m.loser)}`, `margin ${fmtK(m.margin)} · total ${fmtK(total(m))} · ${m.rounds}r`,
+                      `${cap(m.mode || '')} · ${m.map_size === 'auto' ? 'fit' : m.map_size}`],
+            }));
         },
     };
 }

@@ -265,6 +265,10 @@ export class TournamentManager {
         this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
+        // Tune player/model colors from identity + ELO anchor, same as solo/watch
+        // (_startMatch does this; the tournament path goes through resetForMatch
+        // instead, so apply it here once both fighters are assigned).
+        await this.game._applyPlayerPalettes();
         // Repaint the bracket panel each round-end so the live card carries fresh scores + round counter
         this.game._onTournamentTick = () => this._renderLiveBracket();
         const promise = this.game.runFullGame();
@@ -296,6 +300,7 @@ export class TournamentManager {
             format: this.format?.label || this.format?.id || null,
             map_size: this.world?.mapSize || null,
             rounds: this.world?.rounds ?? null,
+            map_strategy: this.world?.mapStrategy || 'mediated',
         });
 
         // Update stats panel and live bracket — the panel can show the result while the result-screen overlay is up

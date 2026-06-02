@@ -27,6 +27,8 @@ let refocus = null;        // id of a search box to refocus after a re-render
 
 const short = (m) => (m || '—').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
 const hueOf = (m) => resolveModel(m).hue;
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['raw', 'Raw']];
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const $ = (id) => document.getElementById(id);
 
@@ -123,9 +125,9 @@ async function renderCurrent() {
     else if (v.kind === 'standings') renderStandings(v, data);
     else if (v.kind === 'h2h') renderH2HDetail(v, data);
     else if (v.kind === 'factors') renderFactorsDetail(v, data);
-    else if (v.kind === 'cloud') renderFieldDetail(v, perfSpec(), '<b>↑ ELO</b> · <b>→ win rate</b> · cluster = games played · hue = family');
-    else if (v.kind === 'biome') renderFieldDetail(v, biomeSpec(), '<b>↑ ELO</b> · <b>→ best biome score</b> (records to the right) · cluster = games · hue = family');
-    else if (v.kind === 'decisive') renderFieldDetail(v, decisivenessSpec(), '<b>↑ total biomass</b> · <b>→ victory margin</b> (close → blowout) · each puff = one match · hue = winner family');
+    else if (v.kind === 'cloud') renderCloudDetail(v);
+    else if (v.kind === 'biome') renderBiomeDetail(v);
+    else if (v.kind === 'decisive') renderDecisiveDetail(v);
     else if (v.kind === 'conditions') renderConditionsDetail(v);
 }
 
@@ -134,16 +136,26 @@ const loadingMsg = () => `<div class="dd-empty">Loading…</div>`;
 
 // ── ELO over time (multi-series, toggleable) ─────────────────
 function renderEloDetail(v, data) {
-    const order = data.leaderboard.map(r => r.model).filter(m => data.timeline[m]);
     v.ui.hidden = v.ui.hidden || new Set();
+    v.ui.ymode = v.ui.ymode || 'elo';   // elo | delta (Δ from the 1000 start)
+    v.ui.vision = v.ui.vision || 'all';  // all | <map vision derived ladder>
+    const lad = (v.ui.vision !== 'all')
+        ? (data.vision_ladders?.[v.ui.vision] || { leaderboard: [], timeline: {} })
+        : data;
+    const delta = v.ui.ymode === 'delta';
     const q = (v.ui.search || '').toLowerCase();
+    const order = lad.leaderboard.map(r => r.model).filter(m => lad.timeline[m]);
 
-    TOOLS.innerHTML = `<input class="dd-search" id="dd-elo-q" placeholder="filter models…" value="${esc(v.ui.search || '')}">
+    TOOLS.innerHTML =
+        segGroup('dd-elo-v', 'Vision', VISION_FILTERS, v.ui.vision) +
+        segGroup('dd-elo-y', 'Y', [['elo', 'ELO'], ['delta', 'Δ from 1000']], v.ui.ymode) +
+        `<input class="dd-search" id="dd-elo-q" placeholder="filter models…" value="${esc(v.ui.search || '')}">
         <button class="dd-btn" id="dd-elo-all">All</button>
         <button class="dd-btn" id="dd-elo-none">None</button>`;
 
     const series = order.map(model => {
-        const pts = [{ x: 0, y: 1000 }, ...data.timeline[model].map(p => ({ x: p.n, y: p.elo }))];
+        const pts = [{ x: 0, y: 1000 }, ...lad.timeline[model].map(p => ({ x: p.n, y: p.elo }))]
+            .map(p => delta ? { x: p.x, y: p.y - 1000 } : p);
         return { key: short(model), model, hue: hueOf(model), pts, dim: v.ui.hidden.has(model) };
     });
     const anyVisible = series.some(s => !s.dim);
@@ -152,12 +164,12 @@ function renderEloDetail(v, data) {
         <div class="dd-chart-host" id="dd-elo-host"></div>
         <div class="dd-legend" id="dd-elo-legend"></div>
     </div>`;
-    if (anyVisible) $('dd-elo-host').appendChild(lineChart({ series: series.filter(s => !s.dim) }));
-    else $('dd-elo-host').innerHTML = emptyMsg('No models selected.');
+    if (anyVisible) $('dd-elo-host').appendChild(lineChart({ series: series.filter(s => !s.dim), baseline: delta ? 0 : 1000 }));
+    else $('dd-elo-host').innerHTML = emptyMsg(order.length ? 'No models selected.' : `No ${VISION_LABELS[v.ui.vision] || ''} matches yet.`);
 
     $('dd-elo-legend').innerHTML = order.filter(m => short(m).toLowerCase().includes(q)).map(model => {
         const off = v.ui.hidden.has(model);
-        const lb = data.leaderboard.find(r => r.model === model);
+        const lb = lad.leaderboard.find(r => r.model === model);
         return `<button class="dd-leg${off ? ' off' : ''}" data-model="${esc(model)}" style="--bh:${hueOf(model)}">
             <span class="dd-leg-sw"></span><b>${esc(short(model))}</b><i>${lb ? lb.elo : ''}</i></button>`;
     }).join('') || emptyMsg('No match.');
@@ -167,6 +179,8 @@ function renderEloDetail(v, data) {
         v.ui.hidden.has(m) ? v.ui.hidden.delete(m) : v.ui.hidden.add(m);
         renderEloDetail(v, getLatest());
     }));
+    wireSeg('dd-elo-v', k => { v.ui.vision = k; v.ui.hidden.clear(); renderEloDetail(v, getLatest()); });
+    wireSeg('dd-elo-y', k => { v.ui.ymode = k; renderEloDetail(v, getLatest()); });
     wireSearch('dd-elo-q', v, () => renderEloDetail(v, getLatest()));
     $('dd-elo-all').addEventListener('click', () => { v.ui.hidden.clear(); renderEloDetail(v, getLatest()); });
     $('dd-elo-none').addEventListener('click', () => { order.forEach(m => v.ui.hidden.add(m)); renderEloDetail(v, getLatest()); });
@@ -321,6 +335,7 @@ function renderFactorsDetail(v, data) {
         { key: 'mode', title: 'Mode', fmt: k => cap(k) },
         { key: 'map_size', title: 'Map Size', fmt: k => k === 'auto' ? 'Fit screen' : cap(k) },
         { key: 'rounds', title: 'Rounds', fmt: k => `${k} rounds` },
+        { key: 'map_strategy', title: 'Map Vision', fmt: k => cap(k) },
     ];
     let html = '<div class="dd-factor-grid">';
     for (const g of groups) {
@@ -341,14 +356,68 @@ function renderFactorsDetail(v, data) {
     BODY.innerHTML = html;
 }
 
-// ── Particle-field detail views (interactive) ────────────────
-function renderFieldDetail(v, spec, caption) {
-    killCloud();
-    BODY.innerHTML = `<div class="dd-cloud-detail">
+// ── Particle-field detail views (interactive, lensable) ──────
+// Each field's full-screen view carries a small toolbar of axis/encoding lenses
+// (the same .dd-seg idiom Match Conditions uses); swapping a lens rebuilds the
+// spec and re-seeds the live field. The summary panels keep the default lens.
+
+// Shared chrome: a labelled segmented control for the toolbar.
+function segGroup(id, label, options, current) {
+    return `<span class="dd-lens"><span class="dd-lens-label">${label}</span>
+        <span class="dd-seg" id="${id}">${options.map(([k, l]) =>
+            `<button class="dd-seg-b${current === k ? ' on' : ''}" data-k="${k}">${l}</button>`).join('')}</span></span>`;
+}
+function wireSeg(id, cb) {
+    $(id)?.querySelectorAll('.dd-seg-b').forEach(b => b.addEventListener('click', () => cb(b.dataset.k)));
+}
+function cloudHostHTML(caption) {
+    return `<div class="dd-cloud-detail">
         <div class="dd-cloud-host" id="dd-cloud-host"></div>
         <div class="dd-cloud-caption">${caption} &nbsp;·&nbsp; <span class="dd-dim">hover for detail, click to drill in</span></div>
     </div>`;
+}
+function seedField(spec) {
     detailCloud = createField($('dd-cloud-host'), { spec, interactive: true, onPick: openModel, initial: getLatest() });
+}
+
+// Performance Field — X ∈ {win rate, games, avg score}, cluster size ∈ {games, wins}.
+function renderCloudDetail(v) {
+    killCloud();
+    const ui = v.ui; ui.x = ui.x || 'winrate'; ui.size = ui.size || 'games';
+    TOOLS.innerHTML =
+        segGroup('dd-perf-x', 'X', [['winrate', 'Win rate'], ['games', 'Games'], ['avgscore', 'Avg score']], ui.x) +
+        segGroup('dd-perf-size', 'Size', [['games', 'Games'], ['wins', 'Wins']], ui.size);
+    const xCap = { winrate: 'win rate', games: 'games played', avgscore: 'avg biome score' }[ui.x];
+    BODY.innerHTML = cloudHostHTML(`<b>↑ ELO</b> · <b>→ ${xCap}</b> · cluster = ${ui.size} · hue = family`);
+    seedField(perfSpec({ x: ui.x, size: ui.size }));
+    wireSeg('dd-perf-x', k => { ui.x = k; renderCloudDetail(v); });
+    wireSeg('dd-perf-size', k => { ui.size = k; renderCloudDetail(v); });
+}
+
+// Biome Scores — score lens ∈ {best, average, total}.
+function renderBiomeDetail(v) {
+    killCloud();
+    const ui = v.ui; ui.x = ui.x || 'best';
+    TOOLS.innerHTML = segGroup('dd-biome-x', 'Score', [['best', 'Best'], ['avg', 'Average'], ['total', 'Total']], ui.x);
+    const xCap = { best: 'best biome score', avg: 'average biome score', total: 'total biome score' }[ui.x];
+    BODY.innerHTML = cloudHostHTML(`<b>↑ ELO</b> · <b>→ ${xCap}</b> · cluster = games · hue = family`);
+    seedField(biomeSpec({ x: ui.x }));
+    wireSeg('dd-biome-x', k => { ui.x = k; renderBiomeDetail(v); });
+}
+
+// Decisiveness — X ∈ {margin, margin %}, Y ∈ {biomass, rounds}.
+function renderDecisiveDetail(v) {
+    killCloud();
+    const ui = v.ui; ui.x = ui.x || 'margin'; ui.y = ui.y || 'biomass';
+    TOOLS.innerHTML =
+        segGroup('dd-dec-x', 'X', [['margin', 'Margin'], ['marginpct', 'Margin %']], ui.x) +
+        segGroup('dd-dec-y', 'Y', [['biomass', 'Biomass'], ['rounds', 'Rounds']], ui.y);
+    const xCap = ui.x === 'marginpct' ? 'victory margin, % of total' : 'victory margin (close → blowout)';
+    const yCap = ui.y === 'rounds' ? 'rounds played' : 'total biomass';
+    BODY.innerHTML = cloudHostHTML(`<b>↑ ${yCap}</b> · <b>→ ${xCap}</b> · each puff = one match · hue = winner family`);
+    seedField(decisivenessSpec({ x: ui.x, y: ui.y }));
+    wireSeg('dd-dec-x', k => { ui.x = k; renderDecisiveDetail(v); });
+    wireSeg('dd-dec-y', k => { ui.y = k; renderDecisiveDetail(v); });
 }
 
 // Match Conditions has a map-size ↔ rounds group-by toggle in the toolbar.
@@ -356,12 +425,13 @@ function renderConditionsDetail(v) {
     killCloud();
     const group = v.ui.group || 'map_size';
     TOOLS.innerHTML = `<span class="dd-seg" id="dd-cond-seg">
-        ${[['map_size', 'Map size'], ['rounds', 'Rounds']].map(([k, l]) =>
+        ${[['map_size', 'Map size'], ['rounds', 'Rounds'], ['map_strategy', 'Vision']].map(([k, l]) =>
             `<button class="dd-seg-b${group === k ? ' on' : ''}" data-k="${k}">${l}</button>`).join('')}
     </span>`;
+    const groupedBy = group === 'rounds' ? 'round count' : group === 'map_strategy' ? 'map vision' : 'map size';
     BODY.innerHTML = `<div class="dd-cloud-detail">
         <div class="dd-cloud-host" id="dd-cloud-host"></div>
-        <div class="dd-cloud-caption"><b>↑ total biome score</b> · <b>→ grouped by ${group === 'rounds' ? 'round count' : 'map size'}</b> · each puff = one match · hue = winner family &nbsp;·&nbsp; <span class="dd-dim">hover for detail</span></div>
+        <div class="dd-cloud-caption"><b>↑ total biome score</b> · <b>→ grouped by ${groupedBy}</b> · each puff = one match · hue = winner family &nbsp;·&nbsp; <span class="dd-dim">hover for detail</span></div>
     </div>`;
     detailCloud = createField($('dd-cloud-host'), { spec: conditionsSpec(group), interactive: true, onPick: openModel, initial: getLatest() });
     $('dd-cond-seg').querySelectorAll('.dd-seg-b').forEach(b => b.addEventListener('click', () => {
@@ -513,6 +583,7 @@ function splitsBlock(splits) {
         { key: 'mode', title: 'Mode', fmt: k => cap(k) },
         { key: 'map_size', title: 'Map', fmt: k => k === 'auto' ? 'Fit' : cap(k) },
         { key: 'rounds', title: 'Rounds', fmt: k => `${k}` },
+        { key: 'map_strategy', title: 'Vision', fmt: k => cap(k) },
     ];
     let html = '';
     for (const g of groups) {

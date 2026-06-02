@@ -201,6 +201,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'mode': body.get('mode', 'standard'),
             'format': body.get('format'),
             'map_size': body.get('map_size'),
+            'map_strategy': body.get('map_strategy'),
             'rounds': body.get('rounds'),
             'p1': body['p1'],
             'p2': body['p2'],

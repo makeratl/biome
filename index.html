@@ -379,6 +379,27 @@
         </div>
     </div>
 
+    <!-- Model picker grid — opened from a player card's "change" button.
+         Lists every installed model as a ranked, metric-rich card. -->
+    <div id="model-grid-modal" class="model-grid-modal" style="display:none;">
+        <div class="mgm-backdrop"></div>
+        <div class="mgm-panel" role="dialog" aria-label="Choose a model">
+            <div class="mgm-header">
+                <span class="mgm-title" id="mgm-title">Choose a model</span>
+                <button id="btn-mgm-close" class="mcp-close" aria-label="Close">×</button>
+            </div>
+            <div class="mgm-toolbar">
+                <span class="mgm-sort-label">Sort</span>
+                <div class="world-seg mgm-sort" id="mgm-sort">
+                    <button type="button" data-sort="elo" class="on">ELO</button>
+                    <button type="button" data-sort="winrate">Win&nbsp;rate</button>
+                    <button type="button" data-sort="name">Name</button>
+                </div>
+            </div>
+            <div class="mgm-grid" id="mgm-grid"></div>
+        </div>
+    </div>
+
     <!-- Game Over Overlay -->
     <div id="game-over-overlay" class="game-over-overlay event-stage" style="display:none;">
         <div class="game-over-card">
@@ -477,20 +498,24 @@
                     <button id="btn-match-expand" class="ms-expand" title="Change setup">⟲</button>
                 </div>
 
-                <!-- Mode-specific configuration -->
+                <!-- Mode-specific configuration. The <select>s are the value
+                     source of truth (start logic reads .value); they're hidden and
+                     driven by the rich model cards above them. -->
                 <div id="match-config-solo" class="match-config" data-mode="solo">
-                    <div class="mmp-label p2">Opponent</div>
-                    <div class="mmp-row"><span class="mmp-ava p2" id="mmp-ava-p2-solo"></span>
-                        <select id="match-model-p2-solo" class="match-model-picker p2"></select></div>
+                    <div class="modelcard-row solo">
+                        <div class="modelcard p2" id="pcard-p2-solo" data-slot="p2-solo"></div>
+                    </div>
+                    <select id="match-model-p2-solo" class="match-model-picker p2 mmp-hidden-select"></select>
                 </div>
 
                 <div id="match-config-watch" class="match-config" data-mode="watch" style="display:none;">
-                    <div class="mmp-label p1">Player 1</div>
-                    <div class="mmp-row"><span class="mmp-ava p1" id="mmp-ava-p1-watch"></span>
-                        <select id="match-model-p1-watch" class="match-model-picker p1"></select></div>
-                    <div class="mmp-label p2" style="margin-top:8px;">Player 2</div>
-                    <div class="mmp-row"><span class="mmp-ava p2" id="mmp-ava-p2-watch"></span>
-                        <select id="match-model-p2-watch" class="match-model-picker p2"></select></div>
+                    <div class="modelcard-row watch">
+                        <div class="modelcard p1" id="pcard-p1-watch" data-slot="p1-watch"></div>
+                        <div class="modelcard-vs" id="watch-vs"><span class="mc-vs-word">VS</span></div>
+                        <div class="modelcard p2" id="pcard-p2-watch" data-slot="p2-watch"></div>
+                    </div>
+                    <select id="match-model-p1-watch" class="match-model-picker p1 mmp-hidden-select"></select>
+                    <select id="match-model-p2-watch" class="match-model-picker p2 mmp-hidden-select"></select>
                 </div>
 
                 <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
@@ -538,6 +563,14 @@
                             <button type="button" data-val="10">10</button>
                             <button type="button" data-val="15">15</button>
                             <button type="button" data-val="20">20</button>
+                        </div>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Map vision</span>
+                        <div class="world-seg world-seg-maps" id="world-mapstrategy" title="How the board is presented to the AI">
+                            <button type="button" data-val="mediated"><span class="ws-seg-name">Mediated</span><span class="ws-seg-dim">regions</span></button>
+                            <button type="button" data-val="ascii"><span class="ws-seg-name">ASCII</span><span class="ws-seg-dim">text grid</span></button>
+                            <button type="button" data-val="raw"><span class="ws-seg-name">Raw</span><span class="ws-seg-dim">coords</span></button>
                         </div>
                     </div>
                     <div class="mw-summary" id="world-summary"></div>

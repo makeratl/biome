@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS matches (
     mode          TEXT    DEFAULT 'standard',
     format        TEXT,
     map_size      TEXT,
+    map_strategy  TEXT,
     rounds        INTEGER,
     p1            TEXT    NOT NULL,
     p2            TEXT    NOT NULL,
@@ -106,10 +107,19 @@ def init_db():
     with _lock:
         conn = _connect()
         conn.executescript(SCHEMA)
+        _add_column_if_missing(conn, 'matches', 'map_strategy', 'TEXT')
         conn.commit()
         count = conn.execute('SELECT COUNT(*) AS c FROM matches').fetchone()['c']
         if count == 0 and os.path.exists(LEGACY_LOG):
             _migrate_legacy(conn)
+
+
+def _add_column_if_missing(conn, table, column, decl):
+    """Additive migration: add a column to an existing table if it isn't there
+    yet (CREATE TABLE IF NOT EXISTS won't alter a table that already exists)."""
+    cols = {r['name'] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()}
+    if column not in cols:
+        conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {decl}')
 
 
 def _migrate_legacy(conn):
@@ -129,6 +139,7 @@ def _migrate_legacy(conn):
             'mode': entry.get('mode', 'standard'),
             'format': entry.get('format'),
             'map_size': entry.get('map_size'),
+            'map_strategy': entry.get('map_strategy'),
             'rounds': entry.get('rounds'),
             'p1': entry['p1'],
             'p2': entry['p2'],
@@ -190,12 +201,13 @@ def _insert_match(conn, body, played_at=None):
 
     cur = conn.execute(
         """INSERT INTO matches
-           (played_at, tournament_id, round, mode, format, map_size, rounds,
+           (played_at, tournament_id, round, mode, format, map_size, map_strategy, rounds,
             p1, p2, p1_score, p2_score, winner, loser, margin)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (played_at, body.get('tournament_id'), body.get('round'),
          body.get('mode', 'standard'), body.get('format'), body.get('map_size'),
-         body.get('rounds'), p1, p2, p1_score, p2_score, winner, loser, margin))
+         body.get('map_strategy'), body.get('rounds'),
+         p1, p2, p1_score, p2_score, winner, loser, margin))
     match_id = cur.lastrowid
 
     _apply_player(conn, match_id, played_at, m1, p2, new_r1, e1, s1 == 1)
@@ -296,7 +308,7 @@ def get_history():
         conn = _connect()
         rows = conn.execute(
             """SELECT played_at AS timestamp, tournament_id, round, mode, format,
-                      map_size, rounds, p1, p2, p1_score, p2_score, winner, loser, margin
+                      map_size, map_strategy, rounds, p1, p2, p1_score, p2_score, winner, loser, margin
                FROM matches ORDER BY id ASC""").fetchall()
         return [dict(r) for r in rows]
 
@@ -345,7 +357,70 @@ def get_dashboard():
             'recent': _recent(conn),
             'match_points': _match_points(conn),
             'highlights': _highlights(conn),
+            'vision_ladders': _vision_ladders(conn),
         }
+
+
+# ── derived per-vision ELO ladders ───────────────────────────
+# The canonical `models` ELO mixes every map vision together. These ladders ask a
+# narrower question — "how would the table look if only <vision> matches counted?"
+# — by replaying just that vision's matches from a fresh 1000 with the same K and
+# expected-score formula the live rating uses. Purely derived (no schema, no live
+# rating change); recomputed each poll. Match volume is small, so the 3 replays
+# are cheap. Shapes mirror _leaderboard()/_timeline() so the client reuses them.
+
+def _vision_ladders(conn):
+    # Untagged legacy matches (NULL/'') count as 'mediated' — before per-vision
+    # tracking existed the regional-summary (mediated) view was the *only* board
+    # presentation, so those matches belong to the default "Standard" ladder.
+    effective = "COALESCE(NULLIF(map_strategy, ''), 'mediated')"
+    strategies = [r['v'] for r in conn.execute(
+        f"SELECT DISTINCT {effective} AS v FROM matches").fetchall()]
+    out = {}
+    for strat in strategies:
+        rows = conn.execute(
+            f"""SELECT p1, p2, winner, played_at FROM matches
+                WHERE {effective}=? ORDER BY played_at ASC, id ASC""", (strat,)).fetchall()
+        out[strat] = _replay_ladder(rows)
+    return out
+
+
+def _replay_ladder(rows):
+    elo, peak, wins, losses, games, streak = {}, {}, {}, {}, {}, {}
+    timeline = {}
+    for r in rows:
+        p1, p2, winner = r['p1'], r['p2'], r['winner']
+        if not (p1 and p2 and winner):
+            continue
+        r1 = elo.get(p1, DEFAULT_ELO)
+        r2 = elo.get(p2, DEFAULT_ELO)
+        e1 = _expected(r1, r2)
+        s1 = 1 if winner == p1 else 0
+        n1 = round(r1 + K_FACTOR * (s1 - e1))
+        n2 = round(r2 + K_FACTOR * ((1 - s1) - (1 - e1)))
+        elo[p1], elo[p2] = n1, n2
+        for model, won, newr, opp in ((p1, s1 == 1, n1, p2), (p2, s1 == 0, n2, p1)):
+            games[model] = games.get(model, 0) + 1
+            if won:
+                wins[model] = wins.get(model, 0) + 1
+                streak[model] = streak.get(model, 0) + 1 if streak.get(model, 0) > 0 else 1
+            else:
+                losses[model] = losses.get(model, 0) + 1
+                streak[model] = streak.get(model, 0) - 1 if streak.get(model, 0) < 0 else -1
+            peak[model] = max(peak.get(model, DEFAULT_ELO), newr)
+            timeline.setdefault(model, []).append(
+                {'n': games[model], 't': r['played_at'], 'elo': newr,
+                 'result': 'W' if won else 'L', 'opponent': opp})
+    models = sorted(elo.keys(), key=lambda m: (-elo[m], m))
+    leaderboard = []
+    for i, m in enumerate(models):
+        g, w = games.get(m, 0), wins.get(m, 0)
+        leaderboard.append({
+            'model': m, 'elo': elo[m], 'peak_elo': peak.get(m, DEFAULT_ELO),
+            'wins': w, 'losses': losses.get(m, 0), 'matches': g, 'streak': streak.get(m, 0),
+            'winrate': round(w / g * 100) if g else 0, 'rank': i + 1,
+        })
+    return {'leaderboard': leaderboard, 'timeline': timeline}
 
 
 def _match_points(conn, limit=1500):
@@ -353,7 +428,7 @@ def _match_points(conn, limit=1500):
     conditions, decisiveness). Scores are the players' final ecosystem totals."""
     rows = conn.execute(
         """SELECT winner, loser, p1, p2, p1_score, p2_score, margin,
-                  map_size, rounds, mode, played_at
+                  map_size, map_strategy, rounds, mode, played_at
            FROM matches ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
@@ -425,12 +500,13 @@ def _factors(conn):
         return [{'key': r['key'], 'matches': r['matches'],
                  'avg_margin': round(r['avg_margin'], 1) if r['avg_margin'] is not None else 0}
                 for r in rows]
-    return {'map_size': by('map_size'), 'rounds': by('rounds'), 'mode': by('mode')}
+    return {'map_size': by('map_size'), 'rounds': by('rounds'), 'mode': by('mode'),
+            'map_strategy': by('map_strategy')}
 
 
 def _recent(conn, limit=14):
     rows = conn.execute(
-        """SELECT m.id, m.played_at, m.mode, m.map_size, m.rounds, m.winner, m.loser,
+        """SELECT m.id, m.played_at, m.mode, m.map_size, m.map_strategy, m.rounds, m.winner, m.loser,
                   m.p1, m.p2, m.p1_score, m.p2_score, m.margin
            FROM matches m ORDER BY m.id DESC LIMIT ?""", (limit,)).fetchall()
     out = []
@@ -450,7 +526,7 @@ def get_matches(limit=2000):
     with _lock:
         conn = _connect()
         rows = conn.execute(
-            """SELECT id, played_at, mode, map_size, rounds, format, tournament_id,
+            """SELECT id, played_at, mode, map_size, map_strategy, rounds, format, tournament_id,
                       round, winner, loser, p1, p2, p1_score, p2_score, margin
                FROM matches ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
         ids = [r['id'] for r in rows]
@@ -492,7 +568,7 @@ def get_model_detail(name):
                FROM rating_events WHERE model=? ORDER BY id ASC""", (name,)).fetchall()]
 
         match_rows = conn.execute(
-            """SELECT id, played_at, mode, map_size, rounds, winner, loser,
+            """SELECT id, played_at, mode, map_size, map_strategy, rounds, winner, loser,
                       p1, p2, p1_score, p2_score, margin
                FROM matches WHERE p1=? OR p2=? ORDER BY id DESC""", (name, name)).fetchall()
         matches, h2h = [], {}
@@ -524,7 +600,8 @@ def get_model_detail(name):
             return [{'key': r['key'], 'wins': r['wins'], 'games': r['games'],
                      'winrate': round(r['wins'] / r['games'] * 100) if r['games'] else 0}
                     for r in rows]
-        m['splits'] = {'mode': split('mode'), 'map_size': split('map_size'), 'rounds': split('rounds')}
+        m['splits'] = {'mode': split('mode'), 'map_size': split('map_size'), 'rounds': split('rounds'),
+                       'map_strategy': split('map_strategy')}
         return m
 
 

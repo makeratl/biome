@@ -2377,6 +2377,7 @@ class Game {
         if (selects.length === 0) return;
 
         this._installedModels = await listOllamaModels();
+        await this._loadModelMeta();   // ranking + record + form, for the cards
 
         for (const select of selects) {
             const prevValue = select.value;
@@ -2403,7 +2404,7 @@ class Game {
         }
 
         // Set sensible defaults: prefer cloud models, pick two truly different ones for Watch
-        if (this._installedModels.length === 0) return;
+        if (this._installedModels.length === 0) { this._wirePickerPreviews(); return; }
         const installed = this._installedModels;
         const cloud = installed.filter(m => m.name.includes('cloud'));
         const first = cloud[0] || installed[0];
@@ -2425,21 +2426,239 @@ class Game {
         this._wirePickerPreviews();
     }
 
-    // Live avatar preview beside each model picker — pick opponents by face.
-    _wirePickerPreviews() {
-        const pairs = [
-            ['match-model-p2-solo', 'mmp-ava-p2-solo'],
-            ['match-model-p1-watch', 'mmp-ava-p1-watch'],
-            ['match-model-p2-watch', 'mmp-ava-p2-watch'],
-        ];
-        for (const [selId, avaId] of pairs) {
-            const sel = document.getElementById(selId);
-            const ava = document.getElementById(avaId);
-            if (!sel || !ava) continue;
-            const update = () => applyAvatar(ava, sel.value);
-            if (!sel._previewWired) { sel.addEventListener('change', update); sel._previewWired = true; }
-            update();
+    // ── Rich model cards + ranked picker grid ─────────────────
+    // The hidden <select>s hold the chosen value (start logic reads .value); the
+    // cards render that choice with ranking/record/form, and the grid modal lets
+    // you browse the standings to pick.
+
+    // Human-readable size, or '' for cloud models (which report a placeholder
+    // size that rounds to "0 MB" — noise on the card).
+    _modelSizeLabel(bytes) {
+        const s = formatModelSize(bytes);
+        return (!s || s === '0 MB') ? '' : s;
+    }
+
+    _slotMap() {
+        return {
+            'p2-solo':  { selectId: 'match-model-p2-solo',  cardId: 'pcard-p2-solo',  role: 'Opponent' },
+            'p1-watch': { selectId: 'match-model-p1-watch', cardId: 'pcard-p1-watch', role: 'Player 1' },
+            'p2-watch': { selectId: 'match-model-p2-watch', cardId: 'pcard-p2-watch', role: 'Player 2' },
+        };
+    }
+
+    // Build name → { elo, rank, wins, losses, games, winrate, form[] } from the
+    // server's leaderboard + recent history. Unplayed models get null stats.
+    async _loadModelMeta() {
+        const [rankings, history] = await Promise.all([
+            fetchRankings().catch(() => null),
+            fetchHistory().catch(() => []),
+        ]);
+        const meta = new Map();
+        let rank = 0;
+        if (rankings) {
+            for (const [name, s] of Object.entries(rankings)) {
+                rank++;
+                const games = s.matches ?? ((s.wins || 0) + (s.losses || 0));
+                meta.set(name, {
+                    elo: s.elo, rank,
+                    wins: s.wins || 0, losses: s.losses || 0, games,
+                    winrate: games ? Math.round((s.wins || 0) / games * 100) : null,
+                    form: [],
+                });
+            }
         }
+        // Last-5 form (W/L) per model, oldest→newest, from match history.
+        for (const m of (history || [])) {
+            if (!m || !m.winner) continue;
+            for (const name of [m.p1, m.p2]) {
+                if (!name) continue;
+                let e = meta.get(name);
+                if (!e) { e = { elo: null, rank: null, wins: 0, losses: 0, games: 0, winrate: null, form: [] }; meta.set(name, e); }
+                e.form.push(m.winner === name ? 'W' : 'L');
+            }
+        }
+        for (const e of meta.values()) e.form = e.form.slice(-5);
+        this._modelMeta = meta;
+    }
+
+    // Wire each select's change → re-render its card + the watch odds, then paint
+    // the current state. (Replaces the old avatar-only preview.)
+    _wirePickerPreviews() {
+        for (const slot of Object.keys(this._slotMap())) {
+            const cfg = this._slotMap()[slot];
+            const sel = document.getElementById(cfg.selectId);
+            if (!sel) continue;
+            if (!sel._cardWired) {
+                sel.addEventListener('change', () => { this._renderModelCard(slot); this._renderWatchOdds(); });
+                sel._cardWired = true;
+            }
+            this._renderModelCard(slot);
+        }
+        this._renderWatchOdds();
+    }
+
+    // Render the rich model card for one picker slot. (Named _renderModelCard to
+    // avoid colliding with _renderPlayerCard, which renders prematch VS cards.)
+    _renderModelCard(slot) {
+        const cfg = this._slotMap()[slot];
+        if (!cfg) return;
+        const card = document.getElementById(cfg.cardId);
+        const sel = document.getElementById(cfg.selectId);
+        if (!card || !sel) return;
+
+        const open = () => this._openModelGrid(slot);
+        const name = sel.value;
+        if (!name) {
+            card.innerHTML = `<div class="mc-label">${cfg.role}</div>
+                <div class="mc-empty">No models found<br><span>Is Ollama running?</span></div>
+                <button type="button" class="mc-change">Manage models</button>`;
+            card.querySelector('.mc-change').addEventListener('click', () => this._openModelConfigModal?.());
+            return;
+        }
+
+        const id = resolveModel(name);
+        const mt = this._modelMeta?.get(name) || null;
+        const ranked = mt && mt.elo != null;
+        const sizeM = this._installedModels?.find(m => m.name === name);
+        const sizeStr = this._modelSizeLabel(sizeM?.size);
+
+        const rankLine = ranked
+            ? `<span class="mc-rank">#${mt.rank}</span><span class="mc-elo">${mt.elo}<i>ELO</i></span>`
+            : `<span class="mc-rank mc-unranked">Unranked</span>`;
+        const recLine = ranked
+            ? `<span class="mc-rec">${mt.wins}–${mt.losses}</span>${mt.winrate != null ? `<span class="mc-wr">${mt.winrate}% WR</span>` : ''}`
+            : `<span class="mc-rec mc-dim">no matches yet</span>`;
+        const form = (mt?.form?.length)
+            ? `<div class="mc-form" title="Recent form (newest right)">${mt.form.map(o => `<i class="mc-pip ${o === 'W' ? 'w' : 'l'}"></i>`).join('')}</div>`
+            : '';
+
+        card.innerHTML = `
+            <div class="mc-label">${cfg.role}</div>
+            <div class="mc-ava" data-ava role="button" tabindex="0" title="Change model"></div>
+            <div class="mc-name" title="${name}">${this._prettyModelName(name)}</div>
+            <div class="mc-statline">${rankLine}</div>
+            <div class="mc-statline mc-recline">${recLine}</div>
+            ${form}
+            ${sizeStr ? `<div class="mc-size">${sizeStr}</div>` : ''}
+            <button type="button" class="mc-change">Change ▾</button>
+        `;
+        applyAvatar(card.querySelector('[data-ava]'), name);
+        card.querySelector('.mc-change').addEventListener('click', open);
+        card.querySelector('.mc-ava').addEventListener('click', open);
+        card.querySelector('.mc-ava').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+        });
+    }
+
+    // Win-probability strip between the two Watch cards (from each side's ELO).
+    _renderWatchOdds() {
+        const vs = document.getElementById('watch-vs');
+        if (!vs) return;
+        const p1 = document.getElementById('match-model-p1-watch')?.value;
+        const p2 = document.getElementById('match-model-p2-watch')?.value;
+        const m1 = this._modelMeta?.get(p1), m2 = this._modelMeta?.get(p2);
+        if (!m1 || !m2 || m1.elo == null || m2.elo == null) {
+            vs.innerHTML = `<span class="mc-vs-word">VS</span>`;
+            return;
+        }
+        const p1win = Math.round(expectedScore(m1.elo, m2.elo) * 100);
+        vs.innerHTML = `<span class="mc-vs-word">VS</span>
+            <div class="mc-odds">
+                <span class="mc-odds-p1">${p1win}%</span>
+                <span class="mc-odds-sep">·</span>
+                <span class="mc-odds-p2">${100 - p1win}%</span>
+            </div>`;
+    }
+
+    _openModelGrid(slot) {
+        this._gridSlot = slot;
+        this._gridSort = this._gridSort || 'elo';
+        const modal = document.getElementById('model-grid-modal');
+        const cfg = this._slotMap()[slot];
+        const title = document.getElementById('mgm-title');
+        if (title) title.textContent = `Choose — ${cfg?.role || 'model'}`;
+        document.querySelectorAll('#mgm-sort button').forEach(b =>
+            b.classList.toggle('on', b.dataset.sort === this._gridSort));
+        if (modal) modal.style.display = '';
+        this._renderModelGrid();
+    }
+
+    _closeModelGrid() {
+        const modal = document.getElementById('model-grid-modal');
+        if (modal) modal.style.display = 'none';
+        this._gridSlot = null;
+    }
+
+    _renderModelGrid() {
+        const grid = document.getElementById('mgm-grid');
+        const slot = this._gridSlot;
+        if (!grid || !slot) return;
+        const cfg = this._slotMap()[slot];
+        const current = document.getElementById(cfg.selectId)?.value;
+        // Model in the *other* Watch slot — flagged so you don't pick a mirror match.
+        let taken = null;
+        if (slot === 'p1-watch') taken = document.getElementById('match-model-p2-watch')?.value;
+        else if (slot === 'p2-watch') taken = document.getElementById('match-model-p1-watch')?.value;
+
+        const meta = (n) => this._modelMeta?.get(n);
+        const sort = this._gridSort || 'elo';
+        const models = [...(this._installedModels || [])].sort((a, b) => {
+            if (sort === 'name') return a.name.localeCompare(b.name);
+            const ma = meta(a.name), mb = meta(b.name);
+            if (sort === 'winrate') {
+                const wa = ma?.winrate ?? -1, wb = mb?.winrate ?? -1;
+                if (wb !== wa) return wb - wa;
+            }
+            const ea = ma?.elo ?? -1, eb = mb?.elo ?? -1;   // ranked before unranked
+            if (eb !== ea) return eb - ea;
+            return a.name.localeCompare(b.name);
+        });
+
+        grid.innerHTML = '';
+        if (models.length === 0) {
+            grid.innerHTML = `<div class="mc-empty">No models installed — open Manage Models to download one.</div>`;
+            return;
+        }
+        for (const m of models) {
+            const mt = meta(m.name);
+            const ranked = mt && mt.elo != null;
+            const sizeStr = this._modelSizeLabel(m.size);
+            const isCur = m.name === current;
+            const isTaken = taken && m.name === taken;
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = `mgm-card${isCur ? ' is-current' : ''}${isTaken ? ' is-taken' : ''}`;
+            card.innerHTML = `
+                <span class="mgm-c-ava" data-ava></span>
+                <span class="mgm-c-body">
+                    <span class="mgm-c-top">
+                        <span class="mgm-c-name" title="${m.name}">${this._prettyModelName(m.name)}</span>
+                        ${ranked ? `<span class="mgm-c-rankbadge">#${mt.rank}</span>` : ''}
+                    </span>
+                    <span class="mgm-c-meta">
+                        ${ranked ? `<span class="mgm-c-elo">${mt.elo} ELO</span><span class="mgm-c-rec">${mt.wins}–${mt.losses}</span>${mt.winrate != null ? `<span class="mgm-c-wr">${mt.winrate}%</span>` : ''}`
+                                 : `<span class="mgm-c-dim">unranked</span>`}
+                        ${sizeStr ? `<span class="mgm-c-size">${sizeStr}</span>` : ''}
+                    </span>
+                    ${mt?.form?.length ? `<span class="mgm-c-form">${mt.form.map(o => `<i class="mc-pip ${o === 'W' ? 'w' : 'l'}"></i>`).join('')}</span>` : ''}
+                </span>
+                ${isCur ? `<span class="mgm-c-badge">Selected</span>` : (isTaken ? `<span class="mgm-c-badge taken">In use</span>` : '')}
+            `;
+            applyAvatar(card.querySelector('[data-ava]'), m.name);
+            card.addEventListener('click', () => this._selectModelForSlot(slot, m.name));
+            grid.appendChild(card);
+        }
+    }
+
+    _selectModelForSlot(slot, name) {
+        const cfg = this._slotMap()[slot];
+        const sel = document.getElementById(cfg.selectId);
+        if (sel) {
+            sel.value = name;
+            sel._userSet = true;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        this._closeModelGrid();
     }
 
     _pickDifferentModel(excludeName) {
@@ -2474,6 +2693,17 @@ class Game {
             const el = document.getElementById(id);
             if (el) el.addEventListener('change', () => { el._userSet = true; });
         }
+
+        // Ranked picker grid: close + sort controls
+        document.getElementById('btn-mgm-close')?.addEventListener('click', () => this._closeModelGrid());
+        document.querySelector('#model-grid-modal .mgm-backdrop')?.addEventListener('click', () => this._closeModelGrid());
+        document.getElementById('mgm-sort')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-sort]');
+            if (!btn) return;
+            this._gridSort = btn.dataset.sort;
+            btn.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+            this._renderModelGrid();
+        });
 
         this._populateModelPickers();
         this._initWorldControls();
@@ -2542,6 +2772,7 @@ class Game {
             mapSize: 'auto',
             hexZoom: CONFIG.HEX_ZOOM.default,
             rounds: CONFIG.GAME.TOTAL_ROUNDS,
+            mapStrategy: 'mediated',   // how the board is presented to the AI (see js/map-strategies.js)
         };
         // In Auto, hex size is computed to fill; a preset uses the slider only
         // if the player actually moved it (otherwise it contain-fits too).
@@ -2575,6 +2806,7 @@ class Game {
         };
         bindSeg('world-mapsize', 'mapSize');
         bindSeg('world-rounds', 'rounds', (v) => Number(v));
+        bindSeg('world-mapstrategy', 'mapStrategy');
 
         // Hex-zoom slider with live px readout.
         const zoom = document.getElementById('world-hexzoom');
@@ -2784,7 +3016,7 @@ class Game {
         this.simulation = new Simulation(this.grid);
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.turns.totalRounds = world.rounds || CONFIG.GAME.TOTAL_ROUNDS;
-        this.matchContext = this._describeMatch(config.mode);
+        this.matchContext = this._describeMatch(config.mode, world.mapStrategy);
         this.aiPlayers = {};
         this._matchResolve = null;
         this._matchupOdds = null;
@@ -2998,6 +3230,7 @@ class Game {
             mode: cfg.mode,
             map_size: cfg.world?.mapSize || null,
             rounds: cfg.world?.rounds ?? null,
+            map_strategy: cfg.world?.mapStrategy || 'mediated',
         });
     }
 
@@ -3164,7 +3397,7 @@ class Game {
     // What game is being played — fed into every AI prompt via game.matchContext
     // so the model can adapt strategy and voice to the format and stakes (the
     // prompt builder reads this; absent it, the lab still reports board scale).
-    _describeMatch(mode) {
+    _describeMatch(mode, mapStrategy = 'mediated') {
         const labels = {
             solo: 'Solo ladder match (vs the house AI)',
             watch: 'Watch exhibition (AI vs AI)',
@@ -3175,7 +3408,10 @@ class Game {
             watch: 'STAKES: ranked exhibition — the result still moves ELO.',
             tournament: 'STAKES: single-elimination — lose and you are OUT of the bracket. ELO on the line.',
         };
-        return { mode, modeLabel: labels[mode] || mode, stakes: stakes[mode] || null };
+        return {
+            mode, modeLabel: labels[mode] || mode, stakes: stakes[mode] || null,
+            mapStrategy: mapStrategy || 'mediated',
+        };
     }
 
     async _syncFighterContext() {
@@ -3667,7 +3903,7 @@ class Game {
         this.turns.round = 0;
         this.turns.phase = 'SETUP';
         this.turns.totalRounds = rounds || CONFIG.GAME.TOTAL_ROUNDS;
-        this.matchContext = this._describeMatch('tournament');
+        this.matchContext = this._describeMatch('tournament', world?.mapStrategy);
         this.turns.players[1] = { ap: 0, actions: [] };
         this.turns.players[2] = { ap: 0, actions: [] };
 

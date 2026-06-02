@@ -36,6 +36,7 @@
             <div class="db-card-head">
                 <h2>ELO Over Time</h2>
                 <div class="db-chart-controls">
+                    <span class="db-seg-mini" id="db-elo-vision" title="Re-rank under one map vision (derived ladder)"></span>
                     <span class="db-hint">Click a model to isolate · click again to restore</span>
                     <button class="db-expand" data-panel="elo" title="Expand">⤢</button>
                 </div>
@@ -66,7 +67,7 @@
             </section>
 
             <!-- Biome scores — best ecosystem score × ELO -->
-            <section class="db-card db-field">
+            <section class="db-card db-field db-third">
                 <div class="db-card-head">
                     <h2>Biome&nbsp;Scores</h2>
                     <span class="db-hint">best score × ELO · records →</span>
@@ -76,12 +77,13 @@
             </section>
 
             <!-- Match conditions — grouped by map size / rounds -->
-            <section class="db-card db-field">
+            <section class="db-card db-field db-third">
                 <div class="db-card-head">
                     <h2>Match&nbsp;Conditions</h2>
                     <span class="db-seg-mini" id="db-cond-seg">
                         <button class="db-seg-mini-b on" data-group="map_size">Map size</button>
                         <button class="db-seg-mini-b" data-group="rounds">Rounds</button>
+                        <button class="db-seg-mini-b" data-group="map_strategy">Vision</button>
                     </span>
                     <button class="db-expand" data-panel="conditions" title="Expand">⤢</button>
                 </div>
@@ -89,7 +91,7 @@
             </section>
 
             <!-- Decisiveness — margin × total biomass -->
-            <section class="db-card db-field">
+            <section class="db-card db-field db-third">
                 <div class="db-card-head">
                     <h2>Decisiveness</h2>
                     <span class="db-hint">margin × total biomass</span>

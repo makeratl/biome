@@ -23,6 +23,21 @@ preloadAvatars();
 let isolated = null;        // model name to isolate in the ELO chart, or null
 let lastMatchCount = -1;    // to detect new matches for the live pulse
 let lastData = null;
+let eloVision = 'all';      // 'all' = global ELO, else a map-vision derived ladder
+
+// 'Standard' = the game's default 'mediated' map vision. The four filters are
+// always offered (even with no data yet) so the ladder set is predictable.
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['raw', 'Raw']];
+
+// The leaderboard + timeline currently driving the ELO chart and Standings:
+// the global rating, or a derived per-vision ladder when one is selected. A
+// selected-but-empty vision returns empty (no fallback) so it reads honestly.
+function activeLadder(data) {
+    if (eloVision === 'all') return { timeline: data.timeline, leaderboard: data.leaderboard };
+    const lad = data.vision_ladders?.[eloVision];
+    return { timeline: lad?.timeline || {}, leaderboard: lad?.leaderboard || [] };
+}
 
 const $ = (id) => document.getElementById(id);
 const short = (m) => (m || '—').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
@@ -71,8 +86,11 @@ function render(data) {
     }
 
     renderHighlights(data.highlights, data.leaderboard);
-    renderEloChart(data.timeline, data.leaderboard);
-    renderLeaderboard(data.leaderboard);
+    renderEloVisionSeg();
+    const ladder = activeLadder(data);
+    renderEloChart(ladder.timeline, ladder.leaderboard);
+    renderLeaderboard(ladder.leaderboard);
+    markStandingsVision();
     renderH2H(data.head_to_head, data.leaderboard);
     renderFactors(data.factors);
     renderFeed(data.recent, newMatch);
@@ -131,6 +149,29 @@ function card(icon, label, name, detail, hue, model) {
     </div>`;
 }
 
+// Vision toggle: All · Standard · ASCII · Raw — always offered. A vision with no
+// matches yet selects to an empty (honest) ladder rather than being hidden.
+function renderEloVisionSeg() {
+    const host = $('db-elo-vision');
+    if (!host) return;
+    host.innerHTML = VISION_FILTERS.map(([v, label]) =>
+        `<button class="db-seg-mini-b${v === eloVision ? ' on' : ''}" data-v="${v}">${label}</button>`).join('');
+    host.querySelectorAll('.db-seg-mini-b').forEach(b => b.addEventListener('click', () => {
+        eloVision = b.dataset.v;
+        isolated = null;                       // a model isolated in one ladder needn't exist in another
+        if (lastData) render(lastData);
+    }));
+}
+
+// Mark the Standings card when it's showing a vision sub-ladder, not the global.
+function markStandingsVision() {
+    const h = document.querySelector('.db-leaderboard .db-card-head h2');
+    if (!h) return;
+    h.innerHTML = eloVision === 'all'
+        ? 'Standings'
+        : `Standings <span class="db-vis-tag">${VISION_LABELS[eloVision]} lens</span>`;
+}
+
 // ── ELO over time (hand-rolled SVG) ──────────────────────────
 function renderEloChart(timeline, leaderboard) {
     const svg = $('db-elo-svg');
@@ -141,7 +182,11 @@ function renderEloChart(timeline, leaderboard) {
 
     // Summary chart focuses on the leaders — the full field is in the detail view.
     const shown = leaderboard.map(r => r.model).filter(mm => timeline[mm]).slice(0, ELO_SUMMARY_TOP);
-    if (!shown.length) return;
+    if (!shown.length) {
+        text(svg, W / 2, H / 2, eloVision === 'all' ? 'No matches yet' : `No ${VISION_LABELS[eloVision]} matches yet`, 'db-axis-title', 'middle');
+        $('db-legend').innerHTML = '';
+        return;
+    }
     const hiddenCount = leaderboard.filter(r => timeline[r.model]).length - shown.length;
 
     // Prepend the implicit 1000 origin so every line starts from the baseline.
@@ -242,6 +287,10 @@ function renderLegend(models) {
 
 // ── leaderboard table ────────────────────────────────────────
 function renderLeaderboard(rows) {
+    if (!rows.length) {
+        $('db-lb').innerHTML = `<tbody><tr><td class="db-mini-empty" style="padding:28px;text-align:center;">No ${eloVision === 'all' ? '' : VISION_LABELS[eloVision] + ' '}matches yet</td></tr></tbody>`;
+        return;
+    }
     let html = `<thead><tr>
         <th>#</th><th>Model</th><th>ELO</th><th>Peak</th><th>W-L</th><th>Win%</th><th>Streak</th></tr></thead><tbody>`;
     for (const r of rows) {

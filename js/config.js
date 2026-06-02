@@ -178,5 +178,10 @@ export const CONFIG = {
         LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
         ROUND_OPTIONS: [5, 10, 15, 20],   // selectable round counts (default = TOTAL_ROUNDS)
+        // Ollama context window cap. We size num_ctx to the prompt so a large
+        // map representation (e.g. the `raw` orientation) isn't SILENTLY
+        // front-truncated against Ollama's ~2048 default — but cap it here to
+        // bound KV-cache VRAM. mediated/ascii prompts sit well under this.
+        NUM_CTX_MAX: 8192,
     },
 };

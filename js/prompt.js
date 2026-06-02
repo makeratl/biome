@@ -177,7 +177,10 @@ function phaseBlock(ctx) {
 }
 
 function boardBlock(ctx) {
-    return `MAP REGIONS:\n${ctx.board.mapSummary}\n\nYOUR ECOSYSTEM: ${ctx.board.myEcosystem}\nENEMY ECOSYSTEM: ${ctx.board.enemyEcosystem}`;
+    // The map block comes from the active orientation strategy (see
+    // js/map-strategies.js); it carries its own header. The ecosystem lines are
+    // strategy-independent.
+    return `${ctx.board.mapBlock}\n\nYOUR ECOSYSTEM: ${ctx.board.myEcosystem}\nENEMY ECOSYSTEM: ${ctx.board.enemyEcosystem}`;
 }
 
 function candidatesBlock(candidates) {

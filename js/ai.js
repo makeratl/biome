@@ -4,6 +4,7 @@ import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 import { extractJSON } from './util.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
+import { getStrategy, DEFAULT_STRATEGY } from './map-strategies.js';
 
 // How long a warmed/active model is asked to stay resident in Ollama. Long
 // enough to outlast a full match (and the short gap to its next match in a
@@ -408,13 +409,23 @@ export class AIPlayer {
         const grid = this.game.grid;
         const mc = this.game.matchContext || {};
 
+        // The map block is produced by the active orientation strategy (shared
+        // with the Vision Lab); only PRESENTATION changes, candidates/placement
+        // stay constant. Default = mediated when no match context is set.
+        const strategy = getStrategy(mc.mapStrategy || DEFAULT_STRATEGY);
+        const mapBlock = strategy.buildMapBlock({
+            grid,
+            candidates,
+            regionSummary: this._generateMapSummary().replace(/\n+$/, ''),
+        });
+
         return {
             player, enemy, round, total, ap,
             match: { mode: mc.mode || null, modeLabel: mc.modeLabel || null, stakes: mc.stakes || null },
             board: {
                 cols: grid.cols, rows: grid.rows,
                 sizeLabel: matchSizeLabel(grid.cols, grid.rows),
-                mapSummary: this._generateMapSummary().replace(/\n+$/, ''),
+                mapBlock,
                 myEcosystem: this._summarizePlayer(player),
                 enemyEcosystem: this._summarizePlayer(enemy),
                 candidates,
@@ -458,6 +469,11 @@ export class AIPlayer {
         // Some models ignore think:false and still use thinking tokens,
         // so budget enough for thinking overhead + JSON content
         const numPredict = this._isCloudModel() ? 1000 : 600;
+        // Size the context window to the prompt so a large map representation
+        // isn't silently front-truncated against Ollama's ~2048 default. Capped
+        // to bound VRAM; ~3 chars/token is conservative for coord-heavy text.
+        const numCtx = Math.min(CONFIG.GAME.NUM_CTX_MAX,
+            Math.max(2048, Math.ceil((system.length + user.length) / 3)));
 
         const response = await fetch(url, {
             method: 'POST',
@@ -480,7 +496,7 @@ export class AIPlayer {
                 // (P1 → P2 → back to P1 can exceed 5 min with two large models),
                 // forcing a cold reload on the next turn. Cloud models ignore it.
                 keep_alive: MATCH_KEEP_ALIVE,
-                options: { temperature: 0.7, num_predict: numPredict },
+                options: { temperature: 0.7, num_predict: numPredict, num_ctx: numCtx },
             }),
         });
 

@@ -15,6 +15,7 @@ import { Simulation } from './simulation.js';
 import { createOrganism } from './species.js';
 import { AIPlayer, listOllamaModels, RECOMMENDED_MODELS } from './ai.js';
 import { extractJSON } from './util.js';
+import { MAP_STRATEGIES } from './map-strategies.js';
 
 // Lab-specific map presets — deliberately SMALL so a raw per-cell listing is
 // tractable for a model and the whole board is comprehensible at a glance.
@@ -62,6 +63,7 @@ class VisionLab {
         this.gpOpen = false;          // panel expanded?
         this.gpSeat = 1;              // which player's turn we're previewing
         this.gpRound = 1;             // round number fed into the prompt
+        this.gpStrategy = 'mediated'; // map orientation strategy fed to the real prompt
         this.gpLabels = [];           // [{label, cell, type}] candidate overlay
 
         this._buildGrid();
@@ -109,6 +111,10 @@ class VisionLab {
         const shim = {
             grid: this.grid,
             renderer: { render: () => this.render() },
+            // The real _buildPrompt reads game.matchContext.mapStrategy to pick
+            // the board representation — so the panel shows the genuine prompt
+            // for whichever orientation is selected.
+            matchContext: { mapStrategy: this.gpStrategy },
             turns: {
                 round: 1,
                 totalRounds,
@@ -287,23 +293,10 @@ class VisionLab {
     }
 
     // RAW: every land cell by (col,row) with terrain + nutrients + occupants.
-    // The model must reason spatially and may point at ANY cell.
+    // Delegates to the shared registry (js/map-strategies.js) so the lab and the
+    // live game draw the raw representation from one source.
     _buildRawView() {
-        const lines = [];
-        lines.push(`Hex grid ${this.grid.cols} cols × ${this.grid.rows} rows (flat-top, even-q offset). Columns 0..${this.grid.cols - 1} left→right, rows 0..${this.grid.rows - 1} top→bottom.`);
-        lines.push('Terrain: FERTILE (best soil) > GRASSLAND > ROCKY (poor); WATER is unplaceable. nutrients 0.00–1.00.');
-        lines.push('Land cells (col,row terrain nutrients [occupants]):');
-        let water = 0;
-        this.grid.forEach(cell => {
-            if (cell.terrain === 'WATER') { water++; return; }
-            let s = `(${cell.col},${cell.row}) ${cell.terrain} ${cell.nutrients.toFixed(2)}`;
-            if (cell.organisms.length) {
-                s += ' [' + cell.organisms.map(o => `P${o.player}:${o.species}`).join(',') + ']';
-            }
-            lines.push('  ' + s);
-        });
-        lines.push(`(${water} water cells omitted.)`);
-        return lines.join('\n');
+        return MAP_STRATEGIES.raw.buildMapBlock({ grid: this.grid });
     }
 
     // GAME: the EXACT representation real matches feed the model — a 9-region
@@ -381,6 +374,7 @@ ${placing}
         tm.round = this.gpRound;
         tm.activePlayer = this.gpSeat;
         tm.players[this.gpSeat].ap = parseInt(el('vl-gp-ap').value, 10) || CONFIG.GAME.AP_PER_TURN;
+        this.gpShim.matchContext.mapStrategy = this.gpStrategy;
         return ai;
     }
 
@@ -496,6 +490,10 @@ ${placing}
     async _callModel(messages) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 90_000);
+        // Size context to the prompt so a large map view (raw) isn't silently
+        // front-truncated against Ollama's ~2048 default. Mirrors ai.js.
+        const chars = messages.reduce((n, m) => n + (m.content?.length || 0), 0);
+        const numCtx = Math.min(CONFIG.GAME.NUM_CTX_MAX, Math.max(2048, Math.ceil(chars / 3)));
         try {
             const resp = await fetch('/ollama/api/chat', {
                 method: 'POST',
@@ -508,7 +506,7 @@ ${placing}
                     stream: false,
                     think: false,
                     keep_alive: '30m',
-                    options: { temperature: 0.7, num_predict: 1200 },
+                    options: { temperature: 0.7, num_predict: 1200, num_ctx: numCtx },
                 }),
             });
             if (!resp.ok) throw new Error(`Ollama ${resp.status}: ${await resp.text()}`);
@@ -660,6 +658,10 @@ ${placing}
             if (Number.isFinite(v)) { this.gpRound = Math.max(1, v); if (this.gpOpen) this._gpPreview(); }
         });
         el('vl-gp-ap').addEventListener('change', () => { if (this.gpOpen) this._gpPreview(); });
+        el('vl-gp-strategy').addEventListener('change', (e) => {
+            this.gpStrategy = e.target.value;
+            if (this.gpOpen) this._gpPreview();
+        });
         el('vl-gp-send').addEventListener('click', () => this.gpSend());
 
         window.addEventListener('resize', () => { this.renderer._fit(); this.render(); });
