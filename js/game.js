@@ -10,6 +10,8 @@ import { TurnManager, PHASE } from './turn.js';
 import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { buildField, FORMATS, DEFAULT_FORMAT } from './tournament-format.js';
+import { openCodex } from './codex.js';
+import { openLeaderboard } from './leaderboard.js';
 
 // Models excluded from tournaments: embeddings, vision / vision-language, and
 // code specialists. They can't follow the game's JSON action protocol or aren't
@@ -22,6 +24,7 @@ const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vi
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
 import { applyAvatar, clearAvatar, preloadAvatars } from './model-avatar.js';
 import { resolveModel, paramLabel, mightLevel, titleCase } from './model-identity.js';
+import { shortId } from './util.js';
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
 import { playSound, setMuted, isMuted } from './sound.js';
@@ -293,6 +296,7 @@ class Game {
                 if (action === 'new-match') this._openLauncherWelcome();
                 else if (action === 'manage-models') this._openModelConfigModal();
                 else if (action === 'rankings') document.getElementById('btn-rankings')?.click();
+                else if (action === 'field-guide') openCodex();
             });
         }
     }
@@ -817,6 +821,9 @@ class Game {
     _onPhaseChange(phase) {
         const aiVsAi = this._isAIvsAI();
 
+        // Guided demo narration — a non-blocking banner keyed to each phase beat.
+        if (this._demoMode) this._demoBeat(phase);
+
         // LIVE badge: visible while the match is actively progressing — clears at ROUND_END so summary overlays don't fight for attention
         const liveStates = [PHASE.PLAYER_1_TURN, PHASE.PLAYER_2_TURN, PHASE.SIMULATING];
         this._setLiveBadge(liveStates.includes(phase));
@@ -979,6 +986,10 @@ class Game {
     async _runSimulation() {
         this.simulating = true;
         const steps = CONFIG.SIM.STEPS_PER_TURN;
+
+        // Reset the causal event tally so this round's recap narrates only what
+        // happened during these steps (not cumulative across rounds).
+        this.simulation.resetEvents();
 
         this._log(`Simulating ${steps} steps...`);
 
@@ -1470,40 +1481,20 @@ class Game {
 
     // ── Round-end recap card ──────────────────────────────────
 
+    // Round recap — leads with a causal *story* (who ate whom, which chains
+    // broke or completed, who's ahead and why), with the food-chain viz and a
+    // compact delta strip as support. The narrative is driven by the
+    // simulation's per-round event tally (simulation.getEvents()); the numbers
+    // alone never explained *why* the board changed.
     _showRecap(prevSnapshot) {
         const census = this.simulation.census();
-        const lines = [];
+        const events = this.simulation.getEvents?.() || null;
+        const scores = this.simulation.finalScore();
 
-        for (const p of [1, 2]) {
-            const before = prevSnapshot[p];
-            const after = census[p];
-            const biomassDelta = Math.round(after.biomass - before.biomass);
-            if (biomassDelta !== 0) {
-                lines.push({
-                    player: p,
-                    tag: this._playerTag(p),
-                    label: 'biomass',
-                    delta: biomassDelta,
-                });
-            }
-            // Species change deltas
-            for (const sp of ['GRASS', 'SHRUB', 'TREE', 'GRAZER', 'BROWSER', 'PREDATOR']) {
-                const dBefore = before.bySpecies?.[sp] || 0;
-                const dAfter = after.bySpecies?.[sp] || 0;
-                const diff = dAfter - dBefore;
-                if (diff !== 0 && Math.abs(diff) >= 2) {
-                    const flavor = CONFIG.SPECIES[sp]?.name || sp;
-                    lines.push({
-                        player: p,
-                        tag: this._playerTag(p),
-                        label: flavor,
-                        delta: diff,
-                    });
-                }
-            }
-        }
+        const story = this._composeRecapStory(prevSnapshot, census, events, scores);
+        const deltas = this._recapDeltas(prevSnapshot, census);
 
-        if (lines.length === 0) return Promise.resolve(); // nothing notable
+        if (story.lines.length === 0 && deltas.length === 0) return Promise.resolve(); // nothing notable
 
         this._playSound('recap');
 
@@ -1514,18 +1505,31 @@ class Game {
 
         hEl.textContent = `Round ${this.turns.round} Recap`;
 
-        // Sort by biggest delta magnitude, cap to 6 lines
-        lines.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-        const top = lines.slice(0, 6);
-        bEl.innerHTML = top.map(l => {
-            const sign = l.delta > 0 ? '+' : '';
-            const dir = l.delta > 0 ? 'up' : 'down';
-            return `<div class="rc-line rc-p${l.player}">
-                <span class="rc-tag">P${l.player}</span>
-                <span style="flex:1;text-align:left;margin-left:6px;">${l.label}</span>
-                <span class="rc-delta ${dir}">${sign}${l.delta}</span>
-            </div>`;
-        }).join('') + this._renderTrophicChain(census);
+        let html = '';
+        if (story.lines.length) {
+            html += `<div class="rc-story">` + story.lines.map(l =>
+                `<div class="rc-head rc-p${l.player} ${l.tone || ''}">${l.text}</div>`
+            ).join('') + `</div>`;
+        }
+        if (story.leader) {
+            html += `<div class="rc-leader rc-p${story.leader.player}">`
+                + `<span class="rc-tag">P${story.leader.player}</span>`
+                + `<span class="rc-lead-txt">leads — ${story.leader.reason}</span></div>`;
+        } else {
+            html += `<div class="rc-leader rc-even">Neck and neck</div>`;
+        }
+        html += this._renderTrophicChain(census);
+        if (deltas.length) {
+            html += `<div class="rc-deltas">` + deltas.map(l => {
+                const sign = l.delta > 0 ? '+' : '';
+                const dir = l.delta > 0 ? 'up' : 'down';
+                return `<div class="rc-line rc-p${l.player}">`
+                    + `<span class="rc-tag">P${l.player}</span>`
+                    + `<span class="rc-dlabel">${l.label}</span>`
+                    + `<span class="rc-delta ${dir}">${sign}${l.delta}</span></div>`;
+            }).join('') + `</div>`;
+        }
+        bEl.innerHTML = html;
 
         el.className = 'recap-hidden';
         void el.offsetWidth;
@@ -1538,8 +1542,110 @@ class Game {
                 el.classList.add('recap-hidden');
                 this._endMoment();
                 resolve();
-            }, 3200);
+            }, 4200);
         });
+    }
+
+    // Roll up species counts into trophic-tier totals (plants/herbivores/predators).
+    _tierCounts(bySpecies) {
+        let plants = 0, herbivores = 0, predators = 0;
+        for (const [sp, n] of Object.entries(bySpecies || {})) {
+            const t = CONFIG.SPECIES[sp]?.type;
+            if (t === 'plant') plants += n;
+            else if (t === 'herbivore') herbivores += n;
+            else if (t === 'predator') predators += n;
+        }
+        return { plants, herbivores, predators };
+    }
+
+    // Pick the 1–2 most dramatic *true* events of the round + a "who leads & why" line.
+    _composeRecapStory(prevSnapshot, census, events, scores) {
+        const cands = [];
+        const predName = CONFIG.SPECIES.PREDATOR.name;
+
+        for (const p of [1, 2]) {
+            const ev = events?.[p] || {};
+            const actor = this._playerTag(p, { withPrefix: false });
+            const b = this._tierCounts(prevSnapshot?.[p]?.bySpecies);
+            const a = census[p] || {};
+
+            // Collapse — a whole tier present before is gone now (most dramatic).
+            if (b.herbivores > 0 && (a.herbivores || 0) === 0) {
+                cands.push({ player: p, tone: 'tone-alert', w: 100, text: `${actor}'s herbivores were wiped out — food chain broken` });
+            } else if (b.predators > 0 && (a.predators || 0) === 0) {
+                cands.push({ player: p, tone: 'tone-alert', w: 95, text: `${actor}'s ${predName}s vanished — top of the chain collapsed` });
+            }
+
+            // Food chain completed this round → trophic bonus earned.
+            const hadAll = b.plants > 0 && b.herbivores > 0 && b.predators > 0;
+            const hasAll = (a.plants || 0) > 0 && (a.herbivores || 0) > 0 && (a.predators || 0) > 0;
+            if (!hadAll && hasAll) {
+                cands.push({ player: p, tone: 'tone-gold', w: 90, text: `${actor} completed the food chain — +25% bonus` });
+            }
+
+            // Predation surge.
+            if ((ev.preyKilled || 0) >= 3) {
+                cands.push({ player: p, tone: '', w: 50 + ev.preyKilled, text: `${actor}'s ${predName}s hunted down ${ev.preyKilled} herbivores` });
+            }
+            // Starvation.
+            const starved = (ev.herbStarved || 0) + (ev.predStarved || 0);
+            if (starved >= 4) {
+                cands.push({ player: p, tone: '', w: 38 + starved, text: `${actor} lost ${starved} animals to starvation` });
+            }
+            // Population surge.
+            const born = (ev.herbBorn || 0) + (ev.predBorn || 0);
+            if (born >= 4) {
+                cands.push({ player: p, tone: '', w: 30 + born, text: `${actor}'s herds bred — ${born} new animals born` });
+            }
+            // Plant spread.
+            if ((ev.plantsSpread || 0) >= 6) {
+                cands.push({ player: p, tone: '', w: 20 + Math.floor(ev.plantsSpread / 2), text: `${actor}'s plants spread across ${ev.plantsSpread} new cells` });
+            }
+            // Grazing pressure.
+            if ((ev.plantsEaten || 0) >= 6) {
+                cands.push({ player: p, tone: '', w: 18 + Math.floor(ev.plantsEaten / 2), text: `${actor}'s grazers cleared ${ev.plantsEaten} plants` });
+            }
+        }
+
+        cands.sort((a, b) => b.w - a.w);
+        const lines = cands.slice(0, 2);
+
+        // Leader & reason — reuse finalScore()'s multipliers to explain the lead.
+        let leader = null;
+        const s1 = scores[1].finalScore, s2 = scores[2].finalScore;
+        const total = Math.max(1, Math.max(s1, s2));
+        const margin = Math.abs(s1 - s2) / total;
+        if ((s1 > 0 || s2 > 0) && margin > 0.06) {
+            const lp = s1 > s2 ? 1 : 2;
+            const op = lp === 1 ? 2 : 1;
+            const ls = scores[lp], os = scores[op];
+            let reason;
+            if (ls.hasTrophic && !os.hasTrophic) reason = 'a complete food chain';
+            else if (ls.speciesCount > os.speciesCount) reason = `richer diversity (${ls.speciesCount} species)`;
+            else reason = 'greater biomass';
+            leader = { player: lp, reason };
+        }
+        return { lines, leader };
+    }
+
+    // Top few species count changes, labelled with their trophic tier so the
+    // invented names stop being opaque.
+    _recapDeltas(prevSnapshot, census) {
+        const lines = [];
+        for (const p of [1, 2]) {
+            const before = prevSnapshot?.[p];
+            const after = census[p];
+            if (!before || !after) continue;
+            for (const sp of ['GRASS', 'SHRUB', 'TREE', 'GRAZER', 'BROWSER', 'PREDATOR']) {
+                const diff = (after.bySpecies?.[sp] || 0) - (before.bySpecies?.[sp] || 0);
+                if (Math.abs(diff) >= 2) {
+                    const spec = CONFIG.SPECIES[sp];
+                    lines.push({ player: p, label: `${spec?.name || sp} · ${spec?.type || ''}`, delta: diff });
+                }
+            }
+        }
+        lines.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+        return lines.slice(0, 4);
     }
 
     _snapshotCensus() {
@@ -1835,6 +1941,7 @@ class Game {
 
         const chainRow = (p) => {
             const c = census[p] || {};
+            const complete = (c.plants || 0) > 0 && (c.herbivores || 0) > 0 && (c.predators || 0) > 0;
             const nodes = tiers.map((t, i) => {
                 const present = (c[t.key] || 0) > 0;
                 const cls = present ? 'tc-on' : 'tc-off';
@@ -1843,12 +1950,15 @@ class Game {
                     : '';
                 return connector + `<span class="tc-node ${cls}" title="${t.label}: ${c[t.key] || 0}">${t.icon}</span>`;
             }).join('');
-            return `<div class="tc-row tc-p${p}"><span class="tc-row-tag">P${p}</span>${nodes}</div>`;
+            const badge = complete
+                ? `<span class="tc-badge tc-badge-on">×1.25</span>`
+                : `<span class="tc-badge tc-badge-off">chain broken</span>`;
+            return `<div class="tc-row tc-p${p}"><span class="tc-row-tag">P${p}</span>${nodes}${badge}</div>`;
         };
 
         return `
             <div class="trophic-chain">
-                <div class="tc-title">Trophic chain</div>
+                <div class="tc-title">Food chain</div>
                 ${chainRow(1)}
                 ${chainRow(2)}
             </div>
@@ -2598,6 +2708,7 @@ class Game {
     }
 
     async _onStartMatchClick() {
+        this._endDemo();   // a manually-started match is never a demo
         // If a match is currently in progress (not game-over), confirm restart
         const running = this.turns.phase && this.turns.phase !== 'SETUP'
             && this.turns.phase !== PHASE.GAME_OVER;
@@ -2832,7 +2943,7 @@ class Game {
 
         const winner = s1.finalScore > s2.finalScore ? p1Name : p2Name;
         return await postResult({
-            tournament_id: crypto.randomUUID().slice(0, 8),
+            tournament_id: shortId(8),
             round: 0,
             p1: p1Name,
             p2: p2Name,
@@ -2840,6 +2951,8 @@ class Game {
             p2_score: s2.finalScore,
             winner,
             mode: cfg.mode,
+            map_size: cfg.world?.mapSize || null,
+            rounds: cfg.world?.rounds ?? null,
         });
     }
 
@@ -3165,6 +3278,136 @@ class Game {
         const backBtn = document.getElementById('btn-launcher-setup-back');
         if (backBtn) {
             backBtn.addEventListener('click', () => this._openLauncherWelcome());
+        }
+
+        document.getElementById('btn-launcher-howto')?.addEventListener('click', () => openCodex());
+        document.getElementById('btn-launcher-demo')?.addEventListener('click', () => this._startDemo());
+        document.getElementById('btn-launcher-rankings')?.addEventListener('click', () => this._showRankingsScene());
+    }
+
+    // ── Full-screen leaderboard scene ────────────────────────
+    // Opened from the launcher welcome. Mirrors _showLauncherSetup's hide-all-
+    // then-reveal plumbing; the scene module owns its own content + lens UI, and
+    // the back chevron returns to the welcome screen.
+    _showRankingsScene() {
+        const overlay = document.getElementById('tournament-overlay');
+        const scene = document.getElementById('launcher-rankings');
+        if (!overlay || !scene) return;
+        overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
+        scene.classList.remove('t-hidden');
+        overlay.classList.remove('t-hidden');
+        openLeaderboard(scene, {
+            humanHandle: this._humanHandle,
+            onBack: () => this._openLauncherWelcome(),
+        });
+    }
+
+    // ── Guided demo: a short narrated Watch match ────────────
+    // One click from the launcher. Runs a real (small, 3-round) AI-vs-AI match
+    // and overlays a plain-language narration at each phase beat so a newcomer
+    // can see how placement → simulation → recap → scoring fit together. Needs
+    // Ollama like any Watch match; if it's down, we explain rather than hang.
+    async _startDemo() {
+        if (!this._installedModels || this._installedModels.length === 0) {
+            try { this._installedModels = await listOllamaModels(); }
+            catch (_) { this._installedModels = []; }
+        }
+        if (!this._installedModels || this._installedModels.length === 0) {
+            this._showDemoNeedsOllama();
+            return;
+        }
+
+        const p1 = this._installedModels[0].name;
+        const p2 = this._pickDifferentModel(p1) || p1;
+
+        this._demoMode = true;
+        this._matchMode = 'watch';
+        this._startMatch({
+            mode: 'watch',
+            p1Model: p1,
+            p2Model: p2,
+            world: { mapSize: 'small', hexZoom: CONFIG.HEX_ZOOM.default, rounds: 3 },
+        });
+    }
+
+    _showDemoNeedsOllama() {
+        let el = document.getElementById('demo-needs-ollama');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'demo-needs-ollama';
+            el.className = 'cdx-overlay';
+            el.innerHTML = `
+                <div class="cdx-modal" style="max-width:420px;">
+                    <div class="cdx-header">
+                        <div class="cdx-title">DEMO NEEDS OLLAMA</div>
+                        <div class="cdx-subtitle">The guided demo runs a live AI-vs-AI match, so it needs a local model server.</div>
+                        <button class="cdx-close" aria-label="Close">✕</button>
+                    </div>
+                    <div class="cdx-body" style="gap:10px;">
+                        <p style="font-size:13px;line-height:1.55;color:rgba(255,255,255,0.75);margin:0;">
+                            Start <b>Ollama</b> (<code>ollama serve</code>) with a model pulled, then try again.
+                            Meanwhile, <b>How to Play</b> covers the rules with no server required.
+                        </p>
+                    </div>
+                </div>`;
+            document.body.appendChild(el);
+            el.addEventListener('click', (e) => {
+                if (e.target === el || e.target.classList.contains('cdx-close')) el.classList.add('cdx-hidden');
+            });
+        }
+        el.classList.remove('cdx-hidden');
+    }
+
+    _ensureDemoNarrator() {
+        let el = document.getElementById('demo-narrator');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'demo-narrator';
+            el.className = 'demo-narrator dn-hidden';
+            el.innerHTML = `
+                <span class="dn-tag">DEMO</span>
+                <span class="dn-text" id="dn-text"></span>
+                <button class="dn-skip" id="dn-skip">Skip</button>`;
+            document.body.appendChild(el);
+            el.querySelector('#dn-skip').addEventListener('click', () => this._endDemo());
+        }
+        return el;
+    }
+
+    _demoNarrate(text) {
+        const el = this._ensureDemoNarrator();
+        const t = el.querySelector('#dn-text');
+        if (t) t.textContent = text;
+        el.classList.remove('dn-hidden');
+        // Re-trigger the entrance flash on each new line.
+        el.classList.remove('dn-flash');
+        void el.offsetWidth;
+        el.classList.add('dn-flash');
+    }
+
+    _endDemo() {
+        this._demoMode = false;
+        document.getElementById('demo-narrator')?.classList.add('dn-hidden');
+    }
+
+    // Map the current phase + round to one plain-language line. Non-blocking —
+    // the match paces itself (AI thinking + the 20-step sim), the banner just
+    // narrates over it.
+    _demoBeat(phase) {
+        const r = this.turns.round;
+        if (phase === PHASE.PLAYER_1_TURN) {
+            this._demoNarrate(r <= 1
+                ? 'Two AIs seed life on a shared map. Each spends Action Points placing species.'
+                : `Round ${r}: each side reinforces its ecosystem.`);
+        } else if (phase === PHASE.PLAYER_2_TURN) {
+            if (r <= 1) this._demoNarrate('Plants are the foundation — they feed herbivores, which feed predators.');
+        } else if (phase === PHASE.SIMULATING) {
+            this._demoNarrate('Now the ecosystem runs for 20 steps: plants spread, herbivores graze, predators hunt.');
+        } else if (phase === PHASE.ROUND_END) {
+            this._demoNarrate('The recap below shows what happened this round — and who leads, and why.');
+        } else if (phase === PHASE.GAME_OVER) {
+            // The game-over scene takes over the screen; bow out gracefully.
+            this._endDemo();
         }
     }
 

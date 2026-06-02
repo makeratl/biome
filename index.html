@@ -156,6 +156,9 @@
                         <button class="hc-menu-item" data-hc-menu="new-match" type="button">
                             <span class="hc-mi-icon">▶</span><span>New Match</span>
                         </button>
+                        <button class="hc-menu-item" data-hc-menu="field-guide" type="button">
+                            <span class="hc-mi-icon">❔</span><span>Field Guide</span>
+                        </button>
                         <button class="hc-menu-item" data-hc-menu="rankings" type="button">
                             <span class="hc-mi-icon">🏆</span><span>Rankings</span>
                         </button>
@@ -440,7 +443,15 @@
                     <div class="lmc-desc">Bracket showdown</div>
                 </button>
             </div>
+            <div class="launcher-learn-row">
+                <button class="launcher-learn-btn" id="btn-launcher-demo">▶ Learn the game</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-howto">❔ How to Play</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-rankings">🏆 Rankings</button>
+            </div>
         </div>
+
+        <!-- Full-screen leaderboard / hall of champions -->
+        <div class="t-screen t-hidden" id="launcher-rankings"></div>
 
         <!-- Match setup (Solo/Watch model pickers + Start button) -->
         <div class="t-screen t-hidden" id="launcher-setup">

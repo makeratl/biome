@@ -6,13 +6,14 @@ import { CONFIG } from './config.js';
 import { resolveModel } from './model-identity.js';
 import { applyAvatar } from './model-avatar.js';
 import { prepareResidentSet, isCloudModel, listResidentModels } from './ai.js';
+import { shortId } from './util.js';
 
 export class TournamentManager {
     constructor(game) {
         this.game = game;
         this.bracket = null;
         this.running = false;
-        this.tournamentId = crypto.randomUUID().slice(0, 8);
+        this.tournamentId = shortId(8);
         this._statsOpen = false;
         this._currentMatchIdx = null; // index in this.bracket of the match inside _runMatch
         this._setupStatsToggle();
@@ -291,7 +292,10 @@ export class TournamentManager {
             p1_score: scores[1].finalScore,
             p2_score: scores[2].finalScore,
             winner: match.winner,
-            mode: this.mode,
+            mode: 'tournament',
+            format: this.format?.label || this.format?.id || null,
+            map_size: this.world?.mapSize || null,
+            rounds: this.world?.rounds ?? null,
         });
 
         // Update stats panel and live bracket — the panel can show the result while the result-screen overlay is up

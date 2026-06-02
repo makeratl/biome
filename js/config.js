@@ -70,6 +70,7 @@ export const CONFIG = {
         GRASS: {
             name: 'Sedgeweave',
             role: 'Grass',
+            blurb: 'Fast-spreading groundcover — the foundation every food chain grows from.',
             type: 'plant',
             energy: 20,
             maxEnergy: 40,
@@ -82,6 +83,7 @@ export const CONFIG = {
         SHRUB: {
             name: 'Thornbloom',
             role: 'Shrub',
+            blurb: 'Hardy bushes that spread slowly but bank far more energy than grass.',
             type: 'plant',
             energy: 30,
             maxEnergy: 70,
@@ -94,6 +96,7 @@ export const CONFIG = {
         TREE: {
             name: 'Spirewood',
             role: 'Tree',
+            blurb: 'Towering and slow. Stores the most energy and shrugs off grazers.',
             type: 'plant',
             energy: 50,
             maxEnergy: 120,
@@ -106,6 +109,7 @@ export const CONFIG = {
         GRAZER: {
             name: 'Hopgrazer',
             role: 'Grazer',
+            blurb: 'Nimble grazer that eats grass and shrubs — and prefers the enemy’s.',
             type: 'herbivore',
             energy: 40,
             maxEnergy: 100,
@@ -122,6 +126,7 @@ export const CONFIG = {
         BROWSER: {
             name: 'Bramblemaw',
             role: 'Browser',
+            blurb: 'Heavy browser that strips shrubs and trees bare, bite by bite.',
             type: 'herbivore',
             energy: 55,
             maxEnergy: 100,
@@ -138,6 +143,7 @@ export const CONFIG = {
         PREDATOR: {
             name: 'Shadestalker',
             role: 'Predator',
+            blurb: 'Swift hunter that culls herbivores to crown the food chain.',
             type: 'predator',
             energy: 60,
             maxEnergy: 120,

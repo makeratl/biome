@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP server with Ollama proxy for CORS bypass and tournament logging."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 import urllib.request
 import urllib.error
 import json
@@ -12,8 +12,9 @@ import uuid
 import subprocess
 import threading
 
+import db
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(BASE_DIR, 'tournament_log.json')
 
 # --- Avatar generation (ComfyUI bridge) ---
 COMFY_URL = 'http://localhost:8188'
@@ -95,55 +96,6 @@ def _comfy_generate(key, style, prompt, negative, lora, seed):
     return {'ok': True, 'key': key, 'style': style, 'path': rel,
             'prompt_id': pid, 'seconds': round(time.time() - t0, 1)}
 
-def _load_log():
-    if not os.path.exists(LOG_FILE):
-        return []
-    try:
-        with open(LOG_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return []
-
-def _save_log(data):
-    with open(LOG_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
-
-DEFAULT_ELO = 1000
-
-def _expected(r_a, r_b):
-    """Expected score (win probability) for player A vs player B under ELO."""
-    return 1 / (1 + 10 ** ((r_b - r_a) / 400))
-
-def _rank_of(rankings, name):
-    """Return {'elo', 'rank'} (1-based) for a name in an ordered rankings dict, or None."""
-    for i, (n, stats) in enumerate(rankings.items()):
-        if n == name:
-            return {'elo': stats['elo'], 'rank': i + 1}
-    return None
-
-def _compute_rankings(log):
-    K = 32
-    models = {}
-    for entry in log:
-        p1 = entry['p1']
-        p2 = entry['p2']
-        for m in (p1, p2):
-            if m not in models:
-                models[m] = {'elo': DEFAULT_ELO, 'wins': 0, 'losses': 0, 'matches': 0}
-        r1 = models[p1]['elo']
-        r2 = models[p2]['elo']
-        e1 = _expected(r1, r2)
-        e2 = 1 - e1
-        s1 = 1 if entry['winner'] == p1 else 0
-        s2 = 1 - s1
-        models[p1]['elo'] = round(r1 + K * (s1 - e1))
-        models[p2]['elo'] = round(r2 + K * (s2 - e2))
-        models[p1]['wins' if s1 else 'losses'] += 1
-        models[p2]['wins' if s2 else 'losses'] += 1
-        models[p1]['matches'] += 1
-        models[p2]['matches'] += 1
-    return dict(sorted(models.items(), key=lambda x: x[1]['elo'], reverse=True))
-
 class NoCacheHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
@@ -165,13 +117,27 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             return
         # Tournament rankings
         if self.path == '/rankings':
-            log = _load_log()
-            rankings = _compute_rankings(log)
-            self._json_response(rankings)
+            self._json_response(db.get_rankings())
             return
         # Tournament match history
         if self.path == '/history':
-            self._json_response(_load_log())
+            self._json_response(db.get_history())
+            return
+        # Live dashboard payload (standings, ELO timelines, head-to-head, factors)
+        if self.path == '/stats/dashboard':
+            self._json_response(db.get_dashboard())
+            return
+        # Full match log (drives the expandable match-log detail view)
+        if self.path.startswith('/stats/matches'):
+            q = parse_qs(urlparse(self.path).query)
+            limit = int(q.get('limit', ['2000'])[0])
+            self._json_response(db.get_matches(limit))
+            return
+        # Single-model drill-in: full ELO timeline, match log, H2H + factor splits
+        if self.path.startswith('/stats/model'):
+            q = parse_qs(urlparse(self.path).query)
+            name = q.get('m', [''])[0]
+            self._json_response(db.get_model_detail(name))
             return
         # Avatar generation: is ComfyUI reachable?
         if self.path == '/comfy/health':
@@ -226,56 +192,27 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             if field not in body:
                 self._json_response({'error': f'Missing field: {field}'}, 400)
                 return
-        entry = {
-            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        # db.record_match inserts the match, applies incremental ELO, writes the
+        # rating_events timeline, and returns the same delta/result payload the
+        # client already knows how to celebrate — plus the match id.
+        out = db.record_match({
             'tournament_id': body['tournament_id'],
             'round': body['round'],
+            'mode': body.get('mode', 'standard'),
+            'format': body.get('format'),
+            'map_size': body.get('map_size'),
+            'rounds': body.get('rounds'),
             'p1': body['p1'],
             'p2': body['p2'],
             'p1_score': body.get('p1_score', 0),
             'p2_score': body.get('p2_score', 0),
             'winner': body['winner'],
-            'mode': body.get('mode', 'standard'),
-        }
-        log = _load_log()
-        before = _compute_rankings(log)   # rankings as they stood BEFORE this match
-        log.append(entry)
-        _save_log(log)
-        after = _compute_rankings(log)    # rankings AFTER this match resolves
-        total_after = len(after)
-
-        def _delta(name):
-            b = _rank_of(before, name)
-            a = _rank_of(after, name)
-            return {
-                'name': name,
-                'eloBefore': b['elo'] if b else DEFAULT_ELO,
-                'eloAfter': a['elo'] if a else DEFAULT_ELO,
-                'rankBefore': b['rank'] if b else None,   # null = wasn't ranked yet
-                'rankAfter': a['rank'] if a else total_after,
-                'total': total_after,
-            }
-
-        winner = entry['winner']
-        loser = entry['p2'] if winner == entry['p1'] else entry['p1']
-        wb = _rank_of(before, winner)
-        lb = _rank_of(before, loser)
-        winner_win_prob = _expected(
-            wb['elo'] if wb else DEFAULT_ELO,
-            lb['elo'] if lb else DEFAULT_ELO,
-        )
-
-        result = {
-            'p1': _delta(entry['p1']),
-            'p2': _delta(entry['p2']),
-            'winner': winner,
-            'winnerWinProb': winner_win_prob,
-        }
+        })
         self._json_response({
             'ok': True,
-            'total_matches': len(log),
-            'result': result,
-            'rankings': after,
+            'total_matches': out['total_matches'],
+            'result': out['result'],
+            'rankings': out['rankings'],
         })
 
     def _handle_comfy_generate(self):
@@ -303,18 +240,8 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             self._json_response({'error': str(e)}, 502)
 
     def _handle_reset(self):
-        """Archive the current match log to a timestamped backup, then start fresh."""
-        archived = None
-        if os.path.exists(LOG_FILE):
-            ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
-            backup = os.path.join(os.path.dirname(LOG_FILE), f'tournament_log.{ts}.bak')
-            try:
-                os.rename(LOG_FILE, backup)
-                archived = os.path.basename(backup)
-            except OSError:
-                pass
-        _save_log([])
-        self._json_response({'ok': True, 'archived': archived})
+        """Archive the current database to a timestamped backup, then start fresh."""
+        self._json_response(db.reset())
 
     def _proxy_ollama_stream(self, path, is_post=False):
         """Stream proxy for pull requests — sends NDJSON lines as they arrive."""
@@ -371,6 +298,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         pass  # suppress request logs
 
 if __name__ == '__main__':
+    db.init_db()
     server = ThreadingHTTPServer(('', 8765), NoCacheHandler)
     print('Serving on http://localhost:8765')
     server.serve_forever()

@@ -1,0 +1,398 @@
+// Biome Analytics — a standalone, auto-refreshing visualizer for the tournament
+// database. Polls /stats/dashboard and re-renders every section live, so it can
+// sit on a second screen during a tournament and update as matches resolve.
+//
+// Zero charting deps: the ELO-over-time graph is hand-rolled SVG. Model identity
+// (family hue, size, pretty name) and avatars are reused from the game's own
+// pure modules so the dashboard and the game speak the same visual language.
+
+import { resolveModel, paramLabel } from './model-identity.js';
+import { applyAvatar, preloadAvatars } from './model-avatar.js';
+import { initDetail, notifyDetail, openModel } from './dashboard-detail.js';
+
+const POLL_MS = 4000;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+preloadAvatars();
+
+let isolated = null;        // model name to isolate in the ELO chart, or null
+let lastMatchCount = -1;    // to detect new matches for the live pulse
+let lastData = null;
+
+const $ = (id) => document.getElementById(id);
+const short = (m) => (m || '—').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
+const hueOf = (m) => resolveModel(m).hue;
+
+// ── poll loop ────────────────────────────────────────────────
+async function poll() {
+    try {
+        const res = await fetch('/stats/dashboard', { cache: 'no-store' });
+        if (!res.ok) throw new Error(res.status);
+        const data = await res.json();
+        lastData = data;
+        render(data);
+        notifyDetail(data);
+        markLive(true, data.generated_at);
+    } catch (e) {
+        markLive(false);
+    }
+}
+
+function markLive(ok, generatedAt) {
+    const el = $('db-live');
+    const txt = $('db-live-text');
+    el.classList.toggle('off', !ok);
+    if (ok) {
+        const t = generatedAt ? new Date(generatedAt) : new Date();
+        const hh = String(t.getHours()).padStart(2, '0');
+        const mm = String(t.getMinutes()).padStart(2, '0');
+        const ss = String(t.getSeconds()).padStart(2, '0');
+        txt.textContent = `live · ${hh}:${mm}:${ss}`;
+    } else {
+        txt.textContent = 'offline — retrying';
+    }
+}
+
+function render(data) {
+    $('t-matches').textContent = data.totals.matches;
+    $('t-models').textContent = data.totals.models;
+
+    const newMatch = data.totals.matches > lastMatchCount && lastMatchCount >= 0;
+    lastMatchCount = data.totals.matches;
+
+    if (!data.totals.matches) {
+        renderEmpty();
+        return;
+    }
+
+    renderHighlights(data.highlights, data.leaderboard);
+    renderEloChart(data.timeline, data.leaderboard);
+    renderLeaderboard(data.leaderboard);
+    renderH2H(data.head_to_head, data.leaderboard);
+    renderFactors(data.factors);
+    renderFeed(data.recent, newMatch);
+}
+
+function renderEmpty() {
+    $('db-highlights').innerHTML = `
+        <div class="db-empty-hero">
+            <div class="db-empty-mark">📊</div>
+            <div class="db-empty-head">Waiting for the first match</div>
+            <div class="db-empty-sub">Start a tournament or a ranked Solo/Watch game — this board fills in live as results land.</div>
+        </div>`;
+    for (const id of ['db-legend', 'db-h2h', 'db-factors', 'db-feed']) $(id).innerHTML = '';
+    $('db-lb').innerHTML = '';
+    $('db-elo-svg').innerHTML = '';
+}
+
+// ── highlight cards ──────────────────────────────────────────
+function renderHighlights(h, leaderboard) {
+    const leader = leaderboard[0];
+    const cards = [];
+
+    if (leader) cards.push(card('👑', 'CHAMPION', short(leader.model), `${leader.elo} ELO`, hueOf(leader.model), leader.model));
+    if (h.most_improved && h.most_improved.gain > 0)
+        cards.push(card('📈', 'MOST IMPROVED', short(h.most_improved.model), `+${h.most_improved.gain} from 1000`, hueOf(h.most_improved.model), h.most_improved.model));
+    if (h.biggest_upset)
+        cards.push(card('⚡', 'BIGGEST UPSET', short(h.biggest_upset.model), `beat ${short(h.biggest_upset.opponent)} · ${Math.round(h.biggest_upset.win_prob * 100)}% odds`, hueOf(h.biggest_upset.model), h.biggest_upset.model));
+    if (h.hot_streak)
+        cards.push(card('🔥', 'HOT STREAK', short(h.hot_streak.model), `${h.hot_streak.streak} wins in a row`, hueOf(h.hot_streak.model), h.hot_streak.model));
+    else if (h.peak)
+        cards.push(card('🏔', 'PEAK ELO', short(h.peak.model), `${h.peak.peak_elo} all-time high`, hueOf(h.peak.model), h.peak.model));
+
+    $('db-highlights').innerHTML = cards.join('');
+    paintAvatars($('db-highlights'));
+}
+
+function card(icon, label, name, detail, hue, model) {
+    return `<div class="db-hl db-clickable" data-open-model="${model}" style="--bh:${hue}">
+        <div class="db-hl-icon">${icon}</div>
+        <div class="db-hl-body">
+            <div class="db-hl-label">${label}</div>
+            <div class="db-hl-name"><span class="db-ava db-ava-sm" data-model="${model}"></span>${name}</div>
+            <div class="db-hl-detail">${detail}</div>
+        </div>
+    </div>`;
+}
+
+// ── ELO over time (hand-rolled SVG) ──────────────────────────
+function renderEloChart(timeline, leaderboard) {
+    const svg = $('db-elo-svg');
+    const W = 920, H = 460;
+    const m = { t: 24, r: 120, b: 40, l: 52 };
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = '';
+
+    const models = Object.keys(timeline);
+    if (!models.length) return;
+
+    // Prepend the implicit 1000 origin so every line starts from the baseline.
+    const series = {};
+    let xMax = 1, yMin = Infinity, yMax = -Infinity;
+    for (const model of models) {
+        const pts = [{ n: 0, elo: 1000 }, ...timeline[model].map(p => ({ n: p.n, elo: p.elo }))];
+        series[model] = pts;
+        for (const p of pts) { xMax = Math.max(xMax, p.n); yMin = Math.min(yMin, p.elo); yMax = Math.max(yMax, p.elo); }
+    }
+    // Pad the y-domain a touch.
+    const pad = Math.max(20, Math.round((yMax - yMin) * 0.08));
+    yMin -= pad; yMax += pad;
+
+    const px = (n) => m.l + (n / xMax) * (W - m.l - m.r);
+    const py = (e) => m.t + (1 - (e - yMin) / (yMax - yMin)) * (H - m.t - m.b);
+
+    // gridlines + y labels
+    const yTicks = niceTicks(yMin, yMax, 5);
+    for (const v of yTicks) {
+        line(svg, m.l, py(v), W - m.r, py(v), 'db-gridline');
+        text(svg, m.l - 8, py(v) + 4, Math.round(v), 'db-axis-label', 'end');
+    }
+    // 1000 baseline emphasized
+    if (1000 >= yMin && 1000 <= yMax) line(svg, m.l, py(1000), W - m.r, py(1000), 'db-gridline db-gridline-base');
+    // x labels
+    const xTicks = niceTicks(0, xMax, Math.min(8, xMax));
+    for (const v of xTicks) {
+        const x = px(v);
+        text(svg, x, H - m.b + 18, Math.round(v), 'db-axis-label', 'middle');
+    }
+    text(svg, m.l, H - 6, 'games played →', 'db-axis-title', 'start');
+
+    // Draw lines (dim non-isolated when isolating)
+    const ranked = leaderboard.map(r => r.model).filter(mm => series[mm]);
+    for (const model of ranked) {
+        const pts = series[model];
+        const hue = hueOf(model);
+        const dim = isolated && isolated !== model;
+        const d = pts.map((p, i) => `${i ? 'L' : 'M'}${px(p.n).toFixed(1)},${py(p.elo).toFixed(1)}`).join(' ');
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', `hsl(${hue},70%,60%)`);
+        path.setAttribute('stroke-width', dim ? 1 : (isolated === model ? 3 : 2));
+        path.setAttribute('stroke-linejoin', 'round');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('opacity', dim ? 0.12 : 1);
+        path.classList.add('db-line');
+        svg.appendChild(path);
+
+        // End dot + label at current standing
+        const last = pts[pts.length - 1];
+        if (!dim) {
+            const cx = px(last.n), cy = py(last.elo);
+            const dot = document.createElementNS(SVG_NS, 'circle');
+            dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', 3.5);
+            dot.setAttribute('fill', `hsl(${hue},75%,62%)`);
+            svg.appendChild(dot);
+            text(svg, cx + 8, cy + 4, `${short(model)} ${last.elo}`, 'db-end-label')
+                .setAttribute('fill', `hsl(${hue},70%,72%)`);
+
+            // invisible hover points with native tooltip
+            for (const p of pts) {
+                if (!p.n) continue;
+                const hp = document.createElementNS(SVG_NS, 'circle');
+                hp.setAttribute('cx', px(p.n)); hp.setAttribute('cy', py(p.elo)); hp.setAttribute('r', 7);
+                hp.setAttribute('fill', 'transparent');
+                hp.style.cursor = 'pointer';
+                const tt = document.createElementNS(SVG_NS, 'title');
+                tt.textContent = `${short(model)} — game ${p.n}: ${p.elo} ELO`;
+                hp.appendChild(tt);
+                svg.appendChild(hp);
+            }
+        }
+    }
+
+    renderLegend(ranked);
+}
+
+function renderLegend(models) {
+    const top = models.slice(0, 16);
+    $('db-legend').innerHTML = top.map(model => {
+        const hue = hueOf(model);
+        const off = isolated && isolated !== model;
+        return `<button class="db-leg${off ? ' off' : ''}" data-model="${model}" style="--bh:${hue}">
+            <span class="db-leg-swatch"></span>${short(model)}</button>`;
+    }).join('');
+    $('db-legend').querySelectorAll('.db-leg').forEach(b => {
+        b.addEventListener('click', () => {
+            const m = b.dataset.model;
+            isolated = (isolated === m) ? null : m;
+            if (lastData) { renderEloChart(lastData.timeline, lastData.leaderboard); }
+        });
+    });
+}
+
+// ── leaderboard table ────────────────────────────────────────
+function renderLeaderboard(rows) {
+    let html = `<thead><tr>
+        <th>#</th><th>Model</th><th>ELO</th><th>Peak</th><th>W-L</th><th>Win%</th><th>Streak</th></tr></thead><tbody>`;
+    for (const r of rows) {
+        const rm = resolveModel(r.model);
+        const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : r.rank;
+        const streak = r.streak > 0 ? `<span class="db-streak-w">${r.streak}W</span>`
+            : r.streak < 0 ? `<span class="db-streak-l">${-r.streak}L</span>` : '·';
+        html += `<tr class="db-clickable" data-open-model="${r.model}" style="--bh:${rm.hue}">
+            <td class="db-lb-rank">${medal}</td>
+            <td class="db-lb-model">
+                <span class="db-ava db-ava-sm" data-model="${r.model}"></span>
+                <span class="db-lb-id"><b>${short(r.model)}</b><i>${rm.family.label} · ${paramLabel(r.model)}</i></span>
+            </td>
+            <td class="db-lb-elo">${r.elo}</td>
+            <td class="db-lb-peak">${r.peak_elo}</td>
+            <td class="db-lb-wl"><b>${r.wins}</b>-${r.losses}</td>
+            <td class="db-lb-wr">${r.winrate}%</td>
+            <td class="db-lb-streak">${streak}</td>
+        </tr>`;
+    }
+    html += '</tbody>';
+    $('db-lb').innerHTML = html;
+    paintAvatars($('db-lb'));
+}
+
+// ── head-to-head heatmap ─────────────────────────────────────
+function renderH2H(pairs, leaderboard) {
+    const models = leaderboard.slice(0, 10).map(r => r.model);
+    if (models.length < 2) { $('db-h2h').innerHTML = '<div class="db-mini-empty">Not enough matchups yet</div>'; return; }
+
+    // Build lookup: wins[a][b] = times a beat b
+    const wins = {};
+    for (const m of models) wins[m] = {};
+    for (const p of pairs) {
+        if (wins[p.a] && p.b in wins) wins[p.a][p.b] = p.a_wins;
+        if (wins[p.b] && p.a in wins) wins[p.b][p.a] = p.b_wins;
+    }
+
+    const cell = (size) => `${size}px`;
+    let html = `<table class="db-h2h-table"><thead><tr><th class="db-h2h-corner"></th>`;
+    for (const c of models) html += `<th class="db-h2h-colhdr"><span class="db-ava db-ava-xs" data-model="${c}"></span></th>`;
+    html += `</tr></thead><tbody>`;
+    for (const rmName of models) {
+        html += `<tr><td class="db-h2h-rowhdr"><span class="db-ava db-ava-xs" data-model="${rmName}"></span><span>${short(rmName)}</span></td>`;
+        for (const c of models) {
+            if (rmName === c) { html += `<td class="db-h2h-self"></td>`; continue; }
+            const w = wins[rmName]?.[c] ?? 0;
+            const l = wins[c]?.[rmName] ?? 0;
+            const total = w + l;
+            if (!total) { html += `<td class="db-h2h-none" title="${short(rmName)} vs ${short(c)}: no games">·</td>`; continue; }
+            const ratio = w / total;                       // 0..1 dominance for row model
+            const hue = ratio >= 0.5 ? 140 : 0;            // green if winning, red if losing
+            const alpha = (0.12 + Math.abs(ratio - 0.5) * 0.9).toFixed(2);
+            html += `<td class="db-h2h-cell" style="background:hsla(${hue},60%,45%,${alpha})"
+                title="${short(rmName)} ${w}–${l} vs ${short(c)}">${w}-${l}</td>`;
+        }
+        html += `</tr>`;
+    }
+    html += `</tbody></table>`;
+    $('db-h2h').innerHTML = html;
+    paintAvatars($('db-h2h'));
+}
+
+// ── factor breakdowns ────────────────────────────────────────
+function renderFactors(factors) {
+    const labelMap = {
+        map_size: { title: 'Map Size', fmt: (k) => k === 'auto' ? 'Fit screen' : cap(k) },
+        rounds: { title: 'Rounds', fmt: (k) => `${k} rounds` },
+        mode: { title: 'Mode', fmt: (k) => cap(k) },
+    };
+    let html = '';
+    for (const key of ['mode', 'map_size', 'rounds']) {
+        const rows = factors[key] || [];
+        const conf = labelMap[key];
+        const max = Math.max(1, ...rows.map(r => r.matches));
+        html += `<div class="db-factor"><div class="db-factor-title">${conf.title}</div>`;
+        if (!rows.length) { html += `<div class="db-mini-empty">—</div></div>`; continue; }
+        for (const r of rows) {
+            const pct = Math.round((r.matches / max) * 100);
+            html += `<div class="db-bar-row">
+                <span class="db-bar-label">${conf.fmt(r.key)}</span>
+                <span class="db-bar-track"><span class="db-bar-fill" style="width:${pct}%"></span></span>
+                <span class="db-bar-val">${r.matches}</span>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+    $('db-factors').innerHTML = html;
+}
+
+// ── live feed ────────────────────────────────────────────────
+function renderFeed(recent, flash) {
+    if (!recent?.length) { $('db-feed').innerHTML = '<div class="db-mini-empty">No matches yet</div>'; return; }
+    let html = '';
+    for (const m of recent) {
+        const wd = m.deltas?.[m.winner];
+        const ld = m.deltas?.[m.loser];
+        const wdelta = wd ? `+${wd.delta}` : '';
+        const ldelta = ld ? `${ld.delta}` : '';
+        html += `<div class="db-feed-row db-clickable" data-open-model="${m.winner}">
+            <span class="db-ava db-ava-sm" data-model="${m.winner}"></span>
+            <span class="db-feed-win">${short(m.winner)} <em class="db-up">${wdelta}</em></span>
+            <span class="db-feed-def">def.</span>
+            <span class="db-ava db-ava-sm" data-model="${m.loser}"></span>
+            <span class="db-feed-lose">${short(m.loser)} <em class="db-down">${ldelta}</em></span>
+            <span class="db-feed-meta">${short3(m)}</span>
+        </div>`;
+    }
+    const feed = $('db-feed');
+    feed.innerHTML = html;
+    paintAvatars(feed);
+    if (flash) {
+        const first = feed.firstElementChild;
+        if (first) { first.classList.add('db-feed-new'); }
+    }
+}
+
+function short3(m) {
+    const bits = [];
+    if (m.mode) bits.push(cap(m.mode));
+    if (m.map_size) bits.push(m.map_size === 'auto' ? 'fit' : m.map_size);
+    return bits.join(' · ');
+}
+
+// ── svg + misc helpers ───────────────────────────────────────
+function line(svg, x1, y1, x2, y2, cls) {
+    const l = document.createElementNS(SVG_NS, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    if (cls) l.setAttribute('class', cls);
+    svg.appendChild(l); return l;
+}
+function text(svg, x, y, str, cls, anchor) {
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    if (cls) t.setAttribute('class', cls);
+    if (anchor) t.setAttribute('text-anchor', anchor);
+    t.textContent = str;
+    svg.appendChild(t); return t;
+}
+function niceTicks(min, max, count) {
+    if (max <= min) return [min];
+    const span = max - min;
+    const step = niceNum(span / count, true);
+    const lo = Math.ceil(min / step) * step;
+    const out = [];
+    for (let v = lo; v <= max + 1e-6; v += step) out.push(Math.round(v));
+    return out;
+}
+function niceNum(range, round) {
+    const exp = Math.floor(Math.log10(range));
+    const frac = range / 10 ** exp;
+    let nf;
+    if (round) nf = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
+    else nf = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+    return nf * 10 ** exp;
+}
+const cap = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
+function paintAvatars(scope) {
+    scope?.querySelectorAll?.('[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
+}
+
+// ── drill-in: clicking a model anywhere opens its detail view ─
+document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-open-model]');
+    if (!el) return;
+    openModel(el.dataset.openModel);
+});
+
+// ── go ───────────────────────────────────────────────────────
+initDetail(() => lastData);
+poll();
+setInterval(poll, POLL_MS);
