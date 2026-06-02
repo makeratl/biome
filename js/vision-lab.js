@@ -57,6 +57,13 @@ class VisionLab {
         this._candidates = [];        // last game-view candidate list (label → cell)
         this.busy = false;
 
+        // Turn-Prompt panel state — a verbatim view of the real per-turn match
+        // prompt, with the lettered candidate spots mirrored onto the board.
+        this.gpOpen = false;          // panel expanded?
+        this.gpSeat = 1;              // which player's turn we're previewing
+        this.gpRound = 1;             // round number fed into the prompt
+        this.gpLabels = [];           // [{label, cell, type}] candidate overlay
+
         this._buildGrid();
         this._buildBrush();
         this._bind();
@@ -80,9 +87,42 @@ class VisionLab {
         // Fresh world — wipe organisms (old placements may now sit on water).
         this.grid.forEach(c => { c.organisms = []; });
         generateTerrain(this.grid, seed);
+        this._buildGameAI();          // new map → fresh summary cache + reset continuity
+        this.gpRound = 1;
+        if (el('vl-gp-round')) el('vl-gp-round').value = 1;
         this.clearHighlights();
         this.render();
         this._refreshCellInfo(null);
+        if (this.gpOpen) this._gpPreview();
+    }
+
+    // A minimal-but-faithful game shim so a REAL AIPlayer can build (and run) a
+    // genuine turn over the lab board. Provides exactly the surface AIPlayer
+    // touches: grid, a TurnManager-like `turns` (round/ap/spendAP/recordAction),
+    // and a renderer whose render() routes back through our overlay-aware one.
+    // Two AIPlayers (one per seat) persist so each carries its own per-turn
+    // memory (`lastTurn`) — that's what makes the "SINCE YOUR LAST TURN" recap
+    // appear once you step a seat through consecutive rounds, just like a match.
+    _buildGameAI() {
+        const totalRounds = CONFIG.GAME.TOTAL_ROUNDS;
+        const ap0 = CONFIG.GAME.AP_PER_TURN;
+        const shim = {
+            grid: this.grid,
+            renderer: { render: () => this.render() },
+            turns: {
+                round: 1,
+                totalRounds,
+                activePlayer: 1,
+                players: { 1: { ap: ap0 }, 2: { ap: ap0 } },
+                spendAP(n) { this.players[this.activePlayer].ap -= n; },
+                recordAction() {},
+            },
+        };
+        this.gpShim = shim;
+        this.gpAI = {
+            1: new AIPlayer(shim, 1, { model: this.model }),
+            2: new AIPlayer(shim, 2, { model: this.model }),
+        };
     }
 
     setSize(size) {
@@ -95,12 +135,40 @@ class VisionLab {
     clearOrganisms() {
         this.grid.forEach(c => { c.organisms = []; });
         this.render();
+        if (this.gpOpen) this._gpPreview();
     }
 
     // ── Render loop (terrain + organisms, then our persistent overlay) ──
     render() {
         this.renderer.render();
         this._drawHighlights();
+        if (this.gpOpen) this._drawGpLabels();
+    }
+
+    // Mirror the prompt's lettered candidate spots onto the board, colored by
+    // trophic type — so you can read "A) [plant] fertile in NW…" and see exactly
+    // which hex A is. Drawn as outlined chips over the terrain.
+    _drawGpLabels() {
+        const ctx = this.renderer.ctx;
+        ctx.save();
+        ctx.font = 'bold 13px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const l of this.gpLabels) {
+            if (!l.cell) continue;
+            const { x, y } = this.grid.hexToPixel(l.cell.col, l.cell.row);
+            const cx = x + this.renderer.offsetX;
+            const cy = y + this.renderer.offsetY;
+            const color = l.type === 'plant' ? 'hsl(145,72%,62%)'
+                : l.type === 'herbivore' ? 'hsl(45,95%,62%)'
+                : 'hsl(0,78%,64%)';
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.strokeText(l.label, cx, cy);
+            ctx.fillStyle = color;
+            ctx.fillText(l.label, cx, cy);
+        }
+        ctx.restore();
     }
 
     _drawHighlights() {
@@ -210,6 +278,7 @@ class VisionLab {
         el('vl-run').disabled = false;
         this.busy = false;
         this._refreshCellInfo(null);
+        if (this.gpOpen) this._gpPreview();
     }
 
     // ── Map representations (the switchable core) ──────────────
@@ -301,6 +370,73 @@ Respond ONLY with valid JSON, no prose outside it:
 ${pointing}
 ${placing}
 "highlights" and "placements" are optional — omit or use [] when a question is purely conversational. Use DISTINCT colors for distinct highlight groups. Keep "reply" focused and specific to THIS board.`;
+    }
+
+    // ── Turn Prompt panel (verbatim match prompt + step-through) ──
+    // Sync the shim to the panel controls for the chosen seat.
+    _gpSync() {
+        const ai = this.gpAI[this.gpSeat];
+        ai.model = this.model || ai.model;
+        const tm = this.gpShim.turns;
+        tm.round = this.gpRound;
+        tm.activePlayer = this.gpSeat;
+        tm.players[this.gpSeat].ap = parseInt(el('vl-gp-ap').value, 10) || CONFIG.GAME.AP_PER_TURN;
+        return ai;
+    }
+
+    // Read-only: build the genuine `_buildPrompt` for the current board and show
+    // it, mirroring its candidate spots onto the map. No model call.
+    _gpPreview() {
+        if (!this.gpAI) return;
+        const ai = this._gpSync();
+        const candidates = ai._findCandidates();
+        const { system, user } = ai._buildPrompt(candidates);
+        el('vl-gp-system').textContent = system;
+        el('vl-gp-user').textContent = user;
+        this.gpLabels = candidates.map(c => ({ label: c.label, cell: c.cell, type: c.type }));
+        this.render();
+    }
+
+    // Run the turn FOR REAL — the same takeTurn() the match uses: it sends the
+    // prompt, parses the action JSON, executes placements (plant cap enforced in
+    // _executeActions), tops up leftover AP, and records continuity. Then we
+    // advance the round so the next preview shows the evolved prompt — including
+    // the "SINCE YOUR LAST TURN" recap now that this seat has a memory.
+    async gpSend() {
+        if (this.busy) return;
+        if (!this.model) { el('vl-gp-response').textContent = 'No model selected — is Ollama running?'; return; }
+        const ai = this._gpSync();
+        this.busy = true;
+        const btn = el('vl-gp-send');
+        btn.disabled = true;
+        el('vl-gp-response').textContent = '… running this turn through the model';
+        try {
+            const res = await ai.takeTurn();
+            const placed = res.actions.filter(a => a.ok);
+            const failed = res.actions.filter(a => !a.ok);
+            const lines = [];
+            if (res.degraded) lines.push(`⚠ degraded (${res.failReason}) — model unavailable/invalid, fell back to grass`);
+            if (res.reasoning) lines.push(`REASONING: ${res.reasoning}`);
+            if (res.banter) lines.push(`BANTER: ${res.banter}`);
+            lines.push('');
+            lines.push(`PLACED (${placed.length}):`);
+            for (const a of placed) lines.push(`  • ${a.msg}`);
+            if (failed.length) {
+                lines.push(`REJECTED (${failed.length}):`);
+                for (const a of failed) lines.push(`  ✗ ${a.msg}`);
+            }
+            el('vl-gp-response').textContent = lines.join('\n');
+            // Step forward — next round's prompt for this seat now carries memory.
+            this.gpRound = Math.min(this.gpShim.turns.totalRounds, this.gpRound + 1);
+            el('vl-gp-round').value = this.gpRound;
+            this._gpPreview();
+            this._refreshCellInfo(null);
+        } catch (err) {
+            el('vl-gp-response').textContent = `⚠ ${err.message || err}`;
+        } finally {
+            this.busy = false;
+            btn.disabled = false;
+        }
     }
 
     // ── Chat ───────────────────────────────────────────────────
@@ -461,7 +597,10 @@ ${placing}
             if (Number.isFinite(v)) this.regenerate(v);
         });
         el('vl-size').addEventListener('change', (e) => this.setSize(e.target.value));
-        el('vl-model').addEventListener('change', (e) => { this.model = e.target.value; });
+        el('vl-model').addEventListener('change', (e) => {
+            this.model = e.target.value;
+            if (this.gpAI) { this.gpAI[1].model = this.model; this.gpAI[2].model = this.model; }
+        });
 
         for (const b of document.querySelectorAll('#vl-mode .vl-mode-btn')) {
             b.addEventListener('click', () => {
@@ -489,13 +628,39 @@ ${placing}
             const cell = this._cellFromEvent(e);
             if (!cell) return;
             if (this.brush === null) { this._refreshCellInfo(cell); return; }
-            if (this._placeAt(cell)) this.render();
+            if (this._placeAt(cell)) {
+                this.render();
+                if (this.gpOpen) this._gpPreview();
+            }
             this._refreshCellInfo(cell);
         });
 
         el('vl-inspect-toggle').addEventListener('click', () => {
             el('vl-inspector').classList.toggle('open');
         });
+
+        // ── Turn Prompt panel ──
+        el('vl-gp-round').max = CONFIG.GAME.TOTAL_ROUNDS;
+        el('vl-gp-ap').value = CONFIG.GAME.AP_PER_TURN;
+        el('vl-gp-toggle').addEventListener('click', () => {
+            const open = el('vl-gp').classList.toggle('open');
+            this.gpOpen = open;
+            if (open) this._gpPreview();   // build prompt + show candidate letters
+            else this.render();            // drop the overlay labels
+        });
+        for (const b of document.querySelectorAll('#vl-gp-seat button')) {
+            b.addEventListener('click', () => {
+                this.gpSeat = +b.dataset.seat;
+                for (const x of document.querySelectorAll('#vl-gp-seat button')) x.classList.toggle('on', x === b);
+                if (this.gpOpen) this._gpPreview();
+            });
+        }
+        el('vl-gp-round').addEventListener('change', (e) => {
+            const v = parseInt(e.target.value, 10);
+            if (Number.isFinite(v)) { this.gpRound = Math.max(1, v); if (this.gpOpen) this._gpPreview(); }
+        });
+        el('vl-gp-ap').addEventListener('change', () => { if (this.gpOpen) this._gpPreview(); });
+        el('vl-gp-send').addEventListener('click', () => this.gpSend());
 
         window.addEventListener('resize', () => { this.renderer._fit(); this.render(); });
     }

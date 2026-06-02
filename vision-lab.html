@@ -94,6 +94,28 @@
                     <pre id="vl-response" class="vl-pre">—</pre>
                 </div>
             </div>
+
+            <div class="vl-inspector vl-gp" id="vl-gp">
+                <button class="vl-inspect-toggle" id="vl-gp-toggle">⌄ Turn Prompt — verbatim, as a real match sends it</button>
+                <div class="vl-inspect-body">
+                    <p class="vl-gp-note">The exact prompt the game feeds the model on a turn — built by the real <code>AIPlayer._buildPrompt</code> over the live board. Candidate spots (A, B, …) are mirrored on the map. <strong>▶ Send turn</strong> runs it for real: places the model's moves, records continuity, then advances the round so you can watch the prompt evolve step by step.</p>
+                    <div class="vl-gp-controls">
+                        <div class="vl-seg sm" id="vl-gp-seat" title="Whose turn — fog &amp; ecosystem differ per seat">
+                            <button class="on" data-seat="1">P1</button>
+                            <button data-seat="2">P2</button>
+                        </div>
+                        <label class="vl-field sm">Round <input id="vl-gp-round" type="number" min="1" value="1"></label>
+                        <label class="vl-field sm">AP <input id="vl-gp-ap" type="number" min="1" value="6"></label>
+                        <button id="vl-gp-send" class="vl-btn primary">▶ Send turn</button>
+                    </div>
+                    <h4>System</h4>
+                    <pre id="vl-gp-system" class="vl-pre">Open to build the turn prompt for the current board.</pre>
+                    <h4>User — per-turn payload</h4>
+                    <pre id="vl-gp-user" class="vl-pre">—</pre>
+                    <h4>Model's turn — action JSON, executed</h4>
+                    <pre id="vl-gp-response" class="vl-pre">—</pre>
+                </div>
+            </div>
         </section>
     </main>
 
