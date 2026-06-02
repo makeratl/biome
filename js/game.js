@@ -2784,6 +2784,7 @@ class Game {
         this.simulation = new Simulation(this.grid);
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.turns.totalRounds = world.rounds || CONFIG.GAME.TOTAL_ROUNDS;
+        this.matchContext = this._describeMatch(config.mode);
         this.aiPlayers = {};
         this._matchResolve = null;
         this._matchupOdds = null;
@@ -3160,6 +3161,23 @@ class Game {
     // play the rivalry. Cheap (one rankings fetch, already cached per call) and
     // ELO is static within a match, so a sync at match setup is enough; _runAITurn
     // lazily ensures it if a slot was swapped without a re-sync.
+    // What game is being played — fed into every AI prompt via game.matchContext
+    // so the model can adapt strategy and voice to the format and stakes (the
+    // prompt builder reads this; absent it, the lab still reports board scale).
+    _describeMatch(mode) {
+        const labels = {
+            solo: 'Solo ladder match (vs the house AI)',
+            watch: 'Watch exhibition (AI vs AI)',
+            tournament: 'Tournament — single-elimination bracket',
+        };
+        const stakes = {
+            solo: 'STAKES: ranked ladder match — the result moves both fighters\' ELO.',
+            watch: 'STAKES: ranked exhibition — the result still moves ELO.',
+            tournament: 'STAKES: single-elimination — lose and you are OUT of the bracket. ELO on the line.',
+        };
+        return { mode, modeLabel: labels[mode] || mode, stakes: stakes[mode] || null };
+    }
+
     async _syncFighterContext() {
         const descriptors = {};
         for (const p of [1, 2]) descriptors[p] = await this._buildFighterDescriptor(p);
@@ -3649,6 +3667,7 @@ class Game {
         this.turns.round = 0;
         this.turns.phase = 'SETUP';
         this.turns.totalRounds = rounds || CONFIG.GAME.TOTAL_ROUNDS;
+        this.matchContext = this._describeMatch('tournament');
         this.turns.players[1] = { ap: 0, actions: [] };
         this.turns.players[2] = { ap: 0, actions: [] };
 

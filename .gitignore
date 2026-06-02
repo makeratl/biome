@@ -16,3 +16,7 @@ dev-logs/
 .claude/
 
 nohup
+
+*.db-shm
+
+*.db-wal

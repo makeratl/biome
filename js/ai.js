@@ -3,6 +3,7 @@
 import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 import { extractJSON } from './util.js';
+import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
 
 // How long a warmed/active model is asked to stay resident in Ollama. Long
 // enough to outlast a full match (and the short gap to its next match in a
@@ -360,27 +361,34 @@ export class AIPlayer {
 
     // ── Prompt builder ─────────────────────────────────────────
 
+    // Build the turn prompt. This method now only ASSEMBLES the normalized
+    // context (it owns all game-state + fog reads); js/prompt.js composes the
+    // string from ordered, config-derived blocks. Signature is unchanged, so
+    // takeTurn() and the Vision Lab keep calling it as before.
     _buildPrompt(candidates) {
+        return buildTurnPrompt(this._promptContext(candidates));
+    }
+
+    // Gather everything the prompt blocks need into one plain object. Fog logic
+    // stays HERE (in _getCensus / _summarizePlayer), never in the formatter.
+    _promptContext(candidates) {
         const tm = this.game.turns;
-        const ap = tm.players[this.player].ap;
-        const enemy = this.player === 1 ? 2 : 1;
+        const player = this.player;
+        const enemy = player === 1 ? 2 : 1;
         const round = tm.round;
         const total = tm.totalRounds;
+        const ap = tm.players[player].ap;
 
-        // Dynamic strategy guidance based on game state
-        const myCensus = this._getCensus(this.player);
+        const myCensus = this._getCensus(player);
         const enemyCensus = this._getCensus(enemy);
-        const ahead = myCensus.biomass > enemyCensus.biomass * 1.2;
-        const behind = enemyCensus.biomass > myCensus.biomass * 1.2;
-        const enemyHasPlants = enemyCensus.plants > 20;
-        const enemyHasHerbs = enemyCensus.herbs > 5;
 
-        // Score projection — what their current diversity would yield
+        // Score projection — what my current diversity would yield. Own board, so
+        // no fog concern. Multiplier derives from CONFIG so it tracks any tuning.
         const mySpecies = new Set();
         let myHasPlant = false, myHasHerb = false, myHasPred = false;
         this.game.grid.forEach(cell => {
             for (const org of cell.organisms) {
-                if (org.player !== this.player) continue;
+                if (org.player !== player) continue;
                 mySpecies.add(org.species);
                 const t = CONFIG.SPECIES[org.species]?.type;
                 if (t === 'plant') myHasPlant = true;
@@ -388,115 +396,45 @@ export class AIPlayer {
                 else if (t === 'predator') myHasPred = true;
             }
         });
-        const currentMult = (1 + mySpecies.size * 0.10) * (myHasPlant && myHasHerb && myHasPred ? 1.25 : 1);
+        const trophic = myHasPlant && myHasHerb && myHasPred;
+        const currentMult = (1 + mySpecies.size * CONFIG.SCORING.SPECIES_DIVERSITY_BONUS)
+            * (trophic ? 1 + CONFIG.SCORING.TROPHIC_BONUS : 1);
 
-        // Phase thresholds scale with the match length (rounds is configurable),
-        // so a 5- or 15-round game gets sensible early/mid/late guidance.
+        // Phase thresholds scale with match length so a 5- or 20-round game each
+        // gets a sensible early/mid/late split.
         const earlyEnd = Math.max(1, Math.round(total * 0.25));
         const midEnd = Math.max(earlyEnd + 1, Math.round(total * 0.65));
 
-        let phaseAdvice;
-        if (round <= earlyEnd) {
-            phaseAdvice = `PHASE: EARLY (round ${round}/${total}). You have ${ap} AP.
-PRIORITY: Plant grass in DIFFERENT regions (spread seeds wide). Spend most of your AP on grass across separate regions, and at least 1 AP on a shrub for early diversity (+10% species bonus). Remember: each unique species = +10% to your final score!`;
-        } else if (round <= midEnd) {
-            let advice = `PHASE: MID GAME (round ${round}/${total}). You have ${ap} AP.\n`;
-            advice += `Your scoring multiplier: ×${currentMult.toFixed(2)} (${mySpecies.size} species${myHasPlant && myHasHerb && myHasPred ? ' + trophic chain' : ''}).\n`;
-            if (!myHasHerb) {
-                advice += `You have NO HERBIVORES — adding one gives +10% species bonus and moves toward trophic chain (×1.25). Herbivore energy also counts ×2! Deploy a grazer (2 AP) into enemy territory + 2 grass.\n`;
-            } else if (!myHasPred && enemyHasHerbs) {
-                advice += `You have no predators. Enemy has ${enemyCensus.herbs} herbivores. A PREDATOR gives +10% species bonus AND trophic chain ×1.25 AND its energy counts ×3. Deploy one! (2 AP) + 2 grass.\n`;
-            } else if (behind && enemyHasPlants) {
-                advice += `You are BEHIND. Send GRAZERS into enemy plant territory to destroy biomass. Mix: 1 grazer (2 AP) + 2 grass (2 AP).`;
-            } else {
-                advice += `Diversify! Add species you don't have yet. Each new species = +10%. Also plant grass in unclaimed regions.`;
-            }
-            phaseAdvice = advice;
-        } else {
-            let advice = `PHASE: LATE GAME (round ${round}/${total}). ${total - round} rounds left. You have ${ap} AP.\n`;
-            advice += `Your scoring multiplier: ×${currentMult.toFixed(2)} (${mySpecies.size} species${myHasPlant && myHasHerb && myHasPred ? ' + trophic chain' : ''}).\n`;
-            if (!myHasPred && myHasHerb) {
-                advice += `CRITICAL: Add a PREDATOR for trophic chain bonus (×1.25) + species bonus (+10%). This could swing the entire game!`;
-            } else if (!myHasHerb) {
-                advice += `Add a GRAZER + PREDATOR if possible to unlock trophic chain (×1.25). Huge scoring opportunity.`;
-            } else if (behind) {
-                advice += `BEHIND — aggressive grazer raids on enemy plants + ensure your diversity bonuses are maximized.`;
-            } else {
-                advice += `Protect your lead. Plant grass, ensure all trophic levels survive. Every species alive = +10%.`;
-            }
-            phaseAdvice = advice;
-        }
+        const grid = this.game.grid;
+        const mc = this.game.matchContext || {};
 
-        const system = `You are an AI playing Biome, a competitive ecosystem strategy game on a hex grid. You are Player ${this.player}. You have a personality — be competitive, witty, and opinionated about your strategy.
-
-GOAL: Maximize your FINAL SCORE after ${total} rounds.
-
-SCORING (this is critical!):
-- Weighted biomass: plant energy ×1, herbivore energy ×2, predator energy ×3
-- Species diversity: +10% bonus per unique species alive at game end
-- Trophic chain bonus: +25% if you have plants AND herbivores AND predators alive
-- Example: 5000 weighted biomass × 1.5 (5 species) × 1.25 (trophic) = 9375 final score
-- A diverse ecosystem CRUSHES a grass monoculture in scoring!
-
-SPECIES (in-world name → role, cost, behavior):
-- Sedgeweave (Grass, 1 AP): Spreads fast. Foundation of any ecosystem. Essential early.
-- Thornbloom (Shrub, 1 AP): Moderate spread, tougher. Adds species diversity bonus.
-- Spirewood (Tree, 2 AP): Slow spread, high energy (120 max). Immune to grazers. Great late-game anchor.
-- Hopgrazer (Grazer, 2 AP): Eats grass & shrubs, prefers enemy plants. Raider + herbivore energy counts ×2.
-- Bramblemaw (Browser, 2 AP): Eats shrubs & trees. Slower but energy counts ×2.
-- Shadestalker (Predator, 2 AP): Hunts herbivores. Energy counts ×3! Deploy when enemy has herbivores.
-
-VOICE: In your reasoning and banter, prefer the in-world names (Sedgeweave, Thornbloom, Spirewood, Hopgrazer, Bramblemaw, Shadestalker) — they give your trash-talk personality. Roles (Grass/Shrub/Tree/Grazer/Browser/Predator) are fine too. The action JSON below must still use the technical UPPERCASE keys. You know exactly who you are fighting (see MATCHUP) — call your opponent out by name, and let your ELO standing and win/loss record color your confidence (smug if you outrank them, hungry for an upset if you don't).
-
-STRATEGY: Early rounds plant Sedgeweave for foundation. Mid-game diversify — add Thornbloom, Hopgrazers. Late-game ensure you have all 3 trophic levels for the ×1.25 bonus.
-
-Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
-
-        let moveText = '';
-        for (const c of candidates) {
-            moveText += `  ${c.label}) [${c.type}] ${c.description} (${c.ap})\n`;
-        }
-        if (!moveText) moveText = '  No strong candidates — place grass in the best available fertile spot.\n';
-
-        // Matchup intel — who's across the board, their rank and record. Lets the
-        // model trash-talk by name and play the rivalry, not just the board.
-        const selfDesc = this._describeFighter(this.selfContext);
-        const oppDesc = this._describeFighter(this.opponent);
-        let matchupBlock = '';
-        if (selfDesc || oppDesc) {
-            const enemyNum = this.player === 1 ? 2 : 1;
-            matchupBlock = 'MATCHUP:\n';
-            if (selfDesc) matchupBlock += `  You (Player ${this.player}): ${selfDesc}\n`;
-            if (oppDesc) matchupBlock += `  Opponent (Player ${enemyNum}): ${oppDesc}\n`;
-            matchupBlock += '\n';
-        }
-
-        const recentBlock = this._recentHistoryBlock(myCensus, enemyCensus);
-
-        const user = `Round ${round}/${total}. You are Player ${this.player}. AP: ${ap}.
-
-${matchupBlock}${recentBlock}${phaseAdvice}
-
-MAP REGIONS:
-${this._generateMapSummary()}
-YOUR ECOSYSTEM: ${this._summarizePlayer(this.player)}
-ENEMY ECOSYSTEM: ${this._summarizePlayer(enemy)}
-
-CANDIDATE MOVES:
-${moveText}
-Spend ALL ${ap} AP. Pick a spot letter and a species for each action.
-
-VALID SPECIES NAMES (use EXACTLY one of these, ALL CAPS):
-  Plants: GRASS, SHRUB, TREE
-  Herbivores: GRAZER, BROWSER
-  Predator: PREDATOR
-
-IMPORTANT: Write ORIGINAL reasoning and banter. Reference the CURRENT game state (round ${round}, your species, the score).
-
-JSON format:
-{"reasoning":"<strategic analysis>","actions":[{"spot":"A","species":"GRASS"},{"spot":"B","species":"GRAZER"}],"banter":"<competitive comment>"}`;
-
-        return { system, user };
+        return {
+            player, enemy, round, total, ap,
+            match: { mode: mc.mode || null, modeLabel: mc.modeLabel || null, stakes: mc.stakes || null },
+            board: {
+                cols: grid.cols, rows: grid.rows,
+                sizeLabel: matchSizeLabel(grid.cols, grid.rows),
+                mapSummary: this._generateMapSummary().replace(/\n+$/, ''),
+                myEcosystem: this._summarizePlayer(player),
+                enemyEcosystem: this._summarizePlayer(enemy),
+                candidates,
+            },
+            census: { mine: myCensus, enemy: enemyCensus },
+            strategy: {
+                ahead: myCensus.biomass > enemyCensus.biomass * 1.2,
+                behind: enemyCensus.biomass > myCensus.biomass * 1.2,
+                enemyHasPlants: enemyCensus.plants > 20,
+                enemyHasHerbs: enemyCensus.herbs > 5,
+                myHasPlant, myHasHerb, myHasPred,
+                speciesCount: mySpecies.size, currentMult, earlyEnd, midEnd,
+            },
+            fighters: {
+                selfDesc: this._describeFighter(this.selfContext),
+                oppDesc: this._describeFighter(this.opponent),
+            },
+            memory: this.lastTurn ? this._recentHistoryBlock(myCensus, enemyCensus).trim() : '',
+            persona: this.persona || null,
+        };
     }
 
     // ── Ollama API call ────────────────────────────────────────
