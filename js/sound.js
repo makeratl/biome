@@ -94,6 +94,13 @@ const BANK = {
         _tone({ type: 'sine', freq: 440, peak: 0.20, attack: 0.005, hold: 0.05, release: 0.30, delay: 0.02 });
         _tone({ type: 'triangle', freq: 880, peak: 0.14, attack: 0.005, hold: 0.0, release: 0.20, delay: 0.06 });
     },
+    // Heavy body-thud + a downward metallic clang — the loser's "DEFEATED"
+    // stamp slamming down. The defeat beat that lands just before the win fanfare.
+    ko() {
+        _tone({ type: 'triangle', freq: 170, freqEnd: 55,  peak: 0.46, attack: 0.003, hold: 0.03, release: 0.30 });            // body thud
+        _tone({ type: 'square',   freq: 200, freqEnd: 70,  peak: 0.18, attack: 0.003, hold: 0.0,  release: 0.16 });            // crunch
+        _tone({ type: 'sawtooth', freq: 520, freqEnd: 170, peak: 0.20, attack: 0.002, hold: 0.0,  release: 0.26, delay: 0.02 }); // downer clang
+    },
     // Tense buzz resolving to a bright hit — an underdog win
     upset() {
         _tone({ type: 'sawtooth', freq: 70, freqEnd: 140, peak: 0.32, attack: 0.01, hold: 0.06, release: 0.30 });

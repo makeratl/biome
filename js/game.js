@@ -7,7 +7,7 @@ import { Renderer } from './renderer.js';
 import { Simulation } from './simulation.js';
 import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
-import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS } from './ai.js';
+import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { buildField, FORMATS, DEFAULT_FORMAT } from './tournament-format.js';
 
@@ -1931,12 +1931,22 @@ class Game {
         }
         this._playSound('victory');
 
+        const card = overlay.querySelector('.game-over-card');
+        card?.classList.remove('t-tier-win', 't-tier-promote', 't-tier-throne', 't-tier-upset', 't-tier-massive');
+
         // Solo + Watch matches now count toward the leaderboard. Post the
         // result, then stage any rank drama (upset / promotion / throne) as its
         // own beat — a short pause after the match-end fanfare so the two don't
         // collide. The callout queue hushes the ticker while it plays.
         this._recordCasualResult(scores).then(res => {
             if (res?.result) {
+                // Colour the card to the stakes and, on the big tiers, fire a
+                // celebratory spark burst. The tier-scaled SOUND comes from the
+                // _celebrateResult callout below (so 'victory' → tier sting builds
+                // rather than double-plays the same cue).
+                const drama = this._resultDrama(res.result);
+                card?.classList.add(`t-tier-${drama.tier}`);
+                if (drama.tier !== 'win') this._burstSparks(card, drama.tier);
                 setTimeout(() => this._celebrateResult(res.result), 800);
             }
         });
@@ -1990,6 +2000,12 @@ class Game {
 
         // Make sure card identity is set (rank/place stays visible permanently)
         this._setAICardIdentity(playerNum);
+
+        // Refresh matchup intel before the prompt is built so the fighter always
+        // knows who it's up against (and avoids the setup race where P1 is wired
+        // before P2 exists). One local rankings fetch — cheap, and keeps rank/record
+        // current across sequential tournament matches.
+        await this._syncFighterContext();
 
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         const sEl = document.getElementById(`ai-strategy-p${playerNum}`);
@@ -2203,6 +2219,18 @@ class Game {
         this._teardownAITurn(playerNum);
     }
 
+    // Preload this match's local models (skip cloud) and evict any other resident
+    // model — keeps peak residency bounded to the current match's models. Awaited
+    // before the clock starts so cold load stays out of the per-turn budget.
+    async _warmForMatch(models) {
+        try {
+            return await prepareResidentSet(models);
+        } catch (e) {
+            console.warn('[warm] prepareResidentSet failed (match continues):', e);
+            return null;
+        }
+    }
+
     setAI(playerNum, model) {
         this.aiPlayers[playerNum] = new AIPlayer(this, playerNum, { model });
         this._log(`P${playerNum} is now AI (${model})`);
@@ -2210,6 +2238,8 @@ class Game {
         // Surface identity in the header immediately — don't wait for the first move.
         this._updateScoreboard();
         this._updateMatchupOdds();
+        // Feed both fighters their matchup intel (name/rank/record) for prompts.
+        this._syncFighterContext();
     }
 
     removeAI(playerNum) {
@@ -2603,6 +2633,18 @@ class Game {
     async _startMatch(config) {
         this._lastMatchConfig = config;
 
+        // Kick off model warming as early as possible so cold load overlaps the
+        // prematch animation + terrain generation instead of freezing the board.
+        // Solo warms only P2 (P1 is human); watch warms both. Awaited just before
+        // the clock starts. Best-effort — a warm failure only means the first turn
+        // cold-loads inside the (now larger) budget, as before.
+        const warmNeeded = config.mode === 'solo' ? [config.p2Model]
+                         : config.mode === 'watch' ? [config.p1Model, config.p2Model]
+                         : [];
+        this._warmPromise = warmNeeded.some(m => m && !isCloudModel(m))
+            ? this._warmForMatch(warmNeeded)
+            : Promise.resolve();
+
         // Solo matches are ranked under the human's handle — prompt once up front.
         if (config.mode === 'solo') {
             this._humanHandle = await this._ensureHandle();
@@ -2660,6 +2702,11 @@ class Game {
         this._setConsoleVisible(true);
         this._updateCensus();
         this._resetMilestones();
+
+        // Ensure warming (started at the top of _startMatch) finished before the
+        // clock starts, so cold load never eats a player's turn budget.
+        try { await this._warmPromise; } catch (_) { /* best-effort */ }
+
         this._playSound('match-start');
         this.turns.startGame();
 
@@ -2843,6 +2890,128 @@ class Game {
 
         for (const c of queue) this._dispatchCallout(c);
         return queue.length;
+    }
+
+    // Classify a match result into a "drama tier" that drives how loud the
+    // winner reveal celebrates. Thresholds intentionally mirror _celebrateResult
+    // above so the result screen and the post-bracket headline callouts agree.
+    // Returns { tier, sound, event, winnerSide }.
+    _resultDrama(result) {
+        const dull = { tier: 'win', sound: 'victory', event: null, winnerSide: null };
+        if (!result) return dull;
+        const sides = [result.p1, result.p2].filter(Boolean);
+        const winnerSide = sides.find(s => s.name === result.winner) || null;
+
+        // New #1 — highest drama.
+        if (winnerSide && winnerSide.rankAfter === 1 && winnerSide.rankBefore !== 1) {
+            return { tier: 'throne', sound: 'champion', event: 'event-throne', winnerSide };
+        }
+        // Upset — winner was a long shot.
+        if (result.winnerWinProb != null && result.winnerWinProb < 0.35) {
+            const massive = result.winnerWinProb < 0.20;
+            return { tier: massive ? 'massive' : 'upset', sound: 'upset', event: 'event-upset', winnerSide };
+        }
+        // Promotion — winner climbed the board.
+        if (winnerSide && winnerSide.rankBefore != null && winnerSide.rankAfter != null
+            && winnerSide.rankAfter < winnerSide.rankBefore) {
+            return { tier: 'promote', sound: 'promote', event: 'event-promote', winnerSide };
+        }
+        return { ...dull, winnerSide };
+    }
+
+    // One-shot celebratory particle burst behind a card: an expanding shockwave
+    // ring plus a spray of sparks fired at randomized angles. Tinted by tier.
+    // Self-cleans after the animation. Plain 'win' tiers are skipped by callers.
+    _burstSparks(cardEl, tier = 'win') {
+        if (!cardEl) return;
+        const burst = document.createElement('div');
+        burst.className = `fx-burst fx-tier-${tier}`;
+        // Anchor the burst on the winner name (not the card's geometric centre,
+        // which can be offset from the centred content). Falls back to the CSS
+        // default (50% / 42%) if no focal element is found.
+        const focus = cardEl.querySelector('.t-result-winner, .winner');
+        if (focus) {
+            const cr = cardEl.getBoundingClientRect();
+            const fr = focus.getBoundingClientRect();
+            burst.style.left = `${Math.round(fr.left + fr.width / 2 - cr.left)}px`;
+            burst.style.top  = `${Math.round(fr.top + fr.height / 2 - cr.top)}px`;
+        }
+        const ring = document.createElement('div');
+        ring.className = 'fx-ring';
+        burst.appendChild(ring);
+        const N = (tier === 'massive' || tier === 'throne') ? 18 : 12;
+        for (let i = 0; i < N; i++) {
+            const s = document.createElement('div');
+            s.className = 'spark';
+            // Even angular spread + jitter so it reads organic, not mechanical.
+            const ang = (360 / N) * i + (Math.random() * 22 - 11);
+            const dist = 70 + Math.random() * 60;
+            s.style.setProperty('--a', `${ang}deg`);
+            s.style.setProperty('--d', `${dist}px`);
+            s.style.animationDelay = `${Math.random() * 80}ms`;
+            burst.appendChild(s);
+        }
+        cardEl.appendChild(burst);
+        setTimeout(() => burst.remove(), 1200);
+    }
+
+    // Count a number up to `to` over ~700ms, formatted with thousands separators
+    // (so it reads "6,687", not the scoreboard's "6.7k"). RAF-driven; cancellable.
+    _countUp(el, to) {
+        if (!el) return;
+        if (el._countRaf) cancelAnimationFrame(el._countRaf);
+        const from = 0;
+        const dur = 700;
+        let start = null;
+        const ease = t => 1 - Math.pow(1 - t, 3);
+        const step = (ts) => {
+            if (start == null) start = ts;
+            const t = Math.min(1, (ts - start) / dur);
+            const v = Math.round(from + (to - from) * ease(t));
+            el.textContent = v.toLocaleString();
+            if (t < 1) el._countRaf = requestAnimationFrame(step);
+            else el._countRaf = null;
+        };
+        el._countRaf = requestAnimationFrame(step);
+    }
+
+    // Build a compact identity+ranking descriptor for one player slot, shaped for
+    // AI prompt intel (Game → AIPlayer.opponent/selfContext). Human slots return a
+    // bare { isHuman, name }.
+    async _buildFighterDescriptor(playerNum) {
+        const ai = this.aiPlayers[playerNum];
+        if (!ai) {
+            const handle = this._getHandle() || `Player ${playerNum} (human)`;
+            return { isHuman: true, name: handle };
+        }
+        const id = resolveModel(ai.model);
+        const r = await this._fetchRanking(ai.model);
+        return {
+            isHuman: false,
+            name: this._prettyModelName(ai.model),
+            vendor: id.vendor && id.vendor !== '—' ? id.vendor : null,
+            archetype: id.family?.archetype ? titleCase(id.family.archetype) : null,
+            tier: /cloud/i.test(ai.model) ? 'cloud' : 'local',
+            elo: r ? Math.round(r.elo) : null,
+            rank: r ? r.rank : null,
+            wins: r ? r.wins : null,
+            losses: r ? r.losses : null,
+        };
+    }
+
+    // Push each AI fighter its own + its opponent's identity/ranking so prompts can
+    // play the rivalry. Cheap (one rankings fetch, already cached per call) and
+    // ELO is static within a match, so a sync at match setup is enough; _runAITurn
+    // lazily ensures it if a slot was swapped without a re-sync.
+    async _syncFighterContext() {
+        const descriptors = {};
+        for (const p of [1, 2]) descriptors[p] = await this._buildFighterDescriptor(p);
+        for (const p of [1, 2]) {
+            const ai = this.aiPlayers[p];
+            if (!ai) continue;
+            ai.selfContext = descriptors[p];
+            ai.opponent = descriptors[p === 1 ? 2 : 1];
+        }
     }
 
     async _fetchRanking(model) {

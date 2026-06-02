@@ -5,6 +5,7 @@ import { postResult, renderOddsInto, fetchRankings, expectedScore } from './rank
 import { CONFIG } from './config.js';
 import { resolveModel } from './model-identity.js';
 import { applyAvatar } from './model-avatar.js';
+import { prepareResidentSet, isCloudModel, listResidentModels } from './ai.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -235,7 +236,28 @@ export class TournamentManager {
         this._currentMatchIdx = match.id;
         this._renderLiveBracket();
 
-        await this._sleep(3500);
+        // Warm this match's local models BEFORE the game clock starts, so cold
+        // load (which can far exceed the 3.5s intro) never eats a player's turn
+        // budget. Runs concurrently with the intro animation; we wait for the
+        // longer of the two. Cloud models are no-ops inside prepareResidentSet.
+        const noteEl = document.getElementById('t-intro-note');
+        const realNote = noteEl ? noteEl.textContent : '';
+        const localPlayers = [match.p1, match.p2].some(m => m && !isCloudModel(m));
+        const prep = prepareResidentSet([match.p1, match.p2])
+            .then(r => {
+                // Charge complete — drop the powering-up effect and restore the note.
+                introScreen.classList.remove('t-warming');
+                if (noteEl) noteEl.textContent = realNote;
+                this._renderResidentReadout?.();
+                return r;
+            });
+        if (localPlayers) {
+            // Fighters "power up" while their models load — runs only as long as
+            // the warm actually takes (removed in prep's .then above).
+            introScreen.classList.add('t-warming');
+            if (noteEl) noteEl.textContent = 'Warming models…';
+        }
+        await Promise.all([this._sleep(3500), prep]);
 
         // Run game
         this._hideAll();
@@ -292,16 +314,80 @@ export class TournamentManager {
             : null;
         document.getElementById('t-result-rank').innerHTML = this._rankBadge(winnerSide);
 
-        document.getElementById('t-result-scores').innerHTML   =
-            `<div class="rs-row rs-win">${this._short(match.winner)}<span>${wScore.toLocaleString()}</span></div>
-             <div class="rs-row rs-lose">${this._short(loser)}<span>${lScore.toLocaleString()}</span></div>`;
+        // Tier the celebration to the stakes: a colour class on the card drives
+        // the winner-name glow / energy bloom + the combatant-card hues; the
+        // overlay aurora retints; reveal/KO sounds play; the big tiers (new #1 /
+        // massive upset) get a spark burst. Computed up front so the cards and
+        // the verdict word can read from it.
+        const resultDrama = this.game._resultDrama?.(res?.result) || { tier: 'win', sound: 'victory', event: null };
+        const isUpset = resultDrama.tier === 'upset' || resultDrama.tier === 'massive';
+        const isThrone = resultDrama.tier === 'throne';
+
+        // Combatant cards — the fighting-game winner / loser reveal. Reuse the
+        // VS-intro player card (avatar + ELO), then layer the victor ribbon on the
+        // winner and slam a red KO cross-out + DEFEATED stamp on the loser.
+        const winnerSlot = match.winner === match.p1 ? 1 : 2;
+        const loserSlot  = winnerSlot === 1 ? 2 : 1;
+        const wCard = document.getElementById('t-result-winner-card');
+        const lCard = document.getElementById('t-result-loser-card');
+        wCard.className = `player-card p${winnerSlot} pc-victor`;
+        lCard.className = `player-card p${loserSlot} pc-defeated`;
+        document.getElementById('t-result-verdict').textContent = isUpset ? 'UPSETS' : 'DEFEATS';
+        await Promise.all([
+            this.game._renderPlayerCard?.(wCard, { player: winnerSlot, model: match.winner }),
+            this.game._renderPlayerCard?.(lCard, { player: loserSlot,  model: loser }),
+        ]);
+        // Stamp the cards (render wiped any prior stamp). The role chips are
+        // hidden on this screen (CSS) — the ribbon + KO stamp carry the verdict.
+        wCard.querySelector('.pc-victor-tag')?.remove();
+        lCard.querySelector('.pc-ko')?.remove();
+        const vtag = document.createElement('div');
+        vtag.className = 'pc-victor-tag';
+        vtag.textContent = isThrone ? '♛ CHAMPION' : '★ WINNER';
+        wCard.appendChild(vtag);
+        const ko = document.createElement('div');
+        ko.className = 'pc-ko';
+        ko.innerHTML = '<span class="pc-ko-x"></span><span class="pc-ko-tag">DEFEATED</span>';
+        lCard.appendChild(ko);
+
+        // Score rows: proportional fill bar (--fill) + a count-up number. The
+        // winner row also gets a one-time sheen sweep (driven by .rs-win in CSS).
+        const total = Math.max(1, wScore + lScore);
+        const wPct = Math.round(wScore / total * 100);
+        const scoresEl = document.getElementById('t-result-scores');
+        scoresEl.innerHTML =
+            `<div class="rs-row rs-win" style="--fill:${wPct}%"><span class="rs-name">${this._short(match.winner)}</span><span class="rs-score" data-to="${wScore}">0</span></div>
+             <div class="rs-row rs-lose" style="--fill:${100 - wPct}%"><span class="rs-name">${this._short(loser)}</span><span class="rs-score" data-to="${lScore}">0</span></div>`;
         document.getElementById('t-result-next').textContent =
             isFinal ? 'Revealing the Champion...' : 'Bracket updating...';
+
+        const resultScreen = document.getElementById('t-match-result');
+        resultScreen.classList.remove('t-tier-win', 't-tier-promote', 't-tier-throne', 't-tier-upset', 't-tier-massive');
+        resultScreen.classList.add(`t-tier-${resultDrama.tier}`);
+        document.body.classList.remove('event-throne', 'event-upset', 'event-promote');
+        if (resultDrama.event) document.body.classList.add(resultDrama.event);
+
         this._show('t-match-result');
 
-        // Let the result card (with its rank badge) be read on its own — no
-        // overlapping celebration on top of it.
-        await this._sleep(3200);
+        // Sequenced beats so the moment BUILDS instead of arriving all at once:
+        //   cards slam → the KO stamp lands (thud) → the winner is crowned
+        //   (fanfare + sparks) → the scores tally up.
+        this._beat(550,  () => this.game._playSound?.('ko'));
+        this._beat(1000, () => {
+            this.game._playSound?.(resultDrama.sound);
+            if (resultDrama.tier !== 'win') this.game._burstSparks?.(resultScreen, resultDrama.tier);
+        });
+        this._beat(1300, () =>
+            scoresEl.querySelectorAll('.rs-score').forEach(el => this.game._countUp?.(el, Number(el.dataset.to))));
+
+        // Hold on the finished tableau so the win actually lands — longer for the
+        // big tiers. (Was 3.2s/4.2s and felt anticlimactic.)
+        const bigTier = isThrone || resultDrama.tier === 'massive';
+        await this._sleep(bigTier ? 6000 : 4600);
+
+        // Clear the result-screen aurora tint before moving on; the bracket
+        // headline callouts re-apply their own tints as they fire.
+        document.body.classList.remove('event-throne', 'event-upset', 'event-promote');
 
         // Move to the bracket, then play ONLY the rare headline moments
         // (NEW CHAMPION / UPSET) as a center callout over it. Promotions/demotions
@@ -562,6 +648,30 @@ export class TournamentManager {
         </div>`;
     }
 
+    // Refresh the cached "what's loaded in Ollama" snapshot and repaint the stats
+    // panel if it's open. Called after each warm/unload so the readout stays live.
+    async _renderResidentReadout() {
+        this._residentSnapshot = await listResidentModels();
+        if (this._statsOpen) this._renderStats();
+    }
+
+    // Compact readout of models currently resident in Ollama + total VRAM — so
+    // "how much RAM is in use, and is it valid?" is answerable at a glance.
+    _residentReadoutHtml() {
+        const models = this._residentSnapshot;
+        if (!models) return '';
+        if (models.length === 0) {
+            return `<div class="tsp-section-title" style="margin-top:14px;">Resident Models</div>
+                    <div class="tsp-empty">None loaded</div>`;
+        }
+        const totalVram = models.reduce((s, m) => s + (m.size_vram || m.size || 0), 0);
+        const gb = b => (b / 1073741824).toFixed(1) + ' GB';
+        const rows = models.map(m =>
+            `<div class="tsp-match-row"><span class="tsp-name">${this._short(m.name)}</span>
+             <span class="tsp-bar-score">${gb(m.size_vram || m.size || 0)}</span></div>`).join('');
+        return `<div class="tsp-section-title" style="margin-top:14px;">Resident Models · ${gb(totalVram)} VRAM</div>${rows}`;
+    }
+
     _renderStats() {
         const content = document.getElementById('tsp-content');
         if (!content) return;
@@ -620,6 +730,9 @@ export class TournamentManager {
                 </div>`;
             }
         }
+
+        // Resident-models readout (what Ollama is holding in VRAM right now)
+        html += this._residentReadoutHtml();
 
         content.innerHTML = html;
         this._paintAvatars(content);
@@ -975,4 +1088,8 @@ export class TournamentManager {
     }
 
     _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Fire a one-shot effect after `ms` without blocking the run loop — used to
+    // sequence the result-reveal beats (KO stamp, crowning, score tally).
+    _beat(ms, fn) { setTimeout(() => { try { fn(); } catch (_) {} }, ms); }
 }

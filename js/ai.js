@@ -3,6 +3,19 @@
 import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 
+// How long a warmed/active model is asked to stay resident in Ollama. Long
+// enough to outlast a full match (and the short gap to its next match in a
+// bracket) but bounded so an idle model still releases on its own — the
+// just-in-time unload in prepareResidentSet is the primary release; this TTL
+// is only the backstop if that unload is skipped (abort, crash). NOT -1.
+const MATCH_KEEP_ALIVE = '30m';
+
+// Shared cloud test — :cloud models are Ollama Cloud (remote, always warm,
+// zero local RAM), so they're skipped by all warm/unload logic.
+export function isCloudModel(name) {
+    return /cloud/i.test(name || '');
+}
+
 export class AIPlayer {
     constructor(game, playerNumber, options = {}) {
         this.game = game;
@@ -11,6 +24,37 @@ export class AIPlayer {
         // Use local proxy endpoint for CORS bypass
         this.ollamaUrl = options.ollamaUrl || '/ollama';
         this._mapSummary = null;
+        // Fighter intel — populated by the game (Game._syncFighterContext) so the
+        // prompt can name the opponent and reference both records/rankings. Each is
+        // { isHuman, name, vendor, archetype, tier, elo, rank, wins, losses } or null.
+        this.opponent = null;
+        this.selfContext = null;
+        // Per-turn memory — what this fighter did/said last time it acted, plus a
+        // start-of-turn census snapshot, so the next prompt can show "here's what
+        // changed while you were away" and feed back its own stated plan/banter.
+        // Stateless model calls otherwise have zero continuity between turns.
+        // Reset per match: setAI() builds a fresh AIPlayer, so this stays null.
+        this.lastTurn = null;
+    }
+
+    // One-line "who is this fighter" string for the matchup intel block.
+    _describeFighter(f) {
+        if (!f) return null;
+        if (f.isHuman) return `${f.name} (a human challenger)`;
+        let s = f.name;
+        const tags = [];
+        if (f.vendor) tags.push(`by ${f.vendor}`);
+        if (f.archetype) tags.push(f.archetype);
+        if (f.tier) tags.push(f.tier);
+        if (tags.length) s += ` (${tags.join(', ')})`;
+        if (f.elo != null) {
+            const rankStr = f.rank ? `ranked #${f.rank}, ` : '';
+            const rec = (f.wins != null) ? `, ${f.wins}W–${f.losses}L` : '';
+            s += ` — ${rankStr}${f.elo} ELO${rec}`;
+        } else {
+            s += ' — unranked, no record yet';
+        }
+        return s;
     }
 
     // ── Map summary (generated once per game) ──────────────────
@@ -255,6 +299,64 @@ export class AIPlayer {
         return { plants, herbs, preds, biomass: Math.round(biomass) };
     }
 
+    // ── Turn-to-turn continuity ────────────────────────────────
+
+    // Stash what this fighter did/said this turn + a start-of-turn census, so the
+    // NEXT turn can diff against it. Called from both the normal and fallback paths.
+    // `startCensus` is { mine, enemy } captured before this turn's placements.
+    _recordTurn(startCensus, reasoning, banter, results) {
+        const placed = results
+            .filter(r => r.ok && r.cell)
+            .map(r => ({ species: r.species, region: this._regionOf(r.cell.col, r.cell.row) }));
+        const tidy = (s, n) => {
+            const clean = (s || '').replace(/\s+/g, ' ').trim();
+            return clean.length > n ? clean.slice(0, n - 1).trimEnd() + '…' : clean;
+        };
+        this.lastTurn = {
+            round: this.game.turns.round,
+            plan: tidy(reasoning, 280),
+            banter: tidy(banter, 160),
+            placed,
+            census: startCensus,
+        };
+    }
+
+    // "Since your last turn…" block — the only thread of continuity across the
+    // model's stateless calls. Diffs current census against last turn's snapshot,
+    // replays what it deployed, and feeds back its own stated plan/banter. Empty
+    // on the first turn (no prior). `myCensus`/`enemyCensus` are this turn's.
+    _recentHistoryBlock(myCensus, enemyCensus) {
+        const lt = this.lastTurn;
+        if (!lt) return '';
+
+        const lines = [`SINCE YOUR LAST TURN (round ${lt.round}):`];
+
+        if (lt.placed.length) {
+            const counts = {};
+            for (const p of lt.placed) {
+                const name = CONFIG.SPECIES[p.species]?.name || p.species;
+                const key = `${name}|${p.region}`;
+                counts[key] = (counts[key] || 0) + 1;
+            }
+            const parts = Object.entries(counts).map(([key, n]) => {
+                const [name, region] = key.split('|');
+                return `${n}× ${name} (${region})`;
+            });
+            lines.push(`  You deployed: ${parts.join(', ')}`);
+        }
+
+        if (lt.plan) lines.push(`  Your stated plan: "${lt.plan}"`);
+
+        const sign = n => (n >= 0 ? `+${n}` : `${n}`);
+        const dMine = myCensus.biomass - lt.census.mine.biomass;
+        const dEnemy = enemyCensus.biomass - lt.census.enemy.biomass;
+        lines.push(`  Board moved since then — your biomass ${lt.census.mine.biomass}→${myCensus.biomass} (${sign(dMine)}), enemy ${lt.census.enemy.biomass}→${enemyCensus.biomass} (${sign(dEnemy)}).`);
+
+        if (lt.banter) lines.push(`  You declared: "${lt.banter}"`);
+
+        return lines.join('\n') + '\n\n';
+    }
+
     // ── Prompt builder ─────────────────────────────────────────
 
     _buildPrompt(candidates) {
@@ -343,7 +445,7 @@ SPECIES (in-world name → role, cost, behavior):
 - Bramblemaw (Browser, 2 AP): Eats shrubs & trees. Slower but energy counts ×2.
 - Shadestalker (Predator, 2 AP): Hunts herbivores. Energy counts ×3! Deploy when enemy has herbivores.
 
-VOICE: In your reasoning and banter, prefer the in-world names (Sedgeweave, Thornbloom, Spirewood, Hopgrazer, Bramblemaw, Shadestalker) — they give your trash-talk personality. Roles (Grass/Shrub/Tree/Grazer/Browser/Predator) are fine too. The action JSON below must still use the technical UPPERCASE keys.
+VOICE: In your reasoning and banter, prefer the in-world names (Sedgeweave, Thornbloom, Spirewood, Hopgrazer, Bramblemaw, Shadestalker) — they give your trash-talk personality. Roles (Grass/Shrub/Tree/Grazer/Browser/Predator) are fine too. The action JSON below must still use the technical UPPERCASE keys. You know exactly who you are fighting (see MATCHUP) — call your opponent out by name, and let your ELO standing and win/loss record color your confidence (smug if you outrank them, hungry for an upset if you don't).
 
 STRATEGY: Early rounds plant Sedgeweave for foundation. Mid-game diversify — add Thornbloom, Hopgrazers. Late-game ensure you have all 3 trophic levels for the ×1.25 bonus.
 
@@ -355,9 +457,24 @@ Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
         }
         if (!moveText) moveText = '  No strong candidates — place grass in the best available fertile spot.\n';
 
+        // Matchup intel — who's across the board, their rank and record. Lets the
+        // model trash-talk by name and play the rivalry, not just the board.
+        const selfDesc = this._describeFighter(this.selfContext);
+        const oppDesc = this._describeFighter(this.opponent);
+        let matchupBlock = '';
+        if (selfDesc || oppDesc) {
+            const enemyNum = this.player === 1 ? 2 : 1;
+            matchupBlock = 'MATCHUP:\n';
+            if (selfDesc) matchupBlock += `  You (Player ${this.player}): ${selfDesc}\n`;
+            if (oppDesc) matchupBlock += `  Opponent (Player ${enemyNum}): ${oppDesc}\n`;
+            matchupBlock += '\n';
+        }
+
+        const recentBlock = this._recentHistoryBlock(myCensus, enemyCensus);
+
         const user = `Round ${round}/${total}. You are Player ${this.player}. AP: ${ap}.
 
-${phaseAdvice}
+${matchupBlock}${recentBlock}${phaseAdvice}
 
 MAP REGIONS:
 ${this._generateMapSummary()}
@@ -384,22 +501,17 @@ JSON format:
     // ── Ollama API call ────────────────────────────────────────
 
     _isCloudModel() {
-        return /cloud/i.test(this.model);
+        return isCloudModel(this.model);
     }
 
-    _isThinkingModel() {
-        // Cloud models route through Ollama's cloud API which tends to use
-        // thinking/chain-of-thought; local thinking models include qwen3, glm, kimi
-        return this._isCloudModel() || /qwen3|glm|kimi|minimax/i.test(this.model);
-    }
-
-    // How long a single model call is allowed before we abandon it. Cloud models
-    // need longer for the network roundtrip; thinking models for chain-of-thought.
-    // Exposed so the game-level turn watchdog can derive its own (larger) ceiling.
+    // How long a single model call is allowed before we abandon it. Now that the
+    // match warms models BEFORE the clock starts (prepareResidentSet), cold-load
+    // no longer eats this budget — and in practice both local (2–6s) and cloud
+    // (up to ~30s worst case) settle well inside a flat 30s ceiling. One number
+    // for everyone keeps the field level. Exposed so the game-level turn watchdog
+    // can derive its own (larger) ceiling.
     timeoutMs() {
-        return this._isCloudModel() ? 90_000
-             : this._isThinkingModel() ? 75_000
-             : 30_000;
+        return 30_000;
     }
 
     async _callOllama(system, user, signal) {
@@ -424,6 +536,11 @@ JSON format:
                 format: 'json',
                 stream: false,
                 think: false,
+                // Keep the active model resident between this model's own turns —
+                // without this Ollama's 5-min default can unload it mid-match
+                // (P1 → P2 → back to P1 can exceed 5 min with two large models),
+                // forcing a cold reload on the next turn. Cloud models ignore it.
+                keep_alive: MATCH_KEEP_ALIVE,
                 options: { temperature: 0.7, num_predict: numPredict },
             }),
         });
@@ -521,6 +638,10 @@ JSON format:
 
     async takeTurn() {
         const candidates = this._findCandidates();
+        const enemy = this.player === 1 ? 2 : 1;
+        // Snapshot the board as this turn begins — next turn diffs against it for
+        // the "since your last turn" recap. Captured before any placements land.
+        const startCensus = { mine: this._getCensus(this.player), enemy: this._getCensus(enemy) };
         const { system, user } = this._buildPrompt(candidates);
         const ap = this.game.turns.players[this.player].ap;
 
@@ -546,14 +667,14 @@ JSON format:
             const reason = /timeout/i.test(msg) ? 'timeout'
                 : /no valid json/i.test(msg) ? 'badjson'
                 : 'offline';
-            return this._fallback(candidates, reason);
+            return this._fallback(candidates, reason, startCensus);
         } finally {
             clearTimeout(timer);
         }
 
         if (!response?.actions) {
             console.error('[AI] Bad response (no actions):', JSON.stringify(response));
-            return this._fallback(candidates, 'badjson');
+            return this._fallback(candidates, 'badjson', startCensus);
         }
 
         console.log('[AI] Response:', JSON.stringify(response));
@@ -575,6 +696,8 @@ JSON format:
         }
 
         this.game.renderer.render();
+
+        this._recordTurn(startCensus, response.reasoning, response.banter, results);
 
         return {
             reasoning: response.reasoning || '',
@@ -633,7 +756,7 @@ JSON format:
     }
 
     // Fallback if LLM is unavailable
-    _fallback(candidates, reason = 'offline') {
+    _fallback(candidates, reason = 'offline', startCensus = null) {
         const tm = this.game.turns;
         const plants = candidates.filter(c => c.type === 'plant');
         const results = [];
@@ -651,6 +774,7 @@ JSON format:
         }
 
         this.game.renderer.render();
+        if (startCensus) this._recordTurn(startCensus, 'LLM unavailable — fell back to grass.', '', results);
         return {
             reasoning: 'LLM unavailable — fallback to grass',
             actions: results,
@@ -664,9 +788,12 @@ JSON format:
     async getFinalStatement(myScore, enemyScore, won) {
         const result = won ? 'WON' : (myScore.finalScore === enemyScore.finalScore ? 'TIED' : 'LOST');
 
-        const system = `You are an AI who just finished playing Biome, a competitive ecosystem strategy game. You are Player ${this.player}. Give a brief, memorable post-game statement. Be a gracious winner or a defiant loser. Reference specific details from the game. Respond ONLY with valid JSON.`;
+        const oppName = this.opponent && !this.opponent.isHuman ? this.opponent.name
+            : this.opponent?.isHuman ? this.opponent.name : 'your opponent';
 
-        const user = `Game over! You ${result}.
+        const system = `You are an AI who just finished playing Biome, a competitive ecosystem strategy game. You are Player ${this.player}. You were up against ${oppName}. Give a brief, memorable post-game statement — name your opponent. Be a gracious winner or a defiant loser. Reference specific details from the game. Respond ONLY with valid JSON.`;
+
+        const user = `Game over! You ${result} against ${oppName}.
 
 Your final score: ${myScore.finalScore.toLocaleString()} (${myScore.speciesCount} species, multiplier ×${myScore.totalMult.toFixed(2)})
 Species: ${myScore.species.join(', ') || 'none'}
@@ -745,6 +872,95 @@ export async function pullModel(modelName, onProgress) {
     } catch (e) {
         return { success: false, error: e.message };
     }
+}
+
+// ── Model residency lifecycle (warming / unloading / inspection) ──────────────
+// All of these resolve and never throw — warming must never block or fail a
+// match. Cloud (:cloud) models have no local footprint, so they're skipped.
+
+// Preload a model into memory WITHOUT generating, and ask Ollama to keep it
+// resident. An empty-prompt /api/generate returns once the model is loaded
+// (done_reason "load"), so awaiting this moves cold-load time out of the
+// per-turn budget. Accepts an AbortSignal so a restart can cancel an in-flight warm.
+export async function warmModel(model, { keepAlive = MATCH_KEEP_ALIVE, signal } = {}) {
+    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    try {
+        const resp = await fetch('/ollama/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal,
+            body: JSON.stringify({ model, keep_alive: keepAlive, prompt: '', stream: false }),
+        });
+        if (!resp.ok) return { ok: false, error: `warm ${resp.status}: ${await resp.text()}` };
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+    }
+}
+
+// Evict a model from memory immediately (keep_alive:0). Best-effort.
+export async function unloadModel(model) {
+    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    try {
+        await fetch('/ollama/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, keep_alive: 0, prompt: '', stream: false }),
+        });
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+    }
+}
+
+// Models currently resident in Ollama. Each: { name, size, size_vram, expires_at }.
+export async function listResidentModels() {
+    try {
+        const resp = await fetch('/ollama/api/ps');
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return Array.isArray(data.models) ? data.models : [];
+    } catch {
+        return [];
+    }
+}
+
+// Normalize a model name for residency comparison — /api/ps may report a
+// `:latest` tag the caller's bare name omits (mirrors tournament.js norm).
+function _normModel(name) {
+    return String(name || '').replace(/:latest$/, '');
+}
+
+// "Warm the next match only" lifecycle. Given the local models the upcoming
+// match needs, evicts every OTHER resident local model and warms the needed
+// ones that aren't already resident — keeping peak residency at the match's
+// model count. ps-driven so it self-heals partial prior state (e.g. an aborted
+// warm). A winner advancing is in `neededModels`, so it's never unloaded/reloaded.
+// Returns { warmed:[], unloaded:[], failures:[] }. Never throws.
+export async function prepareResidentSet(neededModels, { signal } = {}) {
+    const needed = [...new Set((neededModels || []).filter(m => m && !isCloudModel(m)))];
+    const neededNorm = new Set(needed.map(_normModel));
+
+    const resident = await listResidentModels();
+    const residentNorm = new Set(resident.map(m => _normModel(m.name)));
+
+    const toUnload = resident
+        .map(m => m.name)
+        .filter(name => !neededNorm.has(_normModel(name)));
+    const toWarm = needed.filter(m => !residentNorm.has(_normModel(m)));
+
+    const [unloadRes, warmRes] = await Promise.all([
+        Promise.all(toUnload.map(m => unloadModel(m))),
+        Promise.all(toWarm.map(m => warmModel(m, { signal }))),
+    ]);
+
+    const failures = warmRes
+        .map((r, i) => (r && !r.ok && !r.skipped) ? { model: toWarm[i], error: r.error } : null)
+        .filter(Boolean);
+    if (failures.length) {
+        console.warn('[warm] some models failed to preload (match continues):', failures);
+    }
+    return { warmed: toWarm, unloaded: toUnload, failures };
 }
 
 // Human-readable model sizes

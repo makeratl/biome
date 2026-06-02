@@ -2247,11 +2247,13 @@ body {
 
 .ai-overlay {
     position: fixed;
-    bottom: calc(100vh - var(--board-t) - var(--board-h) + 14px);
+    top: calc(var(--board-t) + 14px);
+    bottom: auto;
     width: calc(var(--card-gutter) - 28px);
     max-height: calc(var(--board-h) - 28px);
-    overflow-y: auto;
-    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: linear-gradient(180deg, rgba(15, 20, 38, 0.92), rgba(10, 12, 26, 0.92));
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -2260,6 +2262,32 @@ body {
     backdrop-filter: blur(8px);
     box-shadow: 0 4px 18px rgba(0,0,0,0.45);
     transition: opacity 0.3s;
+}
+
+/* Header + statblock stay pinned; only the body scrolls so the card chrome
+   never moves no matter how long the response runs. */
+.aic-header,
+.aic-statblock { flex-shrink: 0; }
+
+.aic-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* room so the scrollbar doesn't crowd the text */
+    margin-right: -6px;
+    padding-right: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: hsla(var(--aic-hue, 210), 60%, 60%, 0.4) transparent;
+}
+.aic-body::-webkit-scrollbar { width: 6px; }
+.aic-body::-webkit-scrollbar-track { background: transparent; }
+.aic-body::-webkit-scrollbar-thumb {
+    background: hsla(var(--aic-hue, 210), 55%, 60%, 0.35);
+    border-radius: 3px;
+}
+.aic-body:hover::-webkit-scrollbar-thumb {
+    background: hsla(var(--aic-hue, 210), 60%, 65%, 0.6);
 }
 
 .ai-overlay.p1 {
@@ -2950,6 +2978,96 @@ body {
 .pm-enter .player-card.p2 { animation: pm-slam-right 0.42s cubic-bezier(0.2,0.85,0.3,1.25) both; }
 .pm-enter .prematch-vs    { animation: pm-vs-clash 0.6s cubic-bezier(0.2,0.9,0.3,1.5) both; }
 
+/* ── "Powering up" — model-warming charge sequence ───────────────
+   While the match's models load into Ollama the intro gains .t-warming and the
+   two fighters "charge": each avatar breathes and glows in its own colour, an
+   energy band scans down each card ("loading the fighter"), the VS sigil throbs,
+   and the note shimmers above a sweeping charge bar. Everything loops until
+   warming resolves and the class is removed — so the effect lasts exactly as
+   long as the load actually takes. Pseudo-element / avatar driven so it never
+   clashes with the one-shot .pm-enter slam on the cards themselves. */
+.t-warming .player-card.p1 .pc-avatar { --warm-glow: 190 90% 55%; }
+.t-warming .player-card.p2 .pc-avatar { --warm-glow: 22 90% 56%; }
+.t-warming .pc-avatar {
+    animation: warm-charge 1.5s ease-in-out infinite;
+    will-change: transform, filter;
+}
+.t-warming .player-card.p2 .pc-avatar { animation-delay: 0.35s; }
+@keyframes warm-charge {
+    0%, 100% { transform: scale(1);     filter: drop-shadow(0 0 5px hsla(var(--warm-glow) / 0.45)); }
+    50%      { transform: scale(1.045); filter: drop-shadow(0 0 16px hsla(var(--warm-glow) / 0.95)); }
+}
+
+/* Energy band scanning down each card */
+.t-warming .player-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+        transparent 0%,
+        hsla(0,0%,100%,0.10) 46%,
+        hsla(0,0%,100%,0.20) 50%,
+        hsla(0,0%,100%,0.10) 54%,
+        transparent 100%);
+    background-repeat: no-repeat;
+    background-size: 100% 240%;
+    animation: warm-scan 1.9s linear infinite;
+    z-index: 2;
+}
+.t-warming .player-card.p2::after { animation-delay: 0.45s; }
+@keyframes warm-scan {
+    0%   { background-position: 0 120%;  opacity: 0; }
+    14%  { opacity: 1; }
+    86%  { opacity: 1; }
+    100% { background-position: 0 -120%; opacity: 0; }
+}
+
+/* VS sigil throbs with the charge */
+.t-warming .prematch-vs { animation: warm-vs 1.5s ease-in-out infinite; }
+@keyframes warm-vs {
+    0%, 100% { opacity: 0.4;  transform: scale(1);    text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+    50%      { opacity: 0.95; transform: scale(1.12); text-shadow: 0 0 18px hsla(45,90%,70%,0.6), 0 2px 12px rgba(0,0,0,0.6); }
+}
+
+/* Note: shimmering charge text + a sweeping bar beneath it */
+.t-warming .t-intro-note {
+    color: transparent;
+    background: linear-gradient(100deg,
+        hsl(190,80%,70%) 0%, rgba(255,255,255,0.96) 30%,
+        hsl(22,85%,66%) 60%, hsl(190,80%,70%) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: warm-note 2.4s linear infinite;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding-bottom: 10px;
+}
+@keyframes warm-note {
+    0%   { background-position: 120% 50%; }
+    100% { background-position: -120% 50%; }
+}
+.t-warming .t-intro-note::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 130px;
+    height: 2px;
+    transform: translateX(-50%);
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, hsl(190,80%,60%), hsl(22,85%,58%), transparent);
+    background-size: 200% 100%;
+    animation: warm-bar 1.3s linear infinite;
+}
+@keyframes warm-bar {
+    0%   { background-position: 100% 0; opacity: 0.4; }
+    50%  { opacity: 1; }
+    100% { background-position: -100% 0; opacity: 0.4; }
+}
+
 /* ── Launcher (welcome / setup menus) ────────────────────────────
    The launcher is the ambient MENU, not an in-game event — it deliberately
    keeps the generated hex world visible behind a light dim (the opaque aurora
@@ -3263,18 +3381,29 @@ body {
     --aur-glow: hsla(42, 100%, 50%, 0.22);
 }
 /* Rank-drama flares (driven by body classes set in Game._drainCallouts while a
-   headline callout holds): upset → magenta, throne → gold. */
+   headline callout holds, and by the result screen during its reveal):
+   upset → magenta, throne → gold, promote → green. Also tint the solo/watch
+   game-over backdrop so its celebration matches. */
 body.event-upset #tournament-overlay,
-body.event-upset #bracket-expanded {
+body.event-upset #bracket-expanded,
+body.event-upset #game-over-overlay {
     --aur-1: hsl(330, 92%, 60%);
     --aur-2: hsl(280, 85%, 60%);
     --aur-glow: hsla(325, 95%, 55%, 0.24);
 }
 body.event-throne #tournament-overlay,
-body.event-throne #bracket-expanded {
+body.event-throne #bracket-expanded,
+body.event-throne #game-over-overlay {
     --aur-1: hsl(45, 100%, 60%);
     --aur-2: hsl(35, 95%, 54%);
     --aur-glow: hsla(42, 100%, 52%, 0.26);
+}
+body.event-promote #tournament-overlay,
+body.event-promote #bracket-expanded,
+body.event-promote #game-over-overlay {
+    --aur-1: hsl(150, 85%, 55%);
+    --aur-2: hsl(170, 75%, 52%);
+    --aur-glow: hsla(155, 90%, 50%, 0.22);
 }
 
 @keyframes t-fadein {
@@ -3852,6 +3981,7 @@ body.event-throne #bracket-expanded {
     width: 320px;
 }
 .rs-row {
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -3859,17 +3989,54 @@ body.event-throne #bracket-expanded {
     border-radius: 6px;
     font-weight: 600;
     font-size: 15px;
+    overflow: hidden;
+}
+/* Proportional fill bar behind each row (width = score share, set via --fill).
+   Grows in from the left on reveal. */
+.rs-row::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: var(--fill, 0%);
+    border-radius: 6px;
+    transform-origin: left center;
+    animation: rs-fill 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1.3s both;
+    z-index: 0;
+}
+.rs-row .rs-name, .rs-row .rs-score { position: relative; z-index: 1; }
+.rs-row .rs-score { font-variant-numeric: tabular-nums; }
+@keyframes rs-fill {
+    0%   { transform: scaleX(0); opacity: 0; }
+    100% { transform: scaleX(1); opacity: 1; }
 }
 .rs-row.rs-win {
     background: rgba(100, 220, 130, 0.1);
     border: 1px solid rgba(100, 220, 130, 0.25);
     color: hsl(140, 60%, 70%);
 }
+.rs-row.rs-win::before { background: linear-gradient(90deg, hsla(140,70%,55%,0.28), hsla(150,75%,55%,0.10)); }
+/* One-time sheen sweep across the winner row */
+.rs-row.rs-win::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.28) 50%, transparent 65%);
+    background-size: 220% 100%;
+    animation: rs-sheen 1.1s ease-out 1.7s both;
+}
+@keyframes rs-sheen {
+    0%   { background-position: 130% 0; opacity: 0; }
+    20%  { opacity: 1; }
+    100% { background-position: -130% 0; opacity: 0; }
+}
 .rs-row.rs-lose {
     background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.06);
     color: rgba(255,255,255,0.3);
 }
+.rs-row.rs-lose::before { background: rgba(255,255,255,0.05); }
 .t-result-next {
     font-size: 12px;
     color: rgba(255,255,255,0.25);
@@ -3880,6 +4047,294 @@ body.event-throne #bracket-expanded {
 @keyframes t-pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+}
+
+/* ── Cinematic winner reveal — staged entrance + stakes-tiered energy ──────
+   Driven by a .t-tier-{win|promote|throne|upset|massive} class on the result
+   card (#t-match-result) and the solo/watch .game-over-card. Tier hues:
+   win=green, promote=green→gold, throne=gold, upset/massive=magenta. */
+.t-tier-win     { --tier-h: 140; --tier-h2: 158; }
+.t-tier-promote { --tier-h: 150; --tier-h2: 46;  }
+.t-tier-throne  { --tier-h: 45;  --tier-h2: 33;  }
+.t-tier-upset   { --tier-h: 330; --tier-h2: 285; }
+.t-tier-massive { --tier-h: 332; --tier-h2: 18;  }
+
+/* Anchor for the absolutely-positioned spark burst. */
+#t-match-result, .game-over-card { position: relative; }
+
+/* Staged entrance — each child eases in on its own beat as the screen shows.
+   Overrides the flat .t-screen fade for the result screen. */
+#t-match-result > * { animation: tres-in 0.5s ease both; }
+#t-match-result > #t-result-label     { animation-delay: 0.02s; }
+#t-match-result > #t-result-cards     { animation-delay: 0.18s; }
+#t-match-result > .t-result-winner-label { animation-delay: 0.82s; }
+#t-match-result > #t-result-winner {
+    animation: tres-winner 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.3) 0.90s both;
+}
+#t-match-result > #t-result-rank      { animation: tres-pop 0.6s cubic-bezier(0.22,1,0.36,1) 1.15s both; }
+#t-match-result > #t-result-scores    { animation-delay: 1.25s; }
+#t-match-result > #t-result-next      { animation-delay: 1.55s; }
+
+@keyframes tres-in {
+    0%   { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes tres-winner {
+    0%   { opacity: 0; transform: scale(0.6) translateY(14px); }
+    65%  { opacity: 1; transform: scale(1.08); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes tres-pop {
+    0%   { opacity: 0; transform: scale(0.4); }
+    60%  { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+/* Winner name takes the tier colour: a gradient fill + a breathing glow + a
+   soft radial energy bloom behind it. The bloom intensifies for bigger tiers. */
+.t-tier-win .t-result-winner,
+.t-tier-promote .t-result-winner,
+.t-tier-throne .t-result-winner,
+.t-tier-upset .t-result-winner,
+.t-tier-massive .t-result-winner,
+.game-over-card[class*="t-tier-"] .winner {
+    position: relative;
+    color: transparent;
+    background: linear-gradient(135deg,
+        hsl(var(--tier-h), 90%, 70%), hsl(var(--tier-h2), 95%, 62%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0 14px hsla(var(--tier-h), 90%, 60%, 0.45));
+    animation: tres-winner-glow 2.4s ease-in-out 0.9s infinite;
+}
+@keyframes tres-winner-glow {
+    0%, 100% { filter: drop-shadow(0 0 12px hsla(var(--tier-h), 90%, 60%, 0.40)); }
+    50%      { filter: drop-shadow(0 0 26px hsla(var(--tier-h), 95%, 66%, 0.85)); }
+}
+/* Radial energy bloom behind the winner name (sits under the text). */
+#t-match-result .t-result-winner::before {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 360px; height: 200px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(ellipse at center,
+        hsla(var(--tier-h), 95%, 60%, 0.30) 0%, transparent 65%);
+    z-index: -1;
+    pointer-events: none;
+    animation: tres-bloom 0.9s ease 0.2s both;
+}
+.t-tier-throne .t-result-winner::before,
+.t-tier-massive .t-result-winner::before { width: 460px; height: 240px; }
+@keyframes tres-bloom {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+    60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+    100% { opacity: 0.85; transform: translate(-50%, -50%) scale(1); }
+}
+/* Rank badge picks up a matching glow on the eventful tiers. */
+.t-tier-promote .t-result-rank,
+.t-tier-throne .t-result-rank,
+.t-tier-upset .t-result-rank,
+.t-tier-massive .t-result-rank {
+    text-shadow: 0 0 14px hsla(var(--tier-h), 90%, 60%, 0.5);
+}
+
+/* ── Combatant reveal — victor / defeated cards ───────────────────────────
+   The result screen mirrors the VS-intro player cards (avatar + ELO), then
+   crowns the winner and slams a red KO cross-out on the loser. Tier hue (set by
+   .t-tier-* on #t-match-result) tints the victor; the KO is always danger-red. */
+#t-match-result { gap: 14px; }
+
+.t-result-cards {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+}
+.t-result-cards .player-card { width: 188px; padding: 16px 14px 12px; }
+.t-result-cards .pc-avatar { width: 84px; height: 84px; font-size: 34px; }
+/* The victor ribbon + KO stamp carry the verdict — hide the slot role chip so
+   it doesn't collide with / duplicate them. */
+#t-match-result .pc-role { display: none; }
+
+.t-result-verdict {
+    font-size: 22px;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    color: hsl(var(--tier-h, 140), 85%, 66%);
+    text-shadow: 0 0 18px hsla(var(--tier-h, 140), 90%, 55%, 0.6);
+    white-space: nowrap;
+    animation: tres-pop 0.5s cubic-bezier(0.2, 0.7, 0.3, 1.4) 0.66s both;
+}
+
+/* Entrance: the two fighters slam in from the sides (echoing the VS intro), the
+   winner settling a touch larger than the beaten loser. */
+.t-result-cards .pc-victor   { animation: res-card-l 0.46s cubic-bezier(0.2, 0.85, 0.3, 1.25) 0.22s both; }
+.t-result-cards .pc-defeated { animation: res-card-r 0.46s cubic-bezier(0.2, 0.85, 0.3, 1.25) 0.22s both; }
+@keyframes res-card-l {
+    0%   { opacity: 0; transform: translateX(-64px) scale(0.9); }
+    70%  { opacity: 1; transform: translateX(6px) scale(1.06); }
+    100% { opacity: 1; transform: translateX(0) scale(1.04); }
+}
+@keyframes res-card-r {
+    0%   { opacity: 0; transform: translateX(64px) scale(0.9); }
+    70%  { opacity: 1; transform: translateX(-6px) scale(0.98); }
+    100% { opacity: 1; transform: translateX(0) scale(0.96); }
+}
+
+/* Victor — tier-coloured ring, glow lift, accent bar, avatar halo. */
+#t-match-result .pc-victor {
+    border-color: hsl(var(--tier-h, 140), 85%, 60%);
+    box-shadow: 0 0 30px hsla(var(--tier-h, 140), 90%, 55%, 0.45), 0 10px 30px rgba(0,0,0,0.5);
+    z-index: 2;
+    overflow: visible;   /* let the winner ribbon straddle the top edge */
+}
+/* Re-round the accent bar's top corners (the card no longer clips them). */
+#t-match-result .pc-victor::before { border-radius: 10px 10px 0 0; }
+#t-match-result .pc-victor::before {
+    background: linear-gradient(to right,
+        hsl(var(--tier-h, 140), 92%, 66%), hsl(var(--tier-h2, 158), 92%, 58%)) !important;
+}
+#t-match-result .pc-victor .pc-avatar.has-avatar {
+    box-shadow: inset 0 0 0 3px hsl(var(--tier-h, 140), 85%, 62%);
+    filter: drop-shadow(0 0 16px hsla(var(--tier-h, 140), 90%, 58%, 0.7));
+}
+#t-match-result .pc-victor .pc-role { color: hsl(var(--tier-h, 140), 85%, 70%); }
+
+/* Winner ribbon — slammed pill above the card. */
+.pc-victor-tag {
+    position: absolute;
+    top: -11px; left: 50%;
+    z-index: 6;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    color: #161009;
+    background: linear-gradient(135deg, hsl(var(--tier-h, 140), 95%, 72%), hsl(var(--tier-h2, 158), 95%, 60%));
+    padding: 3px 14px;
+    border-radius: 20px;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px hsla(var(--tier-h, 140), 90%, 50%, 0.5);
+    transform: translateX(-50%);
+    animation: pc-stamp 0.5s cubic-bezier(0.2, 0.7, 0.3, 1.5) 0.62s both;
+    transform-origin: center;
+}
+
+/* Defeated — desaturate the inner content (not the card, so the red KO stays
+   vivid) and flush the border danger-red. */
+#t-match-result .pc-defeated { border-color: rgba(255, 70, 70, 0.4); }
+#t-match-result .pc-defeated .pc-avatar { filter: grayscale(0.92) brightness(0.55); }
+#t-match-result .pc-defeated .pc-name,
+#t-match-result .pc-defeated .pc-stats,
+#t-match-result .pc-defeated .pc-meta { opacity: 0.5; }
+#t-match-result .pc-defeated .pc-role { color: rgba(255, 90, 90, 0.85); }
+
+/* KO cross-out — two red slashes carve across the card, then a DEFEATED stamp
+   slams down over them. */
+.pc-ko {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+.pc-ko-x { position: absolute; inset: 0; }
+.pc-ko-x::before,
+.pc-ko-x::after {
+    content: '';
+    position: absolute;
+    left: 7%; right: 7%;
+    top: 50%;
+    height: 7px;
+    margin-top: -3.5px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, hsl(0, 88%, 52%), hsl(2, 95%, 62%), hsl(0, 88%, 52%));
+    box-shadow: 0 0 16px hsla(0, 95%, 55%, 0.85);
+}
+.pc-ko-x::before { animation: ko-slash-a 0.34s cubic-bezier(0.2, 0.8, 0.3, 1.2) 0.5s both; }
+.pc-ko-x::after  { animation: ko-slash-b 0.34s cubic-bezier(0.2, 0.8, 0.3, 1.2) 0.62s both; }
+@keyframes ko-slash-a {
+    0%   { transform: rotate(26deg) scaleX(0);   opacity: 0; }
+    60%  { opacity: 1; }
+    100% { transform: rotate(26deg) scaleX(1);   opacity: 1; }
+}
+@keyframes ko-slash-b {
+    0%   { transform: rotate(-26deg) scaleX(0);  opacity: 0; }
+    60%  { opacity: 1; }
+    100% { transform: rotate(-26deg) scaleX(1);  opacity: 1; }
+}
+.pc-ko-tag {
+    position: relative;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    color: #fff;
+    background: hsl(0, 78%, 46%);
+    padding: 4px 12px;
+    border-radius: 5px;
+    border: 2px solid hsl(0, 90%, 66%);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.6), 0 0 22px hsla(0, 90%, 50%, 0.6);
+    transform: rotate(-8deg);
+    transform-origin: center;
+    animation: pc-stamp 0.42s cubic-bezier(0.2, 0.7, 0.3, 1.5) 0.78s both;
+}
+/* Stamp slam — overshoots in from large, settling onto the card. The two users
+   (victor ribbon, KO tag) carry their own steady-state rotate via a CSS var. */
+@keyframes pc-stamp {
+    0%   { opacity: 0; transform: var(--stamp-from, translateX(-50%) scale(2.3)); }
+    60%  { opacity: 1; }
+    100% { opacity: 1; transform: var(--stamp-to, translateX(-50%) scale(1)); }
+}
+.pc-ko-tag   { --stamp-from: rotate(-8deg) scale(2.4); --stamp-to: rotate(-8deg) scale(1); }
+.pc-victor-tag { --stamp-from: translateX(-50%) scale(2.2); --stamp-to: translateX(-50%) scale(1); }
+
+/* ── Celebratory particle burst (shockwave ring + sparks) ─────────────────
+   Created by Game._burstSparks on the big tiers; self-removes after ~1.1s. */
+.fx-burst {
+    position: absolute;
+    left: 50%; top: 42%;
+    width: 0; height: 0;
+    z-index: 3;
+    pointer-events: none;
+}
+.fx-ring {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 60px; height: 60px;
+    margin: -30px 0 0 -30px;
+    border-radius: 50%;
+    border: 2px solid hsla(var(--tier-h, 140), 95%, 65%, 0.85);
+    box-shadow: 0 0 24px hsla(var(--tier-h, 140), 95%, 60%, 0.6);
+    animation: fx-ring 0.8s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+.fx-burst .spark {
+    position: absolute;
+    left: 0; top: 0;
+    width: 7px; height: 7px;
+    margin: -3.5px 0 0 -3.5px;
+    border-radius: 50%;
+    /* Bright near-white core so sparks read even against a same-hue aurora,
+       with a coloured halo that carries the tier identity. */
+    background: radial-gradient(circle, #fff 0%, hsl(var(--tier-h, 140), 100%, 82%) 55%, hsl(var(--tier-h, 140), 95%, 64%) 100%);
+    box-shadow: 0 0 12px hsla(var(--tier-h, 140), 100%, 70%, 0.95);
+    animation: fx-spark 0.95s cubic-bezier(0.15, 0.7, 0.3, 1) both;
+}
+/* tier hue available to the burst via the fx-tier-* class set in JS */
+.fx-tier-promote { --tier-h: 150; }
+.fx-tier-throne  { --tier-h: 45;  }
+.fx-tier-upset   { --tier-h: 330; }
+.fx-tier-massive { --tier-h: 332; }
+@keyframes fx-ring {
+    0%   { transform: scale(0.2); opacity: 0; }
+    25%  { opacity: 1; }
+    100% { transform: scale(5.5); opacity: 0; }
+}
+@keyframes fx-spark {
+    0%   { transform: rotate(var(--a)) translateX(0) scale(1); opacity: 0; }
+    18%  { opacity: 1; }
+    100% { transform: rotate(var(--a)) translateX(var(--d)) scale(0.3); opacity: 0; }
 }
 
 /* Champion screen */
