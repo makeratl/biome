@@ -26,8 +26,61 @@ export function loadManifest(bust = false) {
     return manifestPromise;
 }
 
-// Warm the cache early so the first badge/card paint finds it ready.
-export function preloadAvatars() { loadManifest(); }
+// Warm the caches early so the first badge/card paint finds them ready.
+export function preloadAvatars() { loadManifest(); loadVideoManifest(); }
+
+// ---- avatar animation clips (victory/defeat/… emotions) ----
+// Generated in the lab (lab/avatars.html → server → ComfyUI WAN i2v) and tracked
+// in videos/manifest.json, shape { <category>: { <avatarKey>: path } }. The game
+// consumes them the same way it consumes the still PNGs: resolve model → key →
+// manifest → clip, else fall back to the still portrait.
+const VIDEO_MANIFEST_URL = '/videos/manifest.json';
+let videoManifestPromise = null;
+let videoVersion = 0;
+
+export function loadVideoManifest(bust = false) {
+    if (!videoManifestPromise || bust) {
+        if (bust) videoVersion++;
+        const url = VIDEO_MANIFEST_URL + (bust ? `?t=${bust}` : '');
+        videoManifestPromise = fetch(url)
+            .then(r => (r.ok ? r.json() : {}))
+            .catch(() => ({}));
+    }
+    return videoManifestPromise;
+}
+
+// Clip url for a model + emotion category, or null if none baked.
+export function videoUrl(manifest, modelName, category = 'victory') {
+    const key = resolveModel(modelName).avatarKey;
+    const src = (manifest[category] || {})[key];
+    if (!src) return null;
+    return '/' + src.replace(/^\/+/, '') + (videoVersion ? `?v=${videoVersion}` : '');
+}
+
+// Apply an animated clip to a hex-clipped element for the given emotion. Always
+// paints the still portrait first (instant first frame + fallback), then overlays
+// a muted, looping <video> if a clip exists for this model+category. No clip →
+// the still stays. Re-entrant via el.dataset.model, like applyAvatar.
+export async function applyAvatarVideo(el, modelName, { category = 'victory', loop = true } = {}) {
+    if (!el) return;
+    if (!modelName) { clearAvatar(el); return; }
+    await applyAvatar(el, modelName);                  // still portrait underneath
+    el.dataset.model = modelName;
+    const manifest = await loadVideoManifest();
+    if (el.dataset.model !== modelName) return;        // slot reassigned under us
+    const url = videoUrl(manifest, modelName, category);
+    let vid = el.querySelector('video.avatar-clip');
+    if (!url) { if (vid) vid.remove(); return; }       // no clip → keep the still
+    if (!vid) {
+        vid = document.createElement('video');
+        vid.className = 'avatar-clip';
+        vid.muted = true; vid.playsInline = true; vid.autoplay = true;
+        el.appendChild(vid);
+    }
+    vid.loop = loop;
+    if (vid.getAttribute('src') !== url) vid.src = url;
+    vid.play?.().catch(() => { /* autoplay may be deferred; first frame still shows */ });
+}
 
 // Resolved PNG url for a model+style, or null if nothing baked. Requires the
 // manifest to be loaded already (callers use applyAvatar, which awaits it).
@@ -76,5 +129,7 @@ export function clearAvatar(el) {
     el.style.backgroundImage = '';
     el.style.backgroundSize = '';
     el.style.backgroundPosition = '';
+    const vid = el.querySelector('video.avatar-clip');
+    if (vid) vid.remove();
     el.classList.remove('has-avatar');
 }

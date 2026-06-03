@@ -1072,7 +1072,13 @@ body {
 }
 
 /* Game over overlay */
-.game-over-overlay {
+/* Compound selector (.game-over-overlay.event-stage) is deliberate: .event-stage
+   is defined far later in this file and sets `position: relative`, which — at equal
+   single-class specificity — would win on source order and drop this overlay into
+   normal flow below the board (off-screen). The two-class selector out-specifies it
+   so the full-screen `fixed` positioning holds. (The tournament overlay avoids this
+   via its #id selector; this one is class-based, so it needs the extra weight.) */
+.game-over-overlay.event-stage {
     /* Full-screen designed event scene (aurora backdrop via .event-stage) —
        the result is its own moment, not a card over the live board. */
     position: fixed;
@@ -1100,6 +1106,7 @@ body {
 /* Winner's portrait — large hex with a golden victory glow. Hidden until .show. */
 .go-winner-avatar {
     display: none;
+    position: relative;
     width: 132px; height: 132px;
     margin: 4px auto 14px;
     clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
@@ -1108,6 +1115,13 @@ body {
     animation: go-winner-rise 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3) both, go-winner-glow 2.4s ease-in-out 0.6s infinite;
 }
 .go-winner-avatar.show { display: block; }
+/* Victory clip fills the hex, sitting over the still portrait (the clip's first
+   frame is the portrait, so the swap is seamless). */
+.go-winner-avatar video.avatar-clip {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+}
 @keyframes go-winner-rise {
     0%   { transform: scale(0.3) translateY(20px); opacity: 0; }
     70%  { transform: scale(1.08); opacity: 1; }

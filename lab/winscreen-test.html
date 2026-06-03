@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Win-Screen Video — Isolation Test</title>
+<!-- Reuse the real game stylesheet so .go-winner-avatar + .avatar-clip behave
+     EXACTLY as they do on the game-over screen. -->
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { background:#0a0d12; color:#cdd6e0; font:14px/1.5 system-ui, sans-serif;
+         margin:0; padding:24px; }
+  h1 { font-size:18px; font-weight:600; }
+  .muted { color:#7e8a99; }
+  .stage { display:flex; flex-wrap:wrap; gap:28px; align-items:flex-start; margin-top:20px; }
+  .slot { width:200px; }
+  .slot .cap { text-align:center; margin-top:6px; font-size:12px; }
+  .cap.ok { color:#5fd08a; } .cap.miss { color:#d08a5f; } .cap.err { color:#e06060; }
+  /* Center the hex avatar in a fixed box so the rise/glow animation has room. */
+  .holder { height:160px; display:flex; align-items:center; justify-content:center; }
+  label { display:inline-flex; gap:6px; align-items:center; margin-right:18px; }
+  #log { margin-top:24px; padding:12px; background:#11161d; border-radius:8px;
+         white-space:pre-wrap; font:12px/1.5 ui-monospace, monospace; max-height:200px; overflow:auto; }
+</style>
+</head>
+<body>
+  <h1>Win-screen video — isolation test <span class="muted">(no game required)</span></h1>
+  <p class="muted">Drives the real <code>applyAvatarVideo()</code> into the real
+  <code>#go-winner-avatar</code> markup. If a clip plays here, the video pipeline
+  (manifest → URL → Range/206 → autoplay) is working and any "no animation in a
+  match" issue is upstream — about reaching the GAME&nbsp;OVER screen, not the video.</p>
+
+  <div>
+    <label><input type="radio" name="cat" value="victory" checked> victory</label>
+    <label><input type="radio" name="cat" value="defeat"> defeat</label>
+    <button id="reload">Reload clips</button>
+  </div>
+
+  <div class="stage" id="stage"></div>
+  <div id="log"></div>
+
+<script type="module">
+import { applyAvatarVideo, loadVideoManifest } from '../js/model-avatar.js';
+import { resolveModel } from '../js/model-identity.js';
+
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += m + '\n'; };
+
+// We want REAL model names so applyAvatarVideo exercises the full game path
+// (model → resolveModel().avatarKey → manifest). The manifest is keyed by
+// avatarKey, so reverse-map a representative model name to each baked key by
+// probing resolveModel on a spread of known model ids.
+const CANDIDATE_MODELS = [
+  'qwen2.5:14b','qwen2.5:7b','qwen2.5:3b','qwen2.5:72b',
+  'llama3.1:8b','llama3.2:3b','llama3.3:70b',
+  'deepseek-r1:14b','deepseek-r1','gemma2:9b','gemma3:4b-cloud',
+  'mistral:7b','mixtral','phi3','codellama','starcoder2:15b',
+  'cohere','command-r','falcon3','granite3.1','internlm2',
+  'olmo2','smollm2','stablelm2','yi','exaone3.5','nemotron',
+  'minimax','kimi','glm4','gpt-oss:20b-cloud','generic'
+];
+
+function modelForKey(key) {
+  for (const m of CANDIDATE_MODELS) {
+    try { if (resolveModel(m).avatarKey === key) return m; } catch {}
+  }
+  return null;   // no representative model id maps here; we'll skip the full path
+}
+
+async function render() {
+  const cat = document.querySelector('input[name=cat]:checked').value;
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '';
+  logEl.textContent = '';
+
+  const manifest = await loadVideoManifest(Date.now());
+  const keys = Object.keys(manifest[cat] || {});
+  log(`manifest "${cat}": ${keys.length} clips`);
+  if (!keys.length) { log('No clips in manifest — nothing to show.'); return; }
+
+  for (const key of keys) {
+    const model = modelForKey(key);
+
+    const slot = document.createElement('div'); slot.className = 'slot';
+    const holder = document.createElement('div'); holder.className = 'holder';
+    const ava = document.createElement('div');
+    ava.className = 'go-winner-avatar show';        // real game class + visible
+    holder.appendChild(ava);
+    const cap = document.createElement('div'); cap.className = 'cap';
+    cap.textContent = key + (model ? ` · ${model}` : ' · (no model id)');
+    slot.append(holder, cap);
+    stage.appendChild(slot);
+
+    if (!model) {
+      cap.classList.add('miss');
+      cap.textContent = key + ' · no representative model id — clip exists but full path not exercised';
+      continue;
+    }
+
+    try {
+      await applyAvatarVideo(ava, model, { category: cat });
+      const v = ava.querySelector('video.avatar-clip');
+      if (!v) { cap.classList.add('miss'); cap.textContent += ' · still only (videoUrl returned null)'; continue; }
+      v.addEventListener('error', () => {
+        cap.classList.add('err');
+        cap.textContent = key + ` · VIDEO ERROR code ${v.error?.code} (${v.currentSrc})`;
+        log(`✗ ${key}: media error ${v.error?.code} on ${v.currentSrc}`);
+      });
+      v.addEventListener('playing', () => {
+        cap.classList.add('ok'); cap.textContent = key + ' · ▶ playing';
+        log(`✓ ${key}: playing`);
+      });
+    } catch (e) {
+      cap.classList.add('err'); cap.textContent = key + ' · EXC: ' + e.message;
+      log(`✗ ${key}: ${e.stack || e.message}`);
+    }
+  }
+}
+
+document.getElementById('reload').addEventListener('click', render);
+document.querySelectorAll('input[name=cat]').forEach(r => r.addEventListener('change', render));
+render();
+</script>
+</body>
+</html>

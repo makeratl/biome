@@ -16,6 +16,13 @@
         </div>
         <div class="controls">
             <span id="comfy-pill" class="status-pill">checking…</span>
+            <label class="vq-wrap">clip quality
+                <select id="vquality">
+                    <option value="fast">Fast · 4-step (~2 min)</option>
+                    <option value="quality">Quality · 20-step (slower)</option>
+                </select>
+            </label>
+            <button id="open-concepts" class="ghost-btn">🎬 Match-ending concepts</button>
             <button id="refresh" class="ghost-btn">↻ Refresh</button>
             <button id="gen-all" class="primary-btn" disabled>Generate all missing</button>
         </div>
@@ -45,6 +52,56 @@
             <div id="matrix" class="matrix"></div>
         </details>
     </main>
+
+    <div id="preview-modal" class="modal-backdrop" hidden>
+        <div class="modal-card">
+            <button id="preview-close" class="modal-close" title="Close (Esc)">✕</button>
+            <div id="preview-stage" class="modal-stage"></div>
+            <div id="preview-note" class="modal-note" hidden>Procedural placeholder — generate the still to preview the baked image.</div>
+            <div id="preview-title" class="modal-title"></div>
+            <div class="modal-regen">
+                <textarea id="preview-prompt" class="prompt-edit" rows="4"></textarea>
+                <div class="modal-regen-row">
+                    <span id="preview-status" class="status-pill"></span>
+                    <label class="seed-wrap">seed
+                        <input id="preview-seed" class="seed-input" type="number">
+                        <button id="preview-dice" class="dice" title="randomize seed">🎲</button>
+                    </label>
+                    <span class="modal-regen-actions">
+                        <button id="preview-save" class="mini-btn">Save prompt</button>
+                        <button id="preview-reset" class="mini-btn ghost">Reset</button>
+                        <button id="preview-regen" class="gen-btn">Regenerate</button>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="concept-stage" class="concept-stage" hidden>
+        <div class="concept-bar">
+            <div class="concept-tabs">
+                <button data-concept="champion" class="concept-tab is-on">Champion reveal</button>
+                <button data-concept="versus" class="concept-tab">Match result</button>
+                <button data-concept="gameover" class="concept-tab">Game-over card</button>
+            </div>
+            <div class="concept-pickers">
+                <label>Winner <select id="concept-winner"></select></label>
+                <label>Loser <select id="concept-loser"></select></label>
+                <label>Tier
+                    <select id="concept-tier">
+                        <option value="win">Win</option>
+                        <option value="promote">Promote ▲</option>
+                        <option value="upset">Upset</option>
+                        <option value="throne">New Champion 👑</option>
+                    </select>
+                </label>
+            </div>
+            <button id="concept-replay" class="ghost-btn">▶ Replay</button>
+            <button id="concept-close" class="ghost-btn">✕ Close</button>
+        </div>
+        <div id="concept-body" class="concept-body"></div>
+        <p class="concept-foot hint">Mockup using real baked clips · ● marks an avatar that has a clip for that role · clips fall back to the still, then the procedural emblem.</p>
+    </div>
 
     <script type="module" src="avatars.js"></script>
 </body>

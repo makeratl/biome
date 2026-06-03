@@ -22,7 +22,7 @@ import { openLeaderboard } from './leaderboard.js';
 //   *coder*/codellama    → code specialists
 const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
 import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
-import { applyAvatar, clearAvatar, preloadAvatars } from './model-avatar.js';
+import { applyAvatar, applyAvatarVideo, clearAvatar, preloadAvatars } from './model-avatar.js';
 import { resolveModel, paramLabel, mightLevel, titleCase, resolvePlayerPalettes } from './model-identity.js';
 import { shortId } from './util.js';
 
@@ -890,7 +890,14 @@ class Game {
             this._runRoundEndSequence();
         } else if (phase === PHASE.GAME_OVER) {
             this.renderer.clearHighlightRound();
-            this._showGameOver();
+            // Fire-and-forget, but never silent: a throw inside _showGameOver used
+            // to vanish and strand the final board with no result screen. Surface it,
+            // and last-ditch-show the scene.
+            this._showGameOver().catch(err => {
+                console.error('[game-over] _showGameOver threw — result screen suppressed:', err);
+                const ov = document.getElementById('game-over-overlay');
+                if (ov) ov.style.display = 'flex';
+            });
         }
 
         this._updateTurnUI();
@@ -2011,6 +2018,12 @@ class Game {
             return;
         }
 
+        // Paint the result scene immediately — before any populate logic that could
+        // throw — so a watch/solo match ALWAYS visibly ends. (Regression guard: a
+        // downstream throw used to leave the final board with no overlay at all.)
+        const overlay = document.getElementById('game-over-overlay');
+        if (overlay) overlay.style.display = 'flex';
+
         const s1 = scores[1], s2 = scores[2];
 
         const p1Label = this.aiPlayers[1] ? `P1 (${this.aiPlayers[1].model})` : 'Player 1';
@@ -2033,9 +2046,8 @@ class Game {
             return html;
         };
 
-        const overlay = document.getElementById('game-over-overlay');
-        overlay.style.display = 'flex';
-        overlay.querySelector('.winner').textContent = winnerLabel;
+        const winnerEl = overlay?.querySelector('.winner');
+        if (winnerEl) winnerEl.textContent = winnerLabel;
 
         // Winner's portrait, large with a victory glow (AI winner only; a human or
         // tie shows no creature).
@@ -2043,7 +2055,8 @@ class Game {
             : s2.finalScore > s1.finalScore ? this.aiPlayers[2]?.model : null;
         const goAva = document.getElementById('go-winner-avatar');
         if (goAva) {
-            if (winnerModel) { applyAvatar(goAva, winnerModel); goAva.classList.add('show'); }
+            // Victory clip if the winner has one baked; else the still portrait.
+            if (winnerModel) { applyAvatarVideo(goAva, winnerModel, { category: 'victory' }); goAva.classList.add('show'); }
             else { clearAvatar(goAva); goAva.classList.remove('show'); }
         }
         this._playSound('victory');
