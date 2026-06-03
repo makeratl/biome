@@ -2,14 +2,15 @@
 
 import { CONFIG } from './config.js';
 import { TERRAIN_TYPES } from './terrain.js';
+import { drawOrganism, BASE_HEX } from './organism-art.js';
 
 export class Renderer {
     constructor(canvas, grid) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.grid = grid;
-        this.offsetX = CONFIG.HEX_SIZE + 4;
-        this.offsetY = CONFIG.HEX_SIZE + 4;
+        this.offsetX = grid.hexSize + 4;
+        this.offsetY = grid.hexSize + 4;
 
         // Fog of war — hide one player's new placements from the other
         this._fogRound = -1;
@@ -47,6 +48,56 @@ export class Renderer {
         const size = this.grid.getCanvasSize();
         this.canvas.width = size.width + this.offsetX * 2;
         this.canvas.height = size.height + this.offsetY * 2;
+        this._fit();
+    }
+
+    // Re-render the board at a new hex size (crisp, not a CSS upscale). The grid
+    // is (col,row)-keyed and organisms reference cells, so this is pure
+    // re-layout — no data changes. Used to grow/shrink the board to fill the
+    // viewport (Game._refitBoard) without blurring. Caller renders after.
+    setHexSize(s) {
+        if (!(s > 0) || s === this.grid.hexSize) return;
+        this.grid.hexSize = s;
+        this.offsetX = s + 4;
+        this.offsetY = s + 4;
+        this._resize();
+    }
+
+    // Scale the canvas (via CSS) to fit inside its container, preserving aspect
+    // ratio. Only ever shrinks (never CSS-upscales — that would blur); use the
+    // hex-zoom setting to make a board intrinsically bigger and crisp. Clicks
+    // are mapped back to bitmap pixels in the hit-test handlers.
+    _fit() {
+        const parent = this.canvas.parentElement;
+        if (!parent) return;
+        // clientWidth/Height include padding; subtract it so the board fits the
+        // content area (the reserved header band lives in the top padding).
+        const cs = getComputedStyle(parent);
+        const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const availW = (parent.clientWidth - padX) || this.canvas.width;
+        const availH = (parent.clientHeight - padY) || this.canvas.height;
+        const scale = Math.min(availW / this.canvas.width, availH / this.canvas.height, 1);
+        this.canvas.style.width = Math.round(this.canvas.width * scale) + 'px';
+        this.canvas.style.height = Math.round(this.canvas.height * scale) + 'px';
+        this._publishBoardRect();
+    }
+
+    // Expose the board's live on-screen rect as CSS vars on :root so overlays
+    // (tournament screens, game-over, AI banter, expanded bracket) can anchor to
+    // the board instead of the viewport — centered ON the world, never a
+    // fullscreen takeover. Updated wherever the board is (re)sized: resize,
+    // hex-zoom, and the animated footer band all funnel through _fit().
+    _publishBoardRect() {
+        const r = this.canvas.getBoundingClientRect();
+        // Set on <body>, where the --board-* defaults live. Setting on <html>
+        // instead would be shadowed: body re-declares the defaults, so its
+        // descendants (console, banter) would inherit the body value, not html's.
+        const root = document.body.style;
+        root.setProperty('--board-l', Math.round(r.left) + 'px');
+        root.setProperty('--board-t', Math.round(r.top) + 'px');
+        root.setProperty('--board-w', Math.round(r.width) + 'px');
+        root.setProperty('--board-h', Math.round(r.height) + 'px');
     }
 
     _terrainColor(cell) {
@@ -118,217 +169,21 @@ export class Renderer {
         });
     }
 
-    _playerHSL(player, hueShift = 0, satShift = 0, lightShift = 0) {
-        const c = (player === 1 ? CONFIG.PLAYER_1 : CONFIG.PLAYER_2).PRIMARY;
-        return `hsl(${c.h + hueShift}, ${Math.max(0, Math.min(100, c.s + satShift))}%, ${Math.max(0, Math.min(100, c.l + lightShift))}%)`;
-    }
-
     _drawOrganism(cx, cy, org) {
+        // Per-species procedural art lives in js/organism-art.js so the game
+        // and the icon lab (lab/icons.html) share one source of truth. Art is
+        // authored against BASE_HEX; scale it so creatures track the hex zoom.
+        const k = this.grid.hexSize / BASE_HEX;
+        if (k === 1) {
+            drawOrganism(this.ctx, cx, cy, org);
+            return;
+        }
         const ctx = this.ctx;
-        const spec = CONFIG.SPECIES[org.species];
-        if (!spec) return;
-
-        if (spec.type === 'plant') {
-            this._drawPlant(ctx, cx, cy, org);
-        } else if (spec.type === 'herbivore') {
-            this._drawHerbivore(ctx, cx, cy, org);
-        } else if (spec.type === 'predator') {
-            this._drawPredator(ctx, cx, cy, org);
-        }
-    }
-
-    _drawPlant(ctx, cx, cy, org) {
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-        const p = org.player;
-
-        if (org.species === 'GRASS') {
-            // Grass: bright, airy blades — lightest plant
-            const h = 4 + energyRatio * 5;
-            const fill = this._playerHSL(p, 20, 10, 18);
-            ctx.strokeStyle = fill;
-            ctx.lineWidth = 2.5;
-            ctx.lineCap = 'round';
-            // center blade
-            ctx.beginPath();
-            ctx.moveTo(cx, cy + 3);
-            ctx.lineTo(cx, cy - h);
-            ctx.stroke();
-            // left blade
-            ctx.beginPath();
-            ctx.moveTo(cx - 1.5, cy + 2);
-            ctx.lineTo(cx - 3.5, cy - h + 1.5);
-            ctx.stroke();
-            // right blade
-            ctx.beginPath();
-            ctx.moveTo(cx + 1.5, cy + 2);
-            ctx.lineTo(cx + 3.5, cy - h + 1.5);
-            ctx.stroke();
-        } else if (org.species === 'SHRUB') {
-            // Shrub: rich saturated bush — mid-tone plant
-            const r = 3.5 + energyRatio * 3;
-            const fill = this._playerHSL(p, -8, 15, -3);
-            const outline = this._playerHSL(p, -12, 5, -18);
-            ctx.fillStyle = fill;
-            // main body
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fill();
-            // two side lobes
-            ctx.beginPath();
-            ctx.arc(cx - r * 0.65, cy + r * 0.25, r * 0.65, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(cx + r * 0.65, cy + r * 0.25, r * 0.65, 0, Math.PI * 2);
-            ctx.fill();
-            // top lobe
-            ctx.beginPath();
-            ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
-            ctx.fill();
-            // outline
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.stroke();
-        } else if (org.species === 'TREE') {
-            // Tree: dark, commanding canopy — heaviest plant
-            const canopyR = 4.5 + energyRatio * 5;
-            const canopy = this._playerHSL(p, -18, 5, -10);
-            const canopyLight = this._playerHSL(p, -12, 10, 2);
-            const trunk = this._playerHSL(p, -40, -35, -25);
-
-            // trunk
-            ctx.fillStyle = trunk;
-            ctx.fillRect(cx - 1.5, cy, 3, canopyR * 0.7);
-
-            // canopy shadow
-            ctx.fillStyle = canopy;
-            ctx.beginPath();
-            ctx.arc(cx, cy - canopyR * 0.15, canopyR, 0, Math.PI * 2);
-            ctx.fill();
-
-            // canopy highlight
-            ctx.fillStyle = canopyLight;
-            ctx.beginPath();
-            ctx.arc(cx - canopyR * 0.2, cy - canopyR * 0.35, canopyR * 0.55, 0, Math.PI * 2);
-            ctx.fill();
-
-            // outline
-            ctx.strokeStyle = this._playerHSL(p, -22, 0, -22);
-            ctx.lineWidth = 1.0;
-            ctx.beginPath();
-            ctx.arc(cx, cy - canopyR * 0.15, canopyR, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-    }
-
-    _drawHerbivore(ctx, cx, cy, org) {
-        const p = org.player;
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-
-        if (org.species === 'GRAZER') {
-            // Grazer: fast, bright animal — elongated oval with a head
-            const bodyLen = 5.5 + energyRatio * 3;
-            const bodyW = 3;
-            const fill = this._playerHSL(p, 45, 15, 12);
-            const outline = this._playerHSL(p, 40, 5, -12);
-
-            ctx.fillStyle = fill;
-            ctx.beginPath();
-            ctx.ellipse(cx, cy, bodyLen, bodyW, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-
-            // head
-            ctx.fillStyle = outline;
-            ctx.beginPath();
-            ctx.arc(cx + bodyLen - 1.5, cy, 2.2, 0, Math.PI * 2);
-            ctx.fill();
-
-            // eye
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(cx + bodyLen - 0.5, cy - 0.5, 0.8, 0, Math.PI * 2);
-            ctx.fill();
-        } else if (org.species === 'BROWSER') {
-            // Browser: large, sturdy herbivore — rounded body with horns
-            const s = 4 + energyRatio * 3;
-            const fill = this._playerHSL(p, -30, 10, -5);
-            const outline = this._playerHSL(p, -35, 0, -18);
-
-            ctx.fillStyle = fill;
-            // rounded rectangle body
-            const r = s * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(cx - s + r, cy - s * 0.7);
-            ctx.arcTo(cx + s, cy - s * 0.7, cx + s, cy + s * 0.7, r);
-            ctx.arcTo(cx + s, cy + s * 0.7, cx - s, cy + s * 0.7, r);
-            ctx.arcTo(cx - s, cy + s * 0.7, cx - s, cy - s * 0.7, r);
-            ctx.arcTo(cx - s, cy - s * 0.7, cx + s, cy - s * 0.7, r);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-
-            // head bump
-            ctx.fillStyle = fill;
-            ctx.beginPath();
-            ctx.arc(cx + s * 0.85, cy, s * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 0.8;
-            ctx.stroke();
-
-            // small horns
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.2;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(cx + s * 0.7, cy - s * 0.2);
-            ctx.lineTo(cx + s * 0.9, cy - s * 0.6);
-            ctx.stroke();
-        }
-    }
-
-    _drawPredator(ctx, cx, cy, org) {
-        const p = org.player;
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-        const s = 5 + energyRatio * 4;
-        // Dark menacing body with bright player-colored accents
-        const darkFill = this._playerHSL(p, 0, -30, -30);
-        const brightAccent = this._playerHSL(p, 0, 10, 15);
-
-        // Predator: angular diamond / fang shape — largest, most menacing
-        ctx.fillStyle = darkFill;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - s);              // top point
-        ctx.lineTo(cx + s * 0.5, cy - s * 0.2);
-        ctx.lineTo(cx + s * 0.8, cy + s * 0.3);
-        ctx.lineTo(cx, cy + s * 0.6);        // bottom
-        ctx.lineTo(cx - s * 0.8, cy + s * 0.3);
-        ctx.lineTo(cx - s * 0.5, cy - s * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        // bright player-colored outline
-        ctx.strokeStyle = brightAccent;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // eyes — bright player color
-        ctx.fillStyle = brightAccent;
-        ctx.beginPath();
-        ctx.arc(cx - s * 0.22, cy - s * 0.15, 1.6, 0, Math.PI * 2);
-        ctx.arc(cx + s * 0.22, cy - s * 0.15, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-        // dark pupils
-        ctx.fillStyle = '#111';
-        ctx.beginPath();
-        ctx.arc(cx - s * 0.2, cy - s * 0.15, 0.7, 0, Math.PI * 2);
-        ctx.arc(cx + s * 0.2, cy - s * 0.15, 0.7, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(k, k);
+        drawOrganism(ctx, 0, 0, org);
+        ctx.restore();
     }
 
     drawPlacementHighlights() {
@@ -421,7 +276,7 @@ export class Renderer {
         if (!this._bursts || this._bursts.length === 0) return;
         const ctx = this.ctx;
         const now = performance.now();
-        const baseSize = CONFIG.HEX_SIZE;
+        const baseSize = this.grid.hexSize;
 
         for (const b of this._bursts) {
             const t = Math.min(1, (now - b.startedAt) / b.duration);

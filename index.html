@@ -16,26 +16,12 @@
                 <span class="cw-word">BIOME</span>
             </div>
 
-            <!-- Gear menu (top-right, replaces sidebar buttons) -->
+            <!-- Mute toggle (top-right). New Match / Rankings / Manage Models
+                 now live in the HUD console's MENU tab. -->
             <div id="gear-menu" class="gear-menu">
                 <button id="mute-toggle" class="mute-toggle gm-mute" title="Toggle sound" aria-label="Toggle sound">
                     <span class="mt-icon">🔊</span>
                 </button>
-                <button id="btn-gear" class="gear-button" title="Menu" aria-label="Menu" aria-expanded="false">⚙</button>
-                <div id="gear-dropdown" class="gear-dropdown gm-hidden" role="menu">
-                    <button class="gm-item" data-gm="new-match" role="menuitem">
-                        <span class="gm-icon">▶</span><span>New Match</span>
-                    </button>
-                    <button class="gm-item" data-gm="manage-models" role="menuitem">
-                        <span class="gm-icon">⚙</span><span>Manage Models</span>
-                    </button>
-                    <button class="gm-item" data-gm="rankings" role="menuitem">
-                        <span class="gm-icon">🏆</span><span>Rankings</span>
-                    </button>
-                    <button class="gm-item" data-gm="tournament-stats" role="menuitem">
-                        <span class="gm-icon">📊</span><span>Tournament Stats</span>
-                    </button>
-                </div>
             </div>
 
             <canvas id="game-canvas"></canvas>
@@ -47,106 +33,150 @@
                 <span class="ap-chip-suffix">AP</span>
             </div>
 
-            <!-- Right-edge tabbed panel: Ecosystem (biomass pyramid) + Biome (terrain composition) -->
-            <div id="biomass-tower" class="biomass-tower" aria-label="Ecosystem & Biome">
-                <div class="bt-tabs" role="tablist">
-                    <button class="bt-tab active" data-bt-tab="eco" role="tab" aria-selected="true">
-                        <span class="bt-tab-icon">⛧</span><span>ECO</span>
-                    </button>
-                    <button class="bt-tab" data-bt-tab="biome" role="tab" aria-selected="false">
-                        <span class="bt-tab-icon">◉</span><span>BIOME</span>
-                    </button>
-                    <button class="bt-tab bt-tab-bracket" data-bt-tab="bracket" role="tab" aria-selected="false">
-                        <span class="bt-tab-icon">⚔</span><span>BRACKET</span>
-                        <span class="bt-tab-live" aria-hidden="true"></span>
-                    </button>
-                </div>
-
-                <!-- ECOSYSTEM view (biomass pyramid + health badges) -->
-                <div class="bt-view bt-view-eco" data-bt-view="eco">
-                    <div class="bt-row" data-tier="predator">
-                        <div class="bt-tier-icon">🦅</div>
-                        <div class="bt-tier-label">Predators</div>
-                        <div class="bt-bars">
-                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-pred-p1"></span><span class="bt-count" id="bt-count-pred-p1">0</span></div>
-                            <div class="bt-divider"></div>
-                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-pred-p2"></span><span class="bt-count" id="bt-count-pred-p2">0</span></div>
-                        </div>
-                    </div>
-                    <div class="bt-row" data-tier="herbivore">
-                        <div class="bt-tier-icon">🦌</div>
-                        <div class="bt-tier-label">Herbivores</div>
-                        <div class="bt-bars">
-                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-herb-p1"></span><span class="bt-count" id="bt-count-herb-p1">0</span></div>
-                            <div class="bt-divider"></div>
-                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-herb-p2"></span><span class="bt-count" id="bt-count-herb-p2">0</span></div>
-                        </div>
-                    </div>
-                    <div class="bt-row" data-tier="plant">
-                        <div class="bt-tier-icon">🌿</div>
-                        <div class="bt-tier-label">Plants</div>
-                        <div class="bt-bars">
-                            <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-plant-p1"></span><span class="bt-count" id="bt-count-plant-p1">0</span></div>
-                            <div class="bt-divider"></div>
-                            <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-plant-p2"></span><span class="bt-count" id="bt-count-plant-p2">0</span></div>
-                        </div>
-                    </div>
-                    <div class="bt-health-row">
-                        <div class="bt-health bt-health-p1" id="bt-health-p1" data-state="ok">
-                            <span class="bt-h-tag">P1</span><span class="bt-h-icon">✓</span>
-                        </div>
-                        <div class="bt-health bt-health-p2" id="bt-health-p2" data-state="ok">
-                            <span class="bt-h-tag">P2</span><span class="bt-h-icon">✓</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- BRACKET view (tournament live bracket) -->
-                <div class="bt-view bt-view-bracket bt-view-hidden" data-bt-view="bracket">
-                    <div class="bt-bracket-header">
-                        <span id="bt-bracket-title">Bracket</span>
-                        <button id="bt-bracket-expand" class="bt-bracket-action" title="Expand bracket" type="button">⛶</button>
-                    </div>
-                    <div id="bt-bracket-content" class="bt-bracket-content"></div>
-                </div>
-
-                <!-- BIOME view (terrain composition donut + legend) -->
-                <div class="bt-view bt-view-biome bt-view-hidden" data-bt-view="biome">
-                    <div class="ws-chart-wrap">
-                        <svg class="ws-donut" id="ws-donut" viewBox="0 0 80 80" aria-hidden="true">
-                            <circle class="ws-track" cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12"/>
-                            <g id="ws-segments"></g>
-                        </svg>
-                        <div class="ws-center" id="ws-center">
-                            <div class="ws-c-name" id="ws-c-name">—</div>
-                            <div class="ws-c-pct" id="ws-c-pct"></div>
-                        </div>
-                    </div>
-                    <div class="ws-legend" id="ws-legend"></div>
-                </div>
-            </div>
-
-            <!-- Live scoreboard overlay -->
+            <!-- Live scoreboard overlay (top-center, persistent) -->
             <div id="scoreboard-overlay">
                 <div class="sb-player p1">
+                    <span class="sb-ava p1" id="sb-ava-p1" style="display:none;"></span>
                     <span class="sb-name" id="sb-name-p1">P1</span>
                     <span class="sb-score" id="sb-score-p1">—</span>
                 </div>
                 <div class="sb-middle">
                     <span class="sb-round" id="sb-round">Round — / —</span>
                     <span class="sb-lead" id="sb-lead"></span>
+                    <span class="sb-odds" id="sb-odds" style="display:none;"></span>
                     <span id="sb-live" class="sb-live" style="display:none;"><span class="sb-live-dot"></span>LIVE</span>
                 </div>
                 <div class="sb-player p2">
                     <span class="sb-score" id="sb-score-p2">—</span>
                     <span class="sb-name" id="sb-name-p2">P2</span>
+                    <span class="sb-ava p2" id="sb-ava-p2" style="display:none;"></span>
                 </div>
+                <!-- Fighting-game score-share bar: P1 (cyan) fills from the left, the
+                     boundary marks who leads. -->
+                <div class="sb-bar" id="sb-bar"><span class="sb-bar-p1" id="sb-bar-p1"></span></div>
             </div>
 
-            <!-- Score history chart -->
-            <div id="score-chart-overlay">
-                <div class="chart-label">Score Timeline</div>
-                <canvas id="score-chart" width="280" height="72"></canvas>
+            <!-- Bottom-center HUD console: a stats hub (Stats / Bracket / Menu)
+                 that fully collapses to a minimal handle. The persistent score
+                 lives in the top scoreboard above; inner stat IDs are preserved
+                 from the old biomass / score-chart panels so render code is unchanged. -->
+            <div id="hud-console" class="hud-console hc-hidden hc-collapsed" aria-label="Game console">
+
+                <!-- PANEL: slides up above the rail; tabbed Stats / Bracket / Menu -->
+                <div id="hc-panel" class="hc-panel" role="region" aria-label="Console panel">
+                    <div class="hc-tabs" role="tablist">
+                        <button class="hc-tab active" data-hc-tab="stats" role="tab" aria-selected="true">
+                            <span class="hc-tab-icon">⛧</span><span>STATS</span>
+                        </button>
+                        <button class="hc-tab hc-tab-bracket" data-hc-tab="bracket" role="tab" aria-selected="false">
+                            <span class="hc-tab-icon">⚔</span><span>BRACKET</span>
+                            <span class="hc-tab-live" aria-hidden="true"></span>
+                        </button>
+                        <button class="hc-tab" data-hc-tab="menu" role="tab" aria-selected="false">
+                            <span class="hc-tab-icon">≡</span><span>MENU</span>
+                        </button>
+                    </div>
+
+                    <!-- STATS view: timeline + biomass (eco) + terrain (biome), three abreast -->
+                    <div class="hc-view hc-view-stats" data-hc-view="stats">
+                        <div class="hc-stats-cols">
+                            <!-- Timeline -->
+                            <div class="hc-timeline">
+                                <div class="hc-section-label">Score Timeline</div>
+                                <canvas id="score-chart" width="320" height="64"></canvas>
+                            </div>
+
+                            <!-- Ecosystem: biomass bars + health badges -->
+                            <div class="hc-eco">
+                                <div class="bt-row" data-tier="predator">
+                                    <div class="bt-tier-icon">🦅</div>
+                                    <div class="bt-tier-label">Predators</div>
+                                    <div class="bt-bars">
+                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-pred-p1"></span><span class="bt-count" id="bt-count-pred-p1">0</span></div>
+                                        <div class="bt-divider"></div>
+                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-pred-p2"></span><span class="bt-count" id="bt-count-pred-p2">0</span></div>
+                                    </div>
+                                </div>
+                                <div class="bt-row" data-tier="herbivore">
+                                    <div class="bt-tier-icon">🦌</div>
+                                    <div class="bt-tier-label">Herbivores</div>
+                                    <div class="bt-bars">
+                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-herb-p1"></span><span class="bt-count" id="bt-count-herb-p1">0</span></div>
+                                        <div class="bt-divider"></div>
+                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-herb-p2"></span><span class="bt-count" id="bt-count-herb-p2">0</span></div>
+                                    </div>
+                                </div>
+                                <div class="bt-row" data-tier="plant">
+                                    <div class="bt-tier-icon">🌿</div>
+                                    <div class="bt-tier-label">Plants</div>
+                                    <div class="bt-bars">
+                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-plant-p1"></span><span class="bt-count" id="bt-count-plant-p1">0</span></div>
+                                        <div class="bt-divider"></div>
+                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-plant-p2"></span><span class="bt-count" id="bt-count-plant-p2">0</span></div>
+                                    </div>
+                                </div>
+                                <div class="bt-health-row">
+                                    <div class="bt-health bt-health-p1" id="bt-health-p1" data-state="ok">
+                                        <span class="bt-h-tag">P1</span><span class="bt-h-icon">✓</span>
+                                    </div>
+                                    <div class="bt-health bt-health-p2" id="bt-health-p2" data-state="ok">
+                                        <span class="bt-h-tag">P2</span><span class="bt-h-icon">✓</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Biome: terrain composition donut + legend -->
+                            <div class="hc-biome">
+                                <div class="ws-chart-wrap">
+                                    <svg class="ws-donut" id="ws-donut" viewBox="0 0 80 80" aria-hidden="true">
+                                        <circle class="ws-track" cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12"/>
+                                        <g id="ws-segments"></g>
+                                    </svg>
+                                    <div class="ws-center" id="ws-center">
+                                        <div class="ws-c-name" id="ws-c-name">—</div>
+                                        <div class="ws-c-pct" id="ws-c-pct"></div>
+                                    </div>
+                                </div>
+                                <div class="ws-legend" id="ws-legend"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BRACKET view (tournament live bracket) -->
+                    <div class="hc-view hc-view-bracket hc-view-hidden" data-hc-view="bracket">
+                        <div class="hc-bracket-header">
+                            <span id="bt-bracket-title">Bracket</span>
+                            <button id="bt-bracket-expand" class="hc-bracket-action" title="Expand bracket" type="button">⛶</button>
+                        </div>
+                        <div id="bt-bracket-content" class="hc-bracket-content"></div>
+                    </div>
+
+                    <!-- MENU view (absorbs the old gear dropdown) -->
+                    <div class="hc-view hc-view-menu hc-view-hidden" data-hc-view="menu">
+                        <button class="hc-menu-item" data-hc-menu="new-match" type="button">
+                            <span class="hc-mi-icon">▶</span><span>New Match</span>
+                        </button>
+                        <button class="hc-menu-item" data-hc-menu="field-guide" type="button">
+                            <span class="hc-mi-icon">❔</span><span>Field Guide</span>
+                        </button>
+                        <button class="hc-menu-item" data-hc-menu="rankings" type="button">
+                            <span class="hc-mi-icon">🏆</span><span>Rankings</span>
+                        </button>
+                        <button class="hc-menu-item" data-hc-menu="labs" type="button">
+                            <span class="hc-mi-icon">🧪</span><span>Labs</span>
+                        </button>
+                        <button class="hc-menu-item" data-hc-menu="manage-models" type="button">
+                            <span class="hc-mi-icon">⚙</span><span>Manage Models</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- HANDLE: compact toggle — the console fully collapses to just this -->
+                <button id="hc-rail" class="hc-handle" type="button" aria-expanded="false" aria-controls="hc-panel">
+                    <span class="hc-handle-icon" id="hc-handle-icon" aria-hidden="true">⛧</span>
+                    <span class="hc-handle-label" id="hc-handle-label">Stats</span>
+                    <span class="hc-grip" aria-hidden="true">▴</span>
+                </button>
             </div>
 
             <!-- Cell inspector tooltip (follows cursor on hex hover) -->
@@ -188,12 +218,40 @@
                     <div class="aic-avatar" id="aic-avatar-p1">P1</div>
                     <div class="aic-name-block">
                         <div class="aic-name" id="aic-name-p1">Player 1</div>
+                        <div class="aic-subtitle" id="aic-subtitle-p1"></div>
                         <div class="aic-status" id="aic-status-p1">Waiting</div>
                     </div>
                 </div>
+                <div class="aic-statblock" id="aic-statblock-p1">
+                    <div class="aic-stat-row" data-stat="might">
+                        <span class="aic-stat-label">MIGHT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="renown">
+                        <span class="aic-stat-label">RENOWN</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="grit">
+                        <span class="aic-stat-label">GRIT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-statfoot">
+                        <span class="aic-tierline" id="aic-tier-p1"></span>
+                        <span class="aic-role" id="aic-role-p1"></span>
+                    </div>
+                </div>
+                <div class="aic-body">
                 <div class="aic-banter-wrap">
                     <div class="aic-particles" aria-hidden="true">
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div class="aic-countdown" id="aic-countdown-p1" aria-hidden="true">
+                        <span class="aic-cd-num"></span>
+                        <span class="aic-cd-label">deciding…</span>
+                        <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
                     </div>
                     <div id="ai-banter-p1" class="ai-banter-text"></div>
                 </div>
@@ -201,18 +259,47 @@
                     <span class="aic-chevron">▸</span><span>reasoning</span>
                 </button>
                 <div id="ai-strategy-p1" class="ai-strategy-text aic-reason-collapsed"></div>
+                </div>
             </div>
             <div id="ai-overlay-p2" class="ai-overlay p2">
                 <div class="aic-header">
                     <div class="aic-avatar" id="aic-avatar-p2">P2</div>
                     <div class="aic-name-block">
                         <div class="aic-name" id="aic-name-p2">Player 2</div>
+                        <div class="aic-subtitle" id="aic-subtitle-p2"></div>
                         <div class="aic-status" id="aic-status-p2">Waiting</div>
                     </div>
                 </div>
+                <div class="aic-statblock" id="aic-statblock-p2">
+                    <div class="aic-stat-row" data-stat="might">
+                        <span class="aic-stat-label">MIGHT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="renown">
+                        <span class="aic-stat-label">RENOWN</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-stat-row" data-stat="grit">
+                        <span class="aic-stat-label">GRIT</span>
+                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
+                        <span class="aic-stat-val"></span>
+                    </div>
+                    <div class="aic-statfoot">
+                        <span class="aic-tierline" id="aic-tier-p2"></span>
+                        <span class="aic-role" id="aic-role-p2"></span>
+                    </div>
+                </div>
+                <div class="aic-body">
                 <div class="aic-banter-wrap">
                     <div class="aic-particles" aria-hidden="true">
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
+                    </div>
+                    <div class="aic-countdown" id="aic-countdown-p2" aria-hidden="true">
+                        <span class="aic-cd-num"></span>
+                        <span class="aic-cd-label">deciding…</span>
+                        <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
                     </div>
                     <div id="ai-banter-p2" class="ai-banter-text"></div>
                 </div>
@@ -220,19 +307,9 @@
                     <span class="aic-chevron">▸</span><span>reasoning</span>
                 </button>
                 <div id="ai-strategy-p2" class="ai-strategy-text aic-reason-collapsed"></div>
+                </div>
             </div>
 
-            <!-- Live bracket overlay -->
-            <div id="live-bracket" class="live-bracket-hidden">
-                <div class="lb-header">
-                    <span id="lb-title">Bracket</span>
-                    <div class="lb-actions">
-                        <button id="btn-lb-expand" class="lb-action" title="Expand bracket">⛶</button>
-                        <button id="btn-lb-close" class="lb-close" title="Close">&times;</button>
-                    </div>
-                </div>
-                <div id="lb-content" class="lb-content"></div>
-            </div>
 
             <!-- Round transition card (briefly fades in/out between rounds) -->
             <div id="round-transition" class="rt-hidden">
@@ -253,8 +330,8 @@
                 <div class="rc-body" id="rc-body"></div>
             </div>
 
-            <!-- Expanded bracket overlay (semi-transparent, sits over canvas) -->
-            <div id="bracket-expanded" class="bracket-expanded-hidden">
+            <!-- Championship bracket — full-screen opaque event scene -->
+            <div id="bracket-expanded" class="bracket-expanded-hidden event-stage">
                 <div class="be-header">
                     <div class="be-titles">
                         <div class="be-title">BIOME CHAMPIONSHIP</div>
@@ -302,10 +379,32 @@
         </div>
     </div>
 
+    <!-- Model picker grid — opened from a player card's "change" button.
+         Lists every installed model as a ranked, metric-rich card. -->
+    <div id="model-grid-modal" class="model-grid-modal" style="display:none;">
+        <div class="mgm-backdrop"></div>
+        <div class="mgm-panel" role="dialog" aria-label="Choose a model">
+            <div class="mgm-header">
+                <span class="mgm-title" id="mgm-title">Choose a model</span>
+                <button id="btn-mgm-close" class="mcp-close" aria-label="Close">×</button>
+            </div>
+            <div class="mgm-toolbar">
+                <span class="mgm-sort-label">Sort</span>
+                <div class="world-seg mgm-sort" id="mgm-sort">
+                    <button type="button" data-sort="elo" class="on">ELO</button>
+                    <button type="button" data-sort="winrate">Win&nbsp;rate</button>
+                    <button type="button" data-sort="name">Name</button>
+                </div>
+            </div>
+            <div class="mgm-grid" id="mgm-grid"></div>
+        </div>
+    </div>
+
     <!-- Game Over Overlay -->
-    <div id="game-over-overlay" class="game-over-overlay" style="display:none;">
+    <div id="game-over-overlay" class="game-over-overlay event-stage" style="display:none;">
         <div class="game-over-card">
             <h2>Game Over</h2>
+            <div id="go-winner-avatar" class="go-winner-avatar"></div>
             <div class="winner"></div>
             <div class="final-score"></div>
             <button id="btn-play-again" class="btn btn-primary" style="margin-top:16px;">Play Again</button>
@@ -314,7 +413,7 @@
 
     <script type="module" src="js/game.js"></script>
     <!-- Tournament overlay -->
-    <div id="tournament-overlay" class="t-hidden">
+    <div id="tournament-overlay" class="t-hidden event-stage">
 
         <!-- Pre-match VS screen (Solo/Watch) -->
         <div class="t-screen t-hidden" id="match-prematch">
@@ -325,6 +424,11 @@
                 <div id="prematch-p1-card" class="player-card p1"></div>
                 <div class="prematch-vs">VS</div>
                 <div id="prematch-p2-card" class="player-card p2"></div>
+            </div>
+            <div class="odds-row">
+                <span id="prematch-p1-odds" class="odds-side"></span>
+                <span class="odds-label">WIN ODDS</span>
+                <span id="prematch-p2-odds" class="odds-side"></span>
             </div>
             <div class="prematch-hint">Click anywhere to skip</div>
         </div>
@@ -360,10 +464,19 @@
                 <button class="launcher-mode-card tournament lm-stagger-3" data-launcher-mode="tournament">
                     <div class="lmc-icon">⚔</div>
                     <div class="lmc-name">TOURNAMENT</div>
-                    <div class="lmc-desc">8-model bracket</div>
+                    <div class="lmc-desc">Bracket showdown</div>
                 </button>
             </div>
+            <div class="launcher-learn-row">
+                <button class="launcher-learn-btn" id="btn-launcher-demo">▶ Learn the game</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-howto">❔ How to Play</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-rankings">🏆 Rankings</button>
+                <button class="launcher-learn-btn ghost" id="btn-launcher-labs">🧪 Labs</button>
+            </div>
         </div>
+
+        <!-- Full-screen leaderboard / hall of champions -->
+        <div class="t-screen t-hidden" id="launcher-rankings"></div>
 
         <!-- Match setup (Solo/Watch model pickers + Start button) -->
         <div class="t-screen t-hidden" id="launcher-setup">
@@ -385,21 +498,82 @@
                     <button id="btn-match-expand" class="ms-expand" title="Change setup">⟲</button>
                 </div>
 
-                <!-- Mode-specific configuration -->
+                <!-- Mode-specific configuration. The <select>s are the value
+                     source of truth (start logic reads .value); they're hidden and
+                     driven by the rich model cards above them. -->
                 <div id="match-config-solo" class="match-config" data-mode="solo">
-                    <div class="mmp-label p2">Opponent</div>
-                    <select id="match-model-p2-solo" class="match-model-picker p2"></select>
+                    <div class="modelcard-row solo">
+                        <div class="modelcard p2" id="pcard-p2-solo" data-slot="p2-solo"></div>
+                    </div>
+                    <select id="match-model-p2-solo" class="match-model-picker p2 mmp-hidden-select"></select>
                 </div>
 
                 <div id="match-config-watch" class="match-config" data-mode="watch" style="display:none;">
-                    <div class="mmp-label p1">Player 1</div>
-                    <select id="match-model-p1-watch" class="match-model-picker p1"></select>
-                    <div class="mmp-label p2" style="margin-top:8px;">Player 2</div>
-                    <select id="match-model-p2-watch" class="match-model-picker p2"></select>
+                    <div class="modelcard-row watch">
+                        <div class="modelcard p1" id="pcard-p1-watch" data-slot="p1-watch"></div>
+                        <div class="modelcard-vs" id="watch-vs"><span class="mc-vs-word">VS</span></div>
+                        <div class="modelcard p2" id="pcard-p2-watch" data-slot="p2-watch"></div>
+                    </div>
+                    <select id="match-model-p1-watch" class="match-model-picker p1 mmp-hidden-select"></select>
+                    <select id="match-model-p2-watch" class="match-model-picker p2 mmp-hidden-select"></select>
                 </div>
 
                 <div id="match-config-tournament" class="match-config" data-mode="tournament" style="display:none;">
-                    <div class="mt-blurb">8 AI models compete in a single-elimination bracket.</div>
+                    <div class="mw-row">
+                        <span class="mw-label">Bracket</span>
+                        <div class="world-seg" id="t-size">
+                            <button type="button" data-val="8">8</button>
+                            <button type="button" data-val="16">Sweet 16</button>
+                            <button type="button" data-val="32">32</button>
+                        </div>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Format</span>
+                        <div class="world-seg world-seg-fmt" id="t-format">
+                            <button type="button" data-val="seeded"><span class="ws-seg-name">Seeded</span></button>
+                            <button type="button" data-val="champions"><span class="ws-seg-name">Champions</span></button>
+                            <button type="button" data-val="davidGoliath"><span class="ws-seg-name">David v Goliath</span></button>
+                            <button type="button" data-val="open"><span class="ws-seg-name">Open Draw</span></button>
+                        </div>
+                    </div>
+                    <div class="mt-blurb" id="t-format-blurb"></div>
+                </div>
+
+                <!-- Shared world settings (size / hex zoom / rounds) — all modes.
+                     Dimensions on the map buttons + summary are filled from CONFIG. -->
+                <div class="match-world" id="match-world">
+                    <div class="mw-row">
+                        <span class="mw-label">Map size</span>
+                        <div class="world-seg world-seg-maps" id="world-mapsize">
+                            <button type="button" data-val="auto"><span class="ws-seg-name">Fit screen</span><span class="ws-seg-dim">auto</span></button>
+                            <button type="button" data-val="small"><span class="ws-seg-name">Small</span><span class="ws-seg-dim"></span></button>
+                            <button type="button" data-val="medium"><span class="ws-seg-name">Medium</span><span class="ws-seg-dim"></span></button>
+                            <button type="button" data-val="large"><span class="ws-seg-name">Large</span><span class="ws-seg-dim"></span></button>
+                        </div>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Hex zoom</span>
+                        <input type="range" id="world-hexzoom" class="world-range" min="9" max="22" step="1" value="11">
+                        <span class="mw-readout" id="world-hexzoom-val">11px</span>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Rounds</span>
+                        <div class="world-seg" id="world-rounds">
+                            <button type="button" data-val="5">5</button>
+                            <button type="button" data-val="10">10</button>
+                            <button type="button" data-val="15">15</button>
+                            <button type="button" data-val="20">20</button>
+                        </div>
+                    </div>
+                    <div class="mw-row">
+                        <span class="mw-label">Map vision</span>
+                        <div class="world-seg world-seg-maps" id="world-mapstrategy" title="How the board is presented to the AI">
+                            <button type="button" data-val="mediated"><span class="ws-seg-name">Mediated</span><span class="ws-seg-dim">regions</span></button>
+                            <button type="button" data-val="ascii"><span class="ws-seg-name">ASCII</span><span class="ws-seg-dim">text grid</span></button>
+                            <button type="button" data-val="raw"><span class="ws-seg-name">Raw</span><span class="ws-seg-dim">coords</span></button>
+                        </div>
+                    </div>
+                    <div class="mw-summary" id="world-summary"></div>
                 </div>
 
                 <div class="launcher-setup-actions">
@@ -407,27 +581,6 @@
                     <button id="btn-start-match" class="btn btn-primary">Start Match ▶</button>
                 </div>
             </div>
-        </div>
-
-        <!-- Mode select -->
-        <div class="t-screen" id="t-mode-select">
-            <div class="t-header">
-                <div class="t-title">TOURNAMENT MODE</div>
-                <div class="t-subtitle">Choose your format</div>
-            </div>
-            <div class="t-mode-buttons">
-                <button id="btn-mode-standard" class="t-mode-btn t-mode-standard">
-                    <span class="t-mode-rounds">20</span>
-                    <span class="t-mode-rounds-label">rounds</span>
-                    <span class="t-mode-name">Standard</span>
-                </button>
-                <button id="btn-mode-lightning" class="t-mode-btn t-mode-lightning">
-                    <span class="t-mode-rounds">10</span>
-                    <span class="t-mode-rounds-label">rounds</span>
-                    <span class="t-mode-name">Lightning</span>
-                </button>
-            </div>
-            <button id="btn-mode-cancel" class="t-mode-cancel">Cancel</button>
         </div>
 
         <!-- Bracket view -->
@@ -439,22 +592,33 @@
             <div class="bracket-grid" id="bracket-grid"></div>
         </div>
 
-        <!-- Match intro -->
+        <!-- Match intro — fighting-game VS reveal (player cards slam in) -->
         <div class="t-screen t-hidden" id="t-match-intro">
             <div class="t-match-label" id="t-match-label">ROUND 1 — MATCH 1</div>
-            <div class="t-vs-row">
-                <div class="t-model t-m-p1" id="t-intro-p1">—</div>
-                <div class="t-vs">VS</div>
-                <div class="t-model t-m-p2" id="t-intro-p2">—</div>
+            <div class="prematch-row t-intro-row">
+                <div id="t-intro-p1-card" class="player-card p1"></div>
+                <div class="prematch-vs">VS</div>
+                <div id="t-intro-p2-card" class="player-card p2"></div>
+            </div>
+            <div class="odds-row t-intro-odds">
+                <span id="t-intro-odds-p1" class="odds-side"></span>
+                <span class="odds-label">WIN ODDS</span>
+                <span id="t-intro-odds-p2" class="odds-side"></span>
             </div>
             <div class="t-intro-note" id="t-intro-note">Match beginning...</div>
         </div>
 
-        <!-- Match result -->
+        <!-- Match result — fighting-game victor / defeated reveal -->
         <div class="t-screen t-hidden" id="t-match-result">
             <div class="t-match-label" id="t-result-label">RESULT</div>
+            <div class="t-result-cards" id="t-result-cards">
+                <div id="t-result-winner-card" class="player-card"></div>
+                <div class="t-result-verdict" id="t-result-verdict">DEFEATS</div>
+                <div id="t-result-loser-card" class="player-card"></div>
+            </div>
             <div class="t-result-winner-label">WINNER</div>
             <div class="t-result-winner" id="t-result-winner">—</div>
+            <div class="t-result-rank" id="t-result-rank"></div>
             <div class="t-result-scores" id="t-result-scores"></div>
             <div class="t-result-next" id="t-result-next"></div>
         </div>
@@ -463,6 +627,7 @@
         <div class="t-screen t-hidden" id="t-champion">
             <div class="t-champ-pre">BIOME CHAMPIONSHIP WINNER</div>
             <div class="t-champ-crown">👑</div>
+            <div class="t-champ-avatar" id="t-champ-avatar"></div>
             <div class="t-champ-name" id="t-champ-name">—</div>
             <div class="t-champ-record" id="t-champ-record"></div>
             <div id="t-champ-actions" class="t-champ-actions"></div>
@@ -482,14 +647,58 @@
         <div id="tsp-content" class="tsp-content"></div>
     </div>
 
+    <!-- Labs chooser overlay — front door for all standalone labs -->
+    <div id="labs-overlay" class="labs-hidden">
+        <div class="labs-backdrop" data-labs-close></div>
+        <div class="labs-panel" role="dialog" aria-modal="true" aria-labelledby="labs-title">
+            <button class="labs-close" data-labs-close aria-label="Close">✕</button>
+            <h2 class="labs-title" id="labs-title">🧪 Labs</h2>
+            <p class="labs-sub">Sandboxes &amp; tools for exploring Biome's AI and art.</p>
+            <div class="labs-list">
+                <a class="labs-card" href="/vision-lab.html">
+                    <span class="labs-card-glyph">👁</span>
+                    <span class="labs-card-text"><b>AI Vision Lab</b><span>Chat with a model about a sandbox map — watch it highlight &amp; reason over the grid.</span></span>
+                </a>
+                <a class="labs-card" href="/lab/icons.html">
+                    <span class="labs-card-glyph">🎨</span>
+                    <span class="labs-card-text"><b>Icon Lab</b><span>Tune the procedural organism art shared by the game and renderer.</span></span>
+                </a>
+                <a class="labs-card" href="/lab/avatars.html">
+                    <span class="labs-card-glyph">🧬</span>
+                    <span class="labs-card-text"><b>Avatar Lab</b><span>Generate per-model biome-creature avatars for every installed model.</span></span>
+                </a>
+                <a class="labs-card" href="/dashboard.html">
+                    <span class="labs-card-glyph">📊</span>
+                    <span class="labs-card-text"><b>Analytics Dashboard</b><span>Live ELO, standings, and match-condition fields across all models.</span></span>
+                </a>
+            </div>
+        </div>
+    </div>
+
     <!-- Rankings panel (side drawer) -->
     <div id="rankings-panel" class="rankings-hidden">
         <div class="rk-header">
             <span>ELO Rankings</span>
-            <button id="btn-rankings-close" class="rk-close">×</button>
+            <div class="rk-header-actions">
+                <button id="btn-rankings-reset" class="rk-reset" title="Archive standings and start fresh">Reset</button>
+                <button id="btn-rankings-close" class="rk-close">×</button>
+            </div>
         </div>
         <div id="rk-leaderboard" class="rk-content"></div>
         <div id="rk-history" class="rk-content" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:8px;padding-top:8px;"></div>
+    </div>
+
+    <!-- Human handle prompt (first ranked solo match) -->
+    <div id="handle-modal" class="handle-modal modal-hidden">
+        <div class="handle-card">
+            <div class="handle-title">Enter the arena</div>
+            <div class="handle-sub">Pick a name for the leaderboard — you'll battle the AI models for ELO.</div>
+            <input id="handle-input" class="handle-input" type="text" maxlength="24" placeholder="Your handle" autocomplete="off" spellcheck="false">
+            <div class="handle-actions">
+                <button id="handle-skip" class="btn handle-btn-skip">Skip</button>
+                <button id="handle-ok" class="btn handle-btn-ok">Let's go</button>
+            </div>
+        </div>
     </div>
 
 </body>

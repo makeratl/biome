@@ -1,0 +1,121 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "14",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSampler"
+  },
+  "4": {
+    "inputs": {
+      "lora_name": "qwen/Qwen-Image-Lightning-4steps-V1.0.safetensors",
+      "strength_model": 1.0,
+      "model": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly"
+  },
+  "5": {
+    "inputs": {
+      "aspect_ratio": "1:1 Square",
+      "batch_size": 1
+    },
+    "class_type": "QwenEmptyLatentImage"
+  },
+  "6": {
+    "inputs": {
+      "clip": [
+        "12",
+        0
+      ],
+      "text": "a sleek, alert fox with overlapping amber-and-gold scaled plates, sharp inquisitive eyes; an elder, powerful form \u2014 ornate plating, battle-worn, commanding presence; hue 38\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, dark background, centered emblem, game avatar icon, highly detailed, dramatic rim lighting"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "clip": [
+        "12",
+        0
+      ],
+      "text": "text, words, letters, watermark, signature, human, person, face, multiple subjects, frame, border, blurry, low quality"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "biome-avatar-qwen-large",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "10": {
+    "inputs": {
+      "unet_name": "qwen_image_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "11": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "12": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image"
+    },
+    "class_type": "CLIPLoader"
+  },
+  "14": {
+    "inputs": {
+      "lora_name": "qwen/CreatureFeature01_CE_QWEN_AIT3k.safetensors",
+      "strength_model": 1.0,
+      "model": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly"
+  }
+}

@@ -67,6 +67,16 @@ const BANK = {
         _tone({ type: 'sine', freq: 220, freqEnd: 660, peak: 0.30, attack: 0.02, hold: 0.0, release: 0.35 });
         _tone({ type: 'triangle', freq: 110, freqEnd: 330, peak: 0.18, attack: 0.02, hold: 0.0, release: 0.35 });
     },
+    // Fighting-game "VS" sting — two heavy slams (one per fighter entering) and
+    // a bright metallic clash when they meet in the middle.
+    vs() {
+        _tone({ type: 'triangle', freq: 130, freqEnd: 80,  peak: 0.42, attack: 0.004, hold: 0.04, release: 0.26 });           // P1 slam
+        _tone({ type: 'square',   freq: 220, freqEnd: 120, peak: 0.16, attack: 0.004, hold: 0.0,  release: 0.14 });
+        _tone({ type: 'triangle', freq: 150, freqEnd: 90,  peak: 0.42, attack: 0.004, hold: 0.04, release: 0.26, delay: 0.16 }); // P2 slam
+        _tone({ type: 'square',   freq: 247, freqEnd: 130, peak: 0.16, attack: 0.004, hold: 0.0,  release: 0.14, delay: 0.16 });
+        _tone({ type: 'sawtooth', freq: 1320, freqEnd: 660, peak: 0.22, attack: 0.003, hold: 0.0, release: 0.34, delay: 0.34 }); // clash
+        _tone({ type: 'sine',     freq: 1980, peak: 0.16, attack: 0.003, hold: 0.04, release: 0.40, delay: 0.36 });             // shimmer
+    },
     // Impactful low boom + high pluck — match begin
     'match-start'() {
         _tone({ type: 'triangle', freq: 90, peak: 0.45, attack: 0.005, hold: 0.05, release: 0.32 });
@@ -84,12 +94,42 @@ const BANK = {
         _tone({ type: 'sine', freq: 440, peak: 0.20, attack: 0.005, hold: 0.05, release: 0.30, delay: 0.02 });
         _tone({ type: 'triangle', freq: 880, peak: 0.14, attack: 0.005, hold: 0.0, release: 0.20, delay: 0.06 });
     },
+    // Heavy body-thud + a downward metallic clang — the loser's "DEFEATED"
+    // stamp slamming down. The defeat beat that lands just before the win fanfare.
+    ko() {
+        _tone({ type: 'triangle', freq: 170, freqEnd: 55,  peak: 0.46, attack: 0.003, hold: 0.03, release: 0.30 });            // body thud
+        _tone({ type: 'square',   freq: 200, freqEnd: 70,  peak: 0.18, attack: 0.003, hold: 0.0,  release: 0.16 });            // crunch
+        _tone({ type: 'sawtooth', freq: 520, freqEnd: 170, peak: 0.20, attack: 0.002, hold: 0.0,  release: 0.26, delay: 0.02 }); // downer clang
+    },
+    // Tense buzz resolving to a bright hit — an underdog win
+    upset() {
+        _tone({ type: 'sawtooth', freq: 70, freqEnd: 140, peak: 0.32, attack: 0.01, hold: 0.06, release: 0.30 });
+        _tone({ type: 'square', freq: 330, freqEnd: 220, peak: 0.16, attack: 0.01, hold: 0.04, release: 0.22, delay: 0.04 });
+        _tone({ type: 'sine', freq: 1175, peak: 0.26, attack: 0.004, hold: 0.04, release: 0.34, delay: 0.18 }); // D6 release
+        _tone({ type: 'triangle', freq: 1568, peak: 0.16, attack: 0.004, hold: 0.0, release: 0.24, delay: 0.24 }); // G6
+    },
+    // Quick two-note lift — a rank promotion
+    promote() {
+        _tone({ type: 'triangle', freq: 659, peak: 0.26, attack: 0.005, hold: 0.04, release: 0.16 });            // E5
+        _tone({ type: 'sine', freq: 988, peak: 0.24, attack: 0.005, hold: 0.06, release: 0.30, delay: 0.10 });   // B5
+    },
     // Three-note ascending arpeggio — end of match
     victory() {
         _tone({ type: 'triangle', freq: 523, peak: 0.30, attack: 0.005, hold: 0.05, release: 0.18 });          // C5
         _tone({ type: 'triangle', freq: 659, peak: 0.30, attack: 0.005, hold: 0.05, release: 0.20, delay: 0.18 }); // E5
         _tone({ type: 'triangle', freq: 784, peak: 0.32, attack: 0.005, hold: 0.10, release: 0.50, delay: 0.36 }); // G5
         _tone({ type: 'sine',     freq: 1046, peak: 0.22, attack: 0.005, hold: 0.10, release: 0.50, delay: 0.36 }); // C6
+    },
+    // Grand four-note fanfare with a sustained octave bloom — seizing #1.
+    // Deliberately bigger and longer than `victory` so the throne moment reads
+    // as its own beat rather than a second match-end chime.
+    champion() {
+        _tone({ type: 'triangle', freq: 523,  peak: 0.30, attack: 0.005, hold: 0.06, release: 0.20 });             // C5
+        _tone({ type: 'triangle', freq: 659,  peak: 0.30, attack: 0.005, hold: 0.06, release: 0.22, delay: 0.16 }); // E5
+        _tone({ type: 'triangle', freq: 784,  peak: 0.32, attack: 0.005, hold: 0.06, release: 0.24, delay: 0.32 }); // G5
+        _tone({ type: 'triangle', freq: 1046, peak: 0.34, attack: 0.005, hold: 0.22, release: 0.70, delay: 0.48 }); // C6 bloom
+        _tone({ type: 'sine',     freq: 1568, peak: 0.20, attack: 0.005, hold: 0.22, release: 0.70, delay: 0.48 }); // G6 shimmer
+        _tone({ type: 'sine',     freq: 2093, peak: 0.12, attack: 0.005, hold: 0.18, release: 0.60, delay: 0.56 }); // C7 sparkle
     },
 };
 

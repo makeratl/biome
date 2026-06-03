@@ -1,0 +1,12 @@
+{
+  "still": {},
+  "victory": {
+    "cohere-mid": "the wolf rears up in triumph, head lifting high, glowing circuitry and bioluminescent accents flaring brighter, glowing energy pulsing around it, slow confident camera push-in; dark background, centered, subtle looping motion"
+  },
+  "defeat": {
+    "generic-mid": "the tortoise staggers and slumps, head lowering, to sadness, energy fading away; dark background, centered, slow mournful motion",
+    "glm-mid": "the heron staggers and slumps, head lowering, hiding in shame, wisps of ash and smoke drifting upward, energy fading away; dark background, centered, slow mournful motion",
+    "llama-small": "the stag staggers and slumps, head lowering, energy fading away; dark background, centered, slow mournful motion",
+    "olmo-mid": "the otter staggers and slumps, head lowering, deep sadness, energy fading away; dark background, centered, slow mournful motion"
+  }
+}

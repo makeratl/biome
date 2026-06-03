@@ -4,3 +4,19 @@ node_modules/
 *.pyc
 __pycache__/
 tournament_log.json
+*.bak
+
+*.mbtree
+
+CLAUDE.md
+
+# dev-session skill runtime artifacts (rolling logs, canary screenshot, chrome profile)
+dev-logs/
+
+.claude/
+
+nohup
+
+*.db-shm
+
+*.db-wal
