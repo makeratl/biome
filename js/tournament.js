@@ -343,8 +343,8 @@ export class TournamentManager {
         lCard.className = `player-card p${loserSlot} pc-defeated`;
         document.getElementById('t-result-verdict').textContent = isUpset ? 'UPSETS' : 'DEFEATS';
         await Promise.all([
-            this.game._renderPlayerCard?.(wCard, { player: winnerSlot, model: match.winner }),
-            this.game._renderPlayerCard?.(lCard, { player: loserSlot,  model: loser }),
+            this.game._renderPlayerCard?.(wCard, { player: winnerSlot, model: match.winner, clip: 'victory' }),
+            this.game._renderPlayerCard?.(lCard, { player: loserSlot,  model: loser, clip: 'defeat' }),
         ]);
         // Stamp the cards (render wiped any prior stamp). The role chips are
         // hidden on this screen (CSS) — the ribbon + KO stamp carry the verdict.

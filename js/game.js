@@ -3500,8 +3500,13 @@ class Game {
         `;
 
         // Baked cyber-organic portrait for AI players (humans keep the "YOU" chip).
+        // The match-result screen passes opts.clip ('victory'|'defeat') so the hex
+        // plays the winner's/loser's animated clip instead of the still (falls back
+        // to the still automatically if no clip is baked for that model).
         if (!isHuman && model) {
-            applyAvatar(el.querySelector('.pc-avatar'), model);
+            const avaEl = el.querySelector('.pc-avatar');
+            if (opts.clip) applyAvatarVideo(avaEl, model, { category: opts.clip });
+            else applyAvatar(avaEl, model);
         }
 
         if (lookupName) {
