@@ -4,7 +4,7 @@
 import { postResult, renderOddsInto, fetchRankings, expectedScore } from './rankings.js';
 import { CONFIG } from './config.js';
 import { resolveModel } from './model-identity.js';
-import { applyAvatar } from './model-avatar.js';
+import { applyAvatar, applyAvatarVideo } from './model-avatar.js';
 import { prepareResidentSet, isCloudModel, listResidentModels } from './ai.js';
 import { shortId } from './util.js';
 
@@ -223,8 +223,8 @@ export class TournamentManager {
         introScreen.classList.toggle('t-intro-champ', isFinal);
         this._show('t-match-intro');
         await Promise.all([
-            this.game._renderPlayerCard('t-intro-p1-card', { player: 1, model: match.p1 }),
-            this.game._renderPlayerCard('t-intro-p2-card', { player: 2, model: match.p2 }),
+            this.game._renderPlayerCard('t-intro-p1-card', { player: 1, model: match.p1, clip: 'intro', clipLoop: false }),
+            this.game._renderPlayerCard('t-intro-p2-card', { player: 2, model: match.p2, clip: 'intro', clipLoop: false }),
         ]);
         this._renderIntroOdds(match.p1, match.p2); // async — fills the odds line once ELO is fetched
         // Re-trigger the slam-in animation by reflow, with a matching sound sting.
@@ -464,7 +464,7 @@ export class TournamentManager {
     _showChampion(winner) {
         document.getElementById('t-champ-name').textContent = this._short(winner);
         const champAva = document.getElementById('t-champ-avatar');
-        if (champAva) { applyAvatar(champAva, winner); champAva.classList.add('show'); }
+        if (champAva) { applyAvatarVideo(champAva, winner, { category: 'champion', loop: true }); champAva.classList.add('show'); }
         const wins = this.bracket.filter(m => m.winner === winner);
         const path = wins.map(m => m.label).join(' → ');
         const finalScore = (() => {

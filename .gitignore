@@ -20,3 +20,5 @@ nohup
 *.db-shm
 
 *.db-wal
+
+videos/

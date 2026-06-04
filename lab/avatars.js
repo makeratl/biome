@@ -338,7 +338,7 @@ function buildAnimStudio(group) {
     const studio = el('details', 'anim-studio');
     const stillBaked = bakedKeys.has(group.key);
     studio.appendChild(el('summary', null,
-        `🎬 Animation studio <span class="muted-tag">victory · defeat clips</span>`));
+        `🎬 Animation studio <span class="muted-tag">intro · idle · thinking · victory · defeat · champion</span>`));
     const body = el('div', 'studio-body');
     if (!stillBaked) {
         body.appendChild(el('p', 'hint', 'Generate this avatar’s still first — the portrait is the animation’s start frame.'));
@@ -510,7 +510,7 @@ function conceptScorebar() {
 function conceptChampion(winner, _loser, flavor) {
     const wrap = el('div', 'c-champion');
     wrap.append(el('div', 'c-aura'), el('div', 'c-crown', '👑'),
-        frameMedia(winner, 'victory', 'c-hero-frame'),
+        frameMedia(winner, 'champion', 'c-hero-frame'),
         el('div', 'c-name', winner.resolved.displayName),
         el('div', 'c-sub', flavor.tag));
     return wrap;
@@ -550,7 +550,22 @@ function conceptGameover(winner, loser, flavor) {
         el('div', 'c-go-statement', '“The ecosystem favored the bold.” — placeholder final statement'));
     return card;
 }
-const CONCEPTS = { champion: conceptChampion, versus: conceptVersus, gameover: conceptGameover };
+// In-play: the two live clips that ride the HUD during a match — idle (resting on
+// the board) and thinking (computing a move) — shown side by side so each loop can
+// be judged. Uses winner→idle, loser→thinking so both pickers matter.
+function conceptInplay(winner, loser, _flavor) {
+    const wrap = el('div', 'c-inplay');
+    const col = (group, cat, cap) => {
+        const c = el('div', 'c-inplay-col');
+        c.append(frameMedia(group, cat), el('div', 'c-inplay-cap', cap),
+            el('div', 'c-card-name', group.resolved.displayName));
+        return c;
+    };
+    wrap.append(col(winner, 'idle', '🌙 Idle · resting on the board'),
+        col(loser, 'thinking', '🧠 Thinking · computing a move'));
+    return wrap;
+}
+const CONCEPTS = { champion: conceptChampion, versus: conceptVersus, gameover: conceptGameover, inplay: conceptInplay };
 
 function renderConcept() {
     const stage = document.getElementById('concept-stage');

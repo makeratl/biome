@@ -517,7 +517,7 @@ class Game {
             if (overlayEl) overlayEl.style.display = '';
             const id = resolveModel(ai.model);
             avatarEl.textContent = this._modelInitials(ai.model);   // fallback under the avatar
-            applyAvatar(avatarEl, ai.model);                         // baked PNG if one exists
+            applyAvatarVideo(avatarEl, ai.model, { category: 'idle', loop: true });  // idle loop, else baked PNG, else procedural
             nameEl.textContent = this._prettyModelName(ai.model);
             // Tint the whole card with the model's brand hue (bars, frame, role glow).
             if (overlayEl) overlayEl.style.setProperty('--aic-hue', id.hue);
@@ -2140,12 +2140,16 @@ class Game {
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         const sEl = document.getElementById(`ai-strategy-p${playerNum}`);
         const toggle = document.getElementById(`aic-reason-toggle-p${playerNum}`);
+        const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
         // Clear previous banter and mark as thinking — placeholder renders "thinking…"
         if (bEl) {
             bEl.textContent = '';
             bEl.classList.add('thinking');
             bEl.classList.remove('entering');
         }
+        // Swap the HUD avatar from its idle loop to the thinking clip while the model
+        // computes (falls back to the still/procedural if no thinking clip is baked).
+        if (avatarEl) applyAvatarVideo(avatarEl, ai.model, { category: 'thinking', loop: true });
         if (sEl) {
             sEl.textContent = '';
             sEl.classList.add('aic-reason-collapsed');
@@ -2266,6 +2270,11 @@ class Game {
         this._stopThinkingCountdown(playerNum);
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         if (bEl) bEl.classList.remove('thinking');
+        // Revert the HUD avatar from its thinking clip back to the idle loop, however
+        // the turn finished (success, error, or watchdog) — this is the single clear point.
+        const ai = this.aiPlayers[playerNum];
+        const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
+        if (ai && avatarEl) applyAvatarVideo(avatarEl, ai.model, { category: 'idle', loop: true });
         if (this._turnEnded) return;
         this._turnEnded = true;
         this.turns.endTurn();
@@ -3502,10 +3511,13 @@ class Game {
         // Baked cyber-organic portrait for AI players (humans keep the "YOU" chip).
         // The match-result screen passes opts.clip ('victory'|'defeat') so the hex
         // plays the winner's/loser's animated clip instead of the still (falls back
-        // to the still automatically if no clip is baked for that model).
+        // to the still automatically if no clip is baked for that model). The match
+        // intro passes clip:'intro' with clipLoop:false so the entrance plays once
+        // rather than re-looping; the looping clips (victory/defeat/champion) leave
+        // clipLoop undefined and default to true.
         if (!isHuman && model) {
             const avaEl = el.querySelector('.pc-avatar');
-            if (opts.clip) applyAvatarVideo(avaEl, model, { category: opts.clip });
+            if (opts.clip) applyAvatarVideo(avaEl, model, { category: opts.clip, loop: opts.clipLoop !== false });
             else applyAvatar(avaEl, model);
         }
 
@@ -3538,8 +3550,8 @@ class Game {
         const handle = this._humanHandle || this._getHandle() || 'You';
         const p1Opts = config.mode === 'solo'
             ? { player: 1, isHuman: true, handle }
-            : { player: 1, model: config.p1Model };
-        const p2Opts = { player: 2, model: config.p2Model };
+            : { player: 1, model: config.p1Model, clip: 'intro', clipLoop: false };
+        const p2Opts = { player: 2, model: config.p2Model, clip: 'intro', clipLoop: false };
         await Promise.all([
             this._renderPlayerCard('prematch-p1-card', p1Opts),
             this._renderPlayerCard('prematch-p2-card', p2Opts),

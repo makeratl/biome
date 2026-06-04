@@ -104,8 +104,8 @@ def _comfy_generate(key, style, prompt, negative, lora, seed):
 VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
 VIDEO_MANIFEST_FILE = os.path.join(VIDEOS_DIR, 'manifest.json')
 OVERRIDES_FILE = os.path.join(AVATARS_DIR, 'lab-overrides.json')
-VIDEO_CATEGORIES = ('victory', 'defeat')
-OVERRIDE_KINDS = ('still', 'victory', 'defeat')
+VIDEO_CATEGORIES = ('intro', 'idle', 'thinking', 'victory', 'defeat', 'champion')
+OVERRIDE_KINDS = ('still',) + VIDEO_CATEGORIES
 VIDEO_WORKFLOWS = {
     'fast':    {'file': os.path.join(BASE_DIR, 'comfy_video_fast.json'),
                 'image': '1', 'positive': '27', 'negative': '28', 'seed': '30', 'save': '34'},

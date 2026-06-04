@@ -106,7 +106,7 @@ main { padding: 24px; max-width: 1280px; }
 /* ---- per-avatar animation studio (full-width row under the dashboard row) ---- */
 .anim-studio { grid-column: 1 / -1; margin-top: 4px; border-top: 1px dashed var(--line); padding-top: 10px; font-size: 12px; }
 .anim-studio > summary { cursor: pointer; color: var(--muted); }
-.studio-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 12px; }
+.studio-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
 .clip-slot { display: flex; flex-direction: column; gap: 8px;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .clip-head { font-weight: 700; font-size: 13px; }
@@ -205,6 +205,12 @@ main { padding: 24px; max-width: 1280px; }
 .c-hero-frame { width: 360px; height: 360px; }
 .c-name { font-size: 26px; font-weight: 800; letter-spacing: 0.5px; }
 .c-sub { font-size: 13px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); }
+
+/* in-play — the two live HUD clips (idle + thinking) shown side by side */
+.c-inplay { display: flex; align-items: flex-start; gap: 40px; flex-wrap: wrap; justify-content: center; }
+.c-inplay-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.c-inplay-cap { font-size: 13px; font-weight: 700; letter-spacing: 0.3px; color: var(--accent); }
+.c-tier-upset .c-inplay-cap, .c-tier-throne .c-inplay-cap { color: inherit; }
 
 /* match result (versus) — animated reveal, cues from the game's result screen */
 .c-versus-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
