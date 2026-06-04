@@ -68,6 +68,20 @@ export function rulesSpecies(species = CONFIG.SPECIES, S = CONFIG.SCORING) {
     return lines.join('\n');
 }
 
+// How creatures actually survive in the simulation — the spatial half of
+// strategy the model is otherwise blind to (it only ever saw the scoring math).
+// Numbers derive from CONFIG so they track any balance tuning.
+export function rulesSurvival(species = CONFIG.SPECIES) {
+    const GR = species.GRAZER, BR = species.BROWSER, PR = species.PREDATOR;
+    return [
+        'THE CYCLE OF LIFE (placement is everything):',
+        `- Energy flows UP the chain: plants draw it from the soil, herbivores get it ONLY from plants, ${PR.role}s ONLY from herbivores. A creature placed where its food is not already within reach starves and that AP is wasted — you cannot support a tier before the tier beneath it exists (yours OR the enemy's). The board starts barren, so it has to be grown green before it can feed animals; as a plant base thickens, it can support grazers, then a predator to crown the chain. How fast you climb that arc is your call — just never place a creature ahead of its food.`,
+        '- Plants spread on their own into nearby empty, high-nutrient land each step, and soil nutrients regenerate over time — give them fertile ground and room to grow (grassland next to water turns fertile). Up to 2 plants share one cell.',
+        `- Herbivores only eat plants within their move range (${GR.role} reaches ${GR.speed} hexes, ${BR.role} ${BR.speed}) and LOSE energy every step — place them with plants nearby or they starve. They prefer the ENEMY's plants (~${pct(GR.preferEnemy)} of the time): drop them next to enemy plants to raid, or beside your own to feed and build ×${CONFIG.SCORING.HERBIVORE_WEIGHT} biomass.`,
+        `- ${PR.role}s hunt herbivores within ${PR.speed} hexes and starve fast without prey — only deploy one where herbivores (yours or the enemy's) are already within reach.`,
+    ].join('\n');
+}
+
 function voiceBlock(species = CONFIG.SPECIES) {
     const names = Object.values(species).map(s => s.name).join(', ');
     const roles = Object.values(species).map(s => s.role).join('/');
@@ -99,6 +113,7 @@ function composeSystem(ctx) {
         `GOAL: Maximize your FINAL SCORE after ${ctx.total} rounds.`,
         rulesScoring(),
         rulesSpecies(),
+        rulesSurvival(),
         voiceBlock(),
         `STRATEGY: Early rounds plant ${CONFIG.SPECIES.GRASS.name} for foundation. Mid-game diversify — add ${CONFIG.SPECIES.SHRUB.name}, ${CONFIG.SPECIES.GRAZER.name}s. Late-game ensure you have all 3 trophic levels for the ${trophic} bonus.`,
         'Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.',
@@ -192,11 +207,12 @@ function candidatesBlock(candidates) {
 
 function directiveBlock(ctx) {
     const g = speciesByType();
+    const maxCol = ctx.board.cols - 1, maxRow = ctx.board.rows - 1;
     return [
-        `Spend ALL ${ctx.ap} AP. Pick a spot letter and a species for each action.`,
+        `Spend ALL ${ctx.ap} AP. For each action pick a species AND where to place it — EITHER a CANDIDATE letter (a safe, pre-vetted spot) OR exact "col" and "row" to place anywhere on land (col 0..${maxCol}, row 0..${maxRow}; never on water). Use coordinates when the candidate spots don't reach where you want to play.`,
         `VALID SPECIES NAMES (use EXACTLY one of these, ALL CAPS):\n  Plants: ${g.plant.join(', ')}\n  Herbivores: ${g.herbivore.join(', ')}\n  Predator: ${g.predator.join(', ')}`,
         `IMPORTANT: Write ORIGINAL reasoning and banter. Reference the CURRENT game state (round ${ctx.round}, your species, the score).`,
-        `JSON format:\n{"reasoning":"<strategic analysis>","actions":[{"spot":"A","species":"GRASS"},{"spot":"B","species":"GRAZER"}],"banter":"<competitive comment>"}`,
+        `JSON format (each action uses EITHER "spot" OR "col"+"row"):\n{"reasoning":"<strategic analysis>","actions":[{"spot":"A","species":"GRASS"},{"col":6,"row":2,"species":"GRAZER"}],"banter":"<competitive comment>"}`,
     ].join('\n\n');
 }
 

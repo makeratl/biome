@@ -99,7 +99,7 @@ function buildAscii({ grid, candidates = [] }) {
     return [
         `MAP (text grid, top-left = col0/row0; each cell ≈ ${bw}×${bh} hexes):`,
         body,
-        `Legend: F fertile · g grassland · r rocky · ~ water · · empty · A–H = candidate spots (details in CANDIDATE MOVES).`,
+        `Legend: F fertile · g grassland · r rocky · ~ water · · empty · letters = candidate spots (details in CANDIDATE MOVES).`,
     ].join('\n');
 }
 
