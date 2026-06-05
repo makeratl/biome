@@ -74,26 +74,53 @@ export function drawPlant(ctx, cx, cy, org) {
     const p = org.player;
 
     if (org.species === 'GRASS') {
-        // Sedgeweave — a full tuft of curved blades with bright tips.
-        const h = 5 + e * 6;
-        groundShadow(ctx, cx, cy + 6, 5, 1.4);
-        const base = playerHSL(p, 18, 12, 6);
-        const tip = playerHSL(p, 24, 18, 26);
+        // Sedgeweave — a tuft that grows from a small, sparse sprout to a
+        // dense, seed-headed clump. Several variables scale with energy so the
+        // life stage reads at a glance, not just overall height. The 25% sprout
+        // starts deliberately tiny; the mature tip is capped so the tallest
+        // blade (plus its seed head) stays within the hex surface — a tree's
+        // canopy tops out ~9.5px above center, so grass stays under that or it
+        // pokes out of its cell on the board.
+        //   blade count  3 → 7    (sprout fills in)
+        //   height       ~2.6 → 8 (small floor, hex-capped ceiling)
+        //   fan width    2.4 → 5  (tuft spreads out)
+        //   blade weight 1.05 → 1.8 (blades thicken)
+        //   tip light    + with e (fresh growth brightens)
+        //   seed heads   appear past maturity
+        const n = Math.max(3, Math.round(2 + e * 5));
+        const h = 1 + e * 6.5;
+        const spread = 1.5 + e * 3.5;
+        const lw = 0.8 + e * 1.0;
+        groundShadow(ctx, cx, cy + 6, spread + 1, 1.4);
+        const base = playerHSL(p, 18, 12, 4);
+        const tip = playerHSL(p, 26, 20, 22 + e * 12);
         ctx.lineCap = 'round';
-        const blades = [-4, -2, 0, 2, 4];
-        blades.forEach((dx, i) => {
+        const seedHead = playerHSL(p, 36, 28, 30);
+        for (let i = 0; i < n; i++) {
+            const t = n === 1 ? 0.5 : i / (n - 1);   // 0..1 across the fan
+            const dx = (t - 0.5) * 2 * spread;
             const lean = dx * 0.5;
-            const bh = h * (0.7 + 0.3 * Math.cos(i));
-            const grad = ctx.createLinearGradient(cx + dx, cy + 4, cx + dx + lean, cy - bh);
+            // center blades stand tallest, outer ones shorter — natural tuft
+            const bh = h * (0.62 + 0.38 * Math.cos((t - 0.5) * Math.PI));
+            const tipX = cx + dx + lean;
+            const tipY = cy - bh;
+            const grad = ctx.createLinearGradient(cx + dx, cy + 4, tipX, tipY);
             grad.addColorStop(0, base);
             grad.addColorStop(1, tip);
             ctx.strokeStyle = grad;
-            ctx.lineWidth = 1.8;
+            ctx.lineWidth = lw;
             ctx.beginPath();
             ctx.moveTo(cx + dx, cy + 4);
-            ctx.quadraticCurveTo(cx + dx + lean * 0.5, cy - bh * 0.4, cx + dx + lean, cy - bh);
+            ctx.quadraticCurveTo(cx + dx + lean * 0.5, cy - bh * 0.45, tipX, tipY);
             ctx.stroke();
-        });
+            // mature blades sprout a seed head at the tip
+            if (e > 0.62 && bh > h * 0.8) {
+                ctx.fillStyle = seedHead;
+                ctx.beginPath();
+                ctx.ellipse(tipX, tipY, lw * 0.8, lw * 1.3, lean * 0.12, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
     } else if (org.species === 'SHRUB') {
         // Thornbloom — layered foliage clumps, darker base, bright crown, berries.
         const r = 4 + e * 3.2;

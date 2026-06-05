@@ -1,12 +1,13 @@
 // Tournament mode — pits all available models against each other
 // Structure: Quarter-Finals (4) → Semi-Finals (2) → Final (1) = 7 matches
 
-import { postResult, renderOddsInto, fetchRankings, expectedScore } from './rankings.js';
+import { postResult, fetchRankings, expectedScore } from './rankings.js';
 import { CONFIG } from './config.js';
 import { resolveModel } from './model-identity.js';
 import { applyAvatar, applyAvatarVideo } from './model-avatar.js';
-import { prepareResidentSet, isCloudModel, listResidentModels } from './ai.js';
+import { listResidentModels } from './ai.js';
 import { shortId } from './util.js';
+import { BroadcastCarousel } from './broadcast-carousel.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -214,54 +215,40 @@ export class TournamentManager {
     }
 
     async _runMatch(match) {
-        // Intro screen — fighting-game VS reveal: both fighters' cards slam in with
-        // their cyber-organic portraits, the final gets a grander gold treatment.
         const isFinal = this._isFinal(match);
-        document.getElementById('t-match-label').textContent = match.label.toUpperCase();
-        document.getElementById('t-intro-note').textContent = this._matchNote(match);
-        const introScreen = document.getElementById('t-match-intro');
-        introScreen.classList.toggle('t-intro-champ', isFinal);
-        this._show('t-match-intro');
-        await Promise.all([
-            this.game._renderPlayerCard('t-intro-p1-card', { player: 1, model: match.p1, clip: 'intro', clipLoop: false }),
-            this.game._renderPlayerCard('t-intro-p2-card', { player: 2, model: match.p2, clip: 'intro', clipLoop: false }),
-        ]);
-        this._renderIntroOdds(match.p1, match.p2); // async — fills the odds line once ELO is fetched
-        // Re-trigger the slam-in animation by reflow, with a matching sound sting.
-        introScreen.classList.remove('pm-enter');
-        void introScreen.offsetWidth;
-        introScreen.classList.add('pm-enter');
-        this.game._playSound?.(isFinal ? 'champion' : 'vs');
 
         // Surface in the bracket panel that THIS match is now the live one
         this._currentMatchIdx = match.id;
         this._renderLiveBracket();
 
-        // Warm this match's local models BEFORE the game clock starts, so cold
-        // load (which can far exceed the 3.5s intro) never eats a player's turn
-        // budget. Runs concurrently with the intro animation; we wait for the
-        // longer of the two. Cloud models are no-ops inside prepareResidentSet.
-        const noteEl = document.getElementById('t-intro-note');
-        const realNote = noteEl ? noteEl.textContent : '';
-        const localPlayers = [match.p1, match.p2].some(m => m && !isCloudModel(m));
-        const prep = prepareResidentSet([match.p1, match.p2])
-            .then(r => {
-                // Charge complete — drop the powering-up effect and restore the note.
-                introScreen.classList.remove('t-warming');
-                if (noteEl) noteEl.textContent = realNote;
-                this._renderResidentReadout?.();
-                return r;
-            });
-        if (localPlayers) {
-            // Fighters "power up" while their models load — runs only as long as
-            // the warm actually takes (removed in prep's .then above).
-            introScreen.classList.add('t-warming');
-            if (noteEl) noteEl.textContent = 'Warming models…';
-        }
-        await Promise.all([this._sleep(3500), prep]);
+        // Warm this match's local models (concurrent with the intro), then play
+        // the shared match intro — the same fighting-game VS reveal solo/watch use,
+        // which holds with the "warming" shimmer until the models are resident so
+        // cold load never eats a player's turn budget or strands an idle board.
+        const warm = this.game._warmMatch([match.p1, match.p2]);
+        warm.promise?.then(() => this._renderResidentReadout?.());
+        await this.game._showMatchIntro({
+            p1: { model: match.p1 },
+            p2: { model: match.p2 },
+            label: match.label.toUpperCase(),
+            note: this._matchNote(match),
+            isFinal,
+            sound: isFinal ? 'champion' : 'vs',
+            minMs: 3500,
+            skippable: false,
+            warmPromise: warm.promise,
+            warmLabel: warm.label,
+            mode: 'tournament',
+            world: this.world,
+            rounds: this.totalRounds,
+        });
 
         // Run game
         this._hideAll();
+        // Broadcast flanks: two lockstep carousels frame the board (last bout /
+        // dossiers / leaderboard / tournament details / fun facts). Rendered once
+        // the board is revealed.
+        this._renderMatchFlanks(match);
         this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
@@ -301,6 +288,8 @@ export class TournamentManager {
             map_size: this.world?.mapSize || null,
             rounds: this.world?.rounds ?? null,
             map_strategy: this.world?.mapStrategy || 'mediated',
+            match_uid: this.game.matchUid,
+            seed: this.game.seed,
         });
 
         // Update stats panel and live bracket — the panel can show the result while the result-screen overlay is up
@@ -447,18 +436,6 @@ export class TournamentManager {
         if (this._isFinal(match)) return '🏆 Championship Final';
         const next = this.rounds[match.round + 1];
         return `Winner advances to the ${this._roundTitle(next.length * 2)}`;
-    }
-
-    async _renderIntroOdds(p1, p2) {
-        const [r1, r2] = await Promise.all([
-            p1 ? this.game._fetchRanking(p1) : null,
-            p2 ? this.game._fetchRanking(p2) : null,
-        ]);
-        renderOddsInto(
-            document.getElementById('t-intro-odds-p1'),
-            document.getElementById('t-intro-odds-p2'),
-            r1, r2,
-        );
     }
 
     _showChampion(winner) {
@@ -1047,6 +1024,9 @@ export class TournamentManager {
     // ── Overlay control ─────────────────────────────────────────
 
     _show(screenId) {
+        // Any full-screen tournament screen (intro / result / bracket / champion)
+        // covers the board, so retire the live broadcast flanks while it's up.
+        this._hideMatchFlanks();
         const overlay = document.getElementById('tournament-overlay');
         overlay.classList.remove('t-hidden');
         overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
@@ -1056,6 +1036,9 @@ export class TournamentManager {
 
     _hideAll() {
         document.getElementById('tournament-overlay')?.classList.add('t-hidden');
+        // _runMatch re-renders the flanks right after revealing the board; every
+        // other caller (champion close, back-to-game) wants them gone.
+        if (!this.running || this._currentMatchIdx == null) this._hideMatchFlanks();
     }
 
     _short(model) {
@@ -1094,6 +1077,618 @@ export class TournamentManager {
     // Drop baked avatars into every badge under `root` (after its innerHTML set).
     _paintAvatars(root) {
         root?.querySelectorAll?.('.bt-badge[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
+    }
+
+    // ── Live broadcast flanks (rotating carousels) ──────────────
+    // Two corner panels frame the board during a live match like a fight-night
+    // broadcast. Each is a BroadcastCarousel that card-flips through a sequence of
+    // panels every 10s. Both flanks start together on the same interval, so they
+    // advance in lockstep — the LEFT/RIGHT panel sharing an index form one "slide":
+    //   Slide 1: Last Bout (or Tournament Details to open a fresh match) → Head-to-Head
+    //   Slide 2: Fighter Dossier P1 → Fighter Dossier P2
+    //   Slide 3: Hall of Champions (leaderboard) → Tournament Details
+    //   Slide 4: On Deck (next matchup) → Scouting Report (its contestants' storylines)
+    //   Slide 5+: randomized around-the-league fun-fact cards (distinct per side)
+    // The On Deck slide is dropped (both sides) when nothing's queued — e.g. the
+    // final — and the pattern then loops for the length of the match.
+    // Stat-driven panels read from a single /stats/dashboard snapshot fetched per
+    // match; the opening panels (Last Bout / Head-to-Head) need only local bracket
+    // data, so they paint instantly while the snapshot loads.
+
+    _renderMatchFlanks(liveMatch) {
+        const liveIdx = liveMatch.id;   // match.id === flat bracket index
+
+        // Previous = the most recent completed bout before this one. Drives the
+        // opening left slide; absent (start of the tournament) we open on details.
+        let prev = null;
+        for (let i = liveIdx - 1; i >= 0; i--) {
+            if (this.bracket[i].winner) { prev = this.bracket[i]; break; }
+        }
+        // On deck = the next match that already has both fighters seeded and
+        // hasn't been played. (A cross-round match whose entrant this bout decides
+        // isn't shown until propagation fills it.) Feeds the On Deck / Scouting
+        // Report slide — omitted entirely when nothing's queued (e.g. the final).
+        let next = null;
+        for (let i = liveIdx + 1; i < this.bracket.length; i++) {
+            const m = this.bracket[i];
+            if (m.p1 && m.p2 && !m.winner) { next = m; break; }
+        }
+
+        const p1 = liveMatch.p1, p2 = liveMatch.p2;
+        if (!this._showFlankShells()) return;
+
+        // Fresh shuffle bag so each match deals a new random fun-fact order.
+        this._funBag = null;
+
+        // Lockstep slides: leftPanels[i] and rightPanels[i] flip together. The On
+        // Deck / Scouting slide is inserted into BOTH sides or neither, so the two
+        // columns stay index-aligned whether or not a next match is queued.
+        const leftPanels = [
+            { id: 'open1', render: () => prev ? this._bcLastBout(prev) : this._bcTournamentDetails(liveMatch) },
+            { id: 'dossier1', render: () => this._bcDossier(p1, p2) },
+            { id: 'champions', render: () => this._bcChampions() },
+            ...(next ? [{ id: 'onDeck', render: () => this._bcOnDeck(next) }] : []),
+            { id: 'funL1', render: () => this._bcHighlight(this._nextFunHighlight()) },
+            { id: 'funL2', render: () => this._bcHighlight(this._nextFunHighlight()) },
+        ];
+
+        const rightPanels = [
+            { id: 'h2h', render: () => this._bcHeadToHead(p1, p2) },
+            { id: 'dossier2', render: () => this._bcDossier(p2, p1) },
+            { id: 'tourney', render: () => this._bcTournamentDetails(liveMatch) },
+            ...(next ? [{ id: 'scout', render: () => this._bcScout(next.p1, next.p2, 'next up') }] : []),
+            { id: 'funR1', render: () => this._bcHighlight(this._nextFunHighlight()) },
+            { id: 'funR2', render: () => this._bcHighlight(this._nextFunHighlight()) },
+        ];
+
+        this._leftCarousel.start(leftPanels);
+        this._rightCarousel.start(rightPanels);
+
+        // Pull the shared stats snapshot; later rotations read it once it lands.
+        this._loadBroadcastData();
+    }
+
+    // Ensure both flank carousels exist and slide their shells back into view
+    // (shared by the tournament and watch entry points). Returns false if the
+    // host elements are missing.
+    _showFlankShells() {
+        const leftEl  = document.getElementById('match-flank-prev');
+        const rightEl = document.getElementById('match-flank-next');
+        if (!leftEl || !rightEl) return false;
+        this._leftCarousel  ||= new BroadcastCarousel(leftEl);
+        this._rightCarousel ||= new BroadcastCarousel(rightEl);
+        for (const el of [leftEl, rightEl]) {
+            el.classList.remove('mf-hidden');
+            el.setAttribute('aria-hidden', 'false');
+            el.classList.remove('mf-enter-anim');
+            void el.offsetWidth;
+            el.classList.add('mf-enter-anim');
+        }
+        return true;
+    }
+
+    // Public entry: drive the broadcast flanks for a single (non-tournament)
+    // watch match. Reuses the tournament carousel renderers with a bracket-free
+    // slide set, flipping both flanks in lockstep just like tournament mode:
+    //   Slide 1: Scouting Report (these two) → Head-to-Head
+    //   Slide 2: Fighter Dossier P1 → Fighter Dossier P2
+    //   Slide 3: Hall of Champions → Match Details
+    //   Slide 4+: randomized around-the-league fun-fact cards
+    showWatchFlanks(p1, p2, world = {}, mode = 'watch') {
+        if (!p1 || !p2 || !this._showFlankShells()) return;
+        this._funBag = null;
+
+        const leftPanels = [
+            { id: 'scout', render: () => this._bcScout(p1, p2, 'tale of the tape') },
+            { id: 'dossier1', render: () => this._bcDossier(p1, p2) },
+            { id: 'champions', render: () => this._bcChampions() },
+            { id: 'funL1', render: () => this._bcHighlight(this._nextFunHighlight()) },
+            { id: 'funL2', render: () => this._bcHighlight(this._nextFunHighlight()) },
+        ];
+        const rightPanels = [
+            { id: 'h2h', render: () => this._bcHeadToHead(p1, p2) },
+            { id: 'dossier2', render: () => this._bcDossier(p2, p1) },
+            { id: 'details', render: () => this._bcMatchDetails(world, mode) },
+            { id: 'funR1', render: () => this._bcHighlight(this._nextFunHighlight()) },
+            { id: 'funR2', render: () => this._bcHighlight(this._nextFunHighlight()) },
+        ];
+
+        this._leftCarousel.start(leftPanels);
+        this._rightCarousel.start(rightPanels);
+        this._loadBroadcastData();
+    }
+
+    // One /stats/dashboard fetch feeds every stat panel (leaderboard, timeline,
+    // head-to-head, highlights). Re-fetched each match so standings stay current.
+    async _loadBroadcastData() {
+        try {
+            const r = await fetch('/stats/dashboard', { cache: 'no-store' });
+            this._bcData = r.ok ? await r.json() : null;
+        } catch (_) { this._bcData = null; }
+    }
+
+    _hideMatchFlanks() {
+        this._leftCarousel?.stop();
+        this._rightCarousel?.stop();
+        for (const id of ['match-flank-prev', 'match-flank-next']) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            el.classList.add('mf-hidden');
+            el.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    // ── Carousel panel renderers — each returns { html, paint? } ──
+
+    _initials(model) {
+        return this.game?._modelInitials
+            ? this.game._modelInitials(model)
+            : this._short(model).slice(0, 2).toUpperCase();
+    }
+
+    _bcLoading(title) {
+        return { html: `<div class="mf-head"><span class="mf-tag">${title}</span></div><div class="mf-empty">Gathering standings…</div>` };
+    }
+
+    // Leaderboard helpers — match on the stored model name, falling back to the
+    // short (normalized) form so version/suffix differences still resolve.
+    _bcLeaderboard() { return this._bcData?.leaderboard || []; }
+    _bcEntry(model) {
+        if (!model) return null;
+        const lb = this._bcLeaderboard();
+        const n = this._short(model);
+        return lb.find(e => e.model === model) || lb.find(e => this._short(e.model) === n) || null;
+    }
+    _bcTimeline(model) {
+        const tl = this._bcData?.timeline || {};
+        if (tl[model]) return tl[model];
+        const n = this._short(model);
+        const key = Object.keys(tl).find(k => this._short(k) === n);
+        return key ? tl[key] : [];
+    }
+    _bcH2H(a, b) {
+        const arr = this._bcData?.head_to_head || [];
+        const na = this._short(a), nb = this._short(b);
+        for (const h of arr) {
+            const ha = this._short(h.a), hb = this._short(h.b);
+            if (ha === na && hb === nb) return { for: h.a_wins, against: h.b_wins, games: h.games };
+            if (ha === nb && hb === na) return { for: h.b_wins, against: h.a_wins, games: h.games };
+        }
+        return null;
+    }
+
+    _bcLastBout(prev) {
+        return { html: this._flankPrevHtml(prev), paint: (root) => { this._paintFlankVideos(root, true); this._paintFlankRanks(root); } };
+    }
+
+    _bcOnDeck(next) {
+        return { html: this._flankNextHtml(next), paint: (root) => { this._paintFlankVideos(root, false); this._paintFlankRanks(root); } };
+    }
+
+    // Tournament Details — the bracket at a glance: current stage, field size,
+    // where we are in the round, and overall completion. Opens a fresh match (when
+    // there's no last bout yet) and anchors the right flank's third slide.
+    _bcTournamentDetails(liveMatch) {
+        const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
+        const field = (this.rounds?.[0]?.length || 0) * 2;
+        const roundMatches = this.rounds?.[liveMatch?.round] || [];
+        const roundTitle = this._roundTitle(roundMatches.length * 2 || field);
+        const inRound = roundMatches.findIndex(m => m.id === liveMatch?.id) + 1;
+        const done = this.bracket.filter(m => m.winner).length;
+        const total = this.bracket.length;
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-tourney">🏟 TOURNAMENT</span><span class="mf-sub">${modeLabel} Bracket</span></div>
+            <div class="bct-stage">${roundTitle}</div>
+            <div class="bcd-grid">
+                <div class="bcd-cell"><span class="bcd-k">FIELD</span><span class="bcd-v">${field || '—'}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">MATCH</span><span class="bcd-v">${inRound > 0 ? inRound : '—'}/${roundMatches.length || '—'}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">ROUNDS</span><span class="bcd-v">${this.totalRounds}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">BOUTS</span><span class="bcd-v">${done}/${total}</span></div>
+            </div>
+            <div class="bct-prog"><span style="width:${pct}%"></span></div>
+            <div class="bct-foot">${pct}% of the bracket decided</div>`;
+        return { html };
+    }
+
+    _cap(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : ''; }
+
+    // Match Details — the watch-mode counterpart to Tournament Details: format,
+    // round count, board size, and map strategy for the single bout on screen.
+    _bcMatchDetails(world = {}, mode = 'watch') {
+        const modeLabel = mode === 'watch' ? 'Watch Match' : 'Exhibition';
+        const rounds = world.rounds || CONFIG.GAME.TOTAL_ROUNDS;
+        const lightning = rounds <= CONFIG.GAME.LIGHTNING_ROUNDS;
+        let grid = '—';
+        try { const d = this.game?._resolveWorld?.(world); if (d) grid = `${d.cols}×${d.rows}`; } catch (_) {}
+        const sizeName = ({ auto: 'Fit', small: 'Small', medium: 'Medium', large: 'Large', huge: 'Huge' })[world.mapSize]
+            || (world.mapSize ? this._cap(world.mapSize) : 'Medium');
+        const strat = this._cap(world.mapStrategy || 'mediated');
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-details">🎬 MATCH DETAILS</span><span class="mf-sub">${modeLabel}</span></div>
+            <div class="bct-stage">${rounds} Rounds${lightning ? ' ⚡' : ''}</div>
+            <div class="bcd-grid">
+                <div class="bcd-cell"><span class="bcd-k">SIZE</span><span class="bcd-v">${sizeName}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">GRID</span><span class="bcd-v">${grid}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">MAP</span><span class="bcd-v">${strat}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">FORMAT</span><span class="bcd-v">AI·AI</span></div>
+            </div>
+            <div class="bct-foot">Two models, one ecosystem — best score wins</div>`;
+        return { html };
+    }
+
+    // Scouting Report — interesting-facts breakdown of two fighters: the analytic
+    // partner to the On Deck card (tournament: the NEXT match's contestants) and
+    // the watch-match opener (its two models). Surfaces storylines (favorite,
+    // rivalry, hot hand, pedigree, tier clash) computed from the live standings.
+    // Each angle is null-safe, so it degrades gracefully before the snapshot lands.
+    _bcScout(a, b, sub = 'next up') {
+        const ea = this._bcEntry(a), eb = this._bcEntry(b);
+        const sa = this._statOf(a) || {}, sb = this._statOf(b) || {};
+        const eloA = ea?.elo ?? sa.elo, eloB = eb?.elo ?? sb.elo;
+        const sA = this._short(a), sB = this._short(b);
+        const facts = [];
+
+        // Favorite by ELO expectation (+ the gap worth bridging).
+        if (eloA != null && eloB != null) {
+            const pA = expectedScore(eloA, eloB);
+            const favPct = Math.round(Math.max(pA, 1 - pA) * 100);
+            const fav = pA >= 0.5 ? sA : sB;
+            facts.push(favPct <= 53
+                ? { ic: '⚖️', tx: `Pick'em — dead even on paper` }
+                : { ic: '🎯', tx: `<b>${fav}</b> favored at ${favPct}%` });
+            const gap = Math.abs(Math.round(eloA - eloB));
+            if (gap >= 60) facts.push({ ic: '⚡', tx: `${gap}-pt ELO gap to bridge` });
+        }
+
+        // Series history — rivalry or a fresh meeting.
+        const h2h = this._bcH2H(a, b);
+        if (h2h && h2h.games > 0) {
+            if (h2h.for === h2h.against) facts.push({ ic: '🔄', tx: `Even rivalry, ${h2h.for}-${h2h.against} in ${h2h.games}` });
+            else {
+                const leadName = h2h.for > h2h.against ? sA : sB;
+                const hi = Math.max(h2h.for, h2h.against), lo = Math.min(h2h.for, h2h.against);
+                facts.push({ ic: '🔁', tx: `<b>${leadName}</b> leads the series ${hi}-${lo}` });
+            }
+        } else {
+            facts.push({ ic: '🆕', tx: `First-ever meeting` });
+        }
+
+        // Hottest hand (or coldest, looking to snap a skid).
+        const stA = ea?.streak || 0, stB = eb?.streak || 0;
+        const hot = Math.abs(stA) >= Math.abs(stB) ? { n: stA, name: sA } : { n: stB, name: sB };
+        if (hot.n >= 2) facts.push({ ic: '🔥', tx: `<b>${hot.name}</b> riding W${hot.n}` });
+        else if (hot.n <= -2) facts.push({ ic: '❄️', tx: `<b>${hot.name}</b> out to snap L${-hot.n}` });
+
+        // Pedigree — higher career peak.
+        const pkA = ea?.peak_elo, pkB = eb?.peak_elo;
+        if (pkA != null && pkB != null && Math.round(pkA) !== Math.round(pkB)) {
+            const name = pkA > pkB ? sA : sB;
+            facts.push({ ic: '👑', tx: `<b>${name}</b> owns the higher peak (${Math.round(Math.max(pkA, pkB))})` });
+        }
+
+        // Tier clash — cloud heavyweight vs local challenger.
+        if (String(a).includes('cloud') !== String(b).includes('cloud')) {
+            facts.push({ ic: '☁️', tx: `Cloud vs Local showdown` });
+        }
+
+        const rows = (facts.length ? facts.slice(0, 4) : [{ ic: '⚔', tx: `Two enter — one advances` }])
+            .map(f => `<li class="bcs-fact"><span class="bcs-ic">${f.ic}</span><span class="bcs-tx">${f.tx}</span></li>`).join('');
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-scout">🔍 SCOUTING REPORT</span><span class="mf-sub">${sub}</span></div>
+            <div class="bcs-vs"><b style="--bh:${this._modelHue(a)}">${sA}</b><span class="bcs-x">vs</span><b style="--bh:${this._modelHue(b)}">${sB}</b></div>
+            <ul class="bcs-facts">${rows}</ul>`;
+        return { html };
+    }
+
+    // Hall of Champions — #1 animated over a compact top-5 list.
+    _bcChampions() {
+        const lb = this._bcLeaderboard();
+        if (!lb.length) return this._bcLoading('🏆 Hall of Champions');
+        const top = lb.slice(0, 5);
+        const champ = top[0];
+        const rows = top.slice(1).map(e => `
+            <div class="bcc-row">
+                <span class="bcc-rank">${e.rank}</span>
+                <span class="bcc-ava mf-av" data-model="${e.model}" style="--bh:${this._modelHue(e.model)}">${this._initials(e.model)}</span>
+                <span class="bcc-name">${this._short(e.model)}</span>
+                <span class="bcc-elo">${Math.round(e.elo)}</span>
+                <span class="bcc-wl">${e.wins}-${e.losses}</span>
+            </div>`).join('');
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-champ">🏆 HALL OF CHAMPIONS</span><span class="mf-sub">${this._bcData?.totals?.models ?? lb.length} models</span></div>
+            <div class="bcc-champ">
+                <div class="bcc-champ-ava mf-av" data-champ="${champ.model}" style="--bh:${this._modelHue(champ.model)}">${this._initials(champ.model)}</div>
+                <div class="bcc-champ-meta">
+                    <div class="bcc-champ-name">♛ ${this._short(champ.model)}</div>
+                    <div class="bcc-champ-stats"><span class="bcc-champ-elo">${Math.round(champ.elo)}</span><span class="bcc-champ-wl">${champ.wins}-${champ.losses} · ${champ.winrate}%</span></div>
+                </div>
+            </div>
+            <div class="bcc-rows">${rows}</div>`;
+        const paint = (root) => {
+            const c = root.querySelector('[data-champ]');
+            if (c) applyAvatarVideo(c, c.dataset.champ, { category: 'champion', loop: true, bounce: true });
+            root.querySelectorAll('.bcc-ava[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
+        };
+        return { html, paint };
+    }
+
+    // Fighter Dossier — animated portrait + stat grid + ELO sparkline + H2H.
+    _bcDossier(model, opp) {
+        const e = this._bcEntry(model);
+        if (!e) return this._bcLoading('📋 Fighter Dossier');
+        const tl = this._bcTimeline(model);
+        const streak = e.streak || 0;
+        const streakTxt = streak > 0 ? `W${streak}` : streak < 0 ? `L${-streak}` : '—';
+        const streakCls = streak > 0 ? 'bcd-hot' : streak < 0 ? 'bcd-cold' : '';
+        const h2h = this._bcH2H(model, opp);
+        const h2hTxt = h2h ? `${h2h.for}–${h2h.against}` : 'first meeting';
+        const tier = String(e.model).includes('cloud') ? 'Cloud' : 'Local';
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-dossier">📋 FIGHTER DOSSIER</span><span class="mf-sub">#${e.rank}</span></div>
+            <div class="bcd-top">
+                <div class="bcd-ava mf-av" data-model="${model}" style="--bh:${this._modelHue(model)}">${this._initials(model)}</div>
+                <div class="bcd-id">
+                    <div class="bcd-name">${this._short(model)}</div>
+                    <div class="bcd-sub">${tier} · peak ${Math.round(e.peak_elo)}</div>
+                </div>
+            </div>
+            <div class="bcd-grid">
+                <div class="bcd-cell"><span class="bcd-k">ELO</span><span class="bcd-v">${Math.round(e.elo)}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">W-L</span><span class="bcd-v">${e.wins}-${e.losses}</span></div>
+                <div class="bcd-cell"><span class="bcd-k">WIN%</span><span class="bcd-v">${e.winrate}%</span></div>
+                <div class="bcd-cell"><span class="bcd-k">STREAK</span><span class="bcd-v ${streakCls}">${streakTxt}</span></div>
+            </div>
+            <canvas class="bcd-spark" width="260" height="38"></canvas>
+            <div class="bcd-h2h">vs <b>${this._short(opp)}</b><span class="bcd-h2h-rec">${h2hTxt}</span></div>`;
+        const paint = (root) => {
+            const a = root.querySelector('.bcd-ava[data-model]');
+            if (a) applyAvatarVideo(a, model, { category: 'idle', loop: true, bounce: true });
+            const cv = root.querySelector('canvas.bcd-spark');
+            if (cv) this._drawSparkline(cv, tl.map(p => p.elo), this._modelHue(model));
+        };
+        return { html, paint };
+    }
+
+    // Head-to-Head — the two current fighters and their series record.
+    _bcHeadToHead(p1, p2) {
+        const h = this._bcH2H(p1, p2);
+        const e1 = this._bcEntry(p1), e2 = this._bcEntry(p2);
+        const rec = h ? `${h.for}–${h.against}` : '0–0';
+        const note = h ? `${h.games} meeting${h.games === 1 ? '' : 's'}` : 'first meeting';
+        const side = (model, e) => `
+            <div class="bch-side">
+                <div class="bch-ava mf-av" data-model="${model}" style="--bh:${this._modelHue(model)}">${this._initials(model)}</div>
+                <div class="bch-name">${this._short(model)}</div>
+                <div class="bch-elo">${e ? Math.round(e.elo) : '—'}</div>
+            </div>`;
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-h2h">⚔ HEAD TO HEAD</span><span class="mf-sub">${note}</span></div>
+            <div class="bch-row">
+                ${side(p1, e1)}
+                <div class="bch-mid"><div class="bch-rec">${rec}</div><div class="bch-rec-k">series</div></div>
+                ${side(p2, e2)}
+            </div>`;
+        const paint = (root) => root.querySelectorAll('.bch-ava[data-model]')
+            .forEach(el => applyAvatarVideo(el, el.dataset.model, { category: 'idle', loop: true, bounce: true }));
+        return { html, paint };
+    }
+
+    // Around-the-League fun-fact picker — a shuffle bag over the highlight kinds.
+    // Pulls cycle every card before repeating; on drain it reshuffles, guarding
+    // the wrap so adjacent pulls (the two flanks sharing a slide, or a loop seam)
+    // never land on the same fact.
+    _nextFunHighlight() {
+        const KINDS = ['biggest_upset', 'most_improved', 'hot_streak', 'peak'];
+        if (!this._funBag || !this._funBag.length) {
+            const last = this._lastFun;
+            do { this._funBag = this._shuffle(KINDS.slice()); }
+            while (last && this._funBag[0] === last);
+        }
+        const kind = this._funBag.shift();
+        this._lastFun = kind;
+        return kind;
+    }
+
+    _shuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    // Around-the-League highlight cards from the dashboard's highlights feed.
+    _bcHighlight(kind) {
+        const meta = {
+            biggest_upset: { tag: '⚡ BIGGEST UPSET', cls: 'upset' },
+            most_improved: { tag: '📈 MOST IMPROVED', cls: 'improved' },
+            hot_streak:    { tag: '🔥 HOT STREAK', cls: 'streak' },
+            peak:          { tag: '👑 PEAK RATING', cls: 'peak' },
+        }[kind];
+        const h = this._bcData?.highlights?.[kind];
+        if (!h) {
+            return { html: `<div class="mf-head"><span class="mf-tag mf-tag-${meta.cls}">${meta.tag}</span></div><div class="mf-empty">No data yet</div>` };
+        }
+        let big, sub;
+        if (kind === 'biggest_upset')      { big = `${Math.round((1 - (h.win_prob ?? 0.5)) * 100)}%`; sub = `${this._short(h.model)} stunned ${this._short(h.opponent)}`; }
+        else if (kind === 'most_improved') { big = `+${h.gain}`; sub = `${this._short(h.model)} · ${h.matches} games · ${Math.round(h.elo)} ELO`; }
+        else if (kind === 'hot_streak')    { big = `W${h.streak}`; sub = `${this._short(h.model)} · ${Math.round(h.elo)} ELO`; }
+        else                               { big = `${Math.round(h.peak_elo)}`; sub = `${this._short(h.model)} · peak rating`; }
+        const html = `
+            <div class="mf-head"><span class="mf-tag mf-tag-${meta.cls}">${meta.tag}</span></div>
+            <div class="bcl bcl-${meta.cls}">
+                <div class="bcl-ava mf-av" data-model="${h.model}" style="--bh:${this._modelHue(h.model)}">${this._initials(h.model)}</div>
+                <div class="bcl-scrim"></div>
+                <div class="bcl-text">
+                    <div class="bcl-big">${big}</div>
+                    <div class="bcl-sub">${sub}</div>
+                </div>
+            </div>`;
+        const paint = (root) => {
+            const a = root.querySelector('.bcl-ava[data-model]');
+            if (a) applyAvatarVideo(a, h.model, { category: 'idle', loop: true, bounce: true });
+        };
+        return { html, paint };
+    }
+
+    // Lightweight area sparkline of a model's ELO progression.
+    _drawSparkline(canvas, values, hue) {
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width, H = canvas.height, pad = 3;
+        ctx.clearRect(0, 0, W, H);
+        const vals = (values || []).filter(v => v != null);
+        if (vals.length < 2) {
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('no rating history yet', W / 2, H / 2 + 3);
+            return;
+        }
+        const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1, n = vals.length;
+        const x = i => pad + (i / (n - 1)) * (W - 2 * pad);
+        const y = v => H - pad - ((v - min) / span) * (H - 2 * pad);
+        ctx.beginPath();
+        ctx.moveTo(x(0), y(vals[0]));
+        for (let i = 1; i < n; i++) ctx.lineTo(x(i), y(vals[i]));
+        ctx.strokeStyle = `hsl(${hue},70%,62%)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.lineTo(x(n - 1), H - pad); ctx.lineTo(x(0), H - pad); ctx.closePath();
+        ctx.fillStyle = `hsla(${hue},70%,55%,0.14)`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x(n - 1), y(vals[n - 1]), 2.4, 0, Math.PI * 2);
+        ctx.fillStyle = `hsl(${hue},75%,66%)`;
+        ctx.fill();
+    }
+
+    // Boxing-style result replay: winner (victory loop) def. loser (defeat loop).
+    _flankPrevHtml(m) {
+        const winner = m.winner;
+        const loser  = m.winner === m.p1 ? m.p2 : m.p1;
+        const wScore = (m.winner === m.p1 ? m.scores?.[1] : m.scores?.[2])?.finalScore;
+        const lScore = (m.winner === m.p1 ? m.scores?.[2] : m.scores?.[1])?.finalScore;
+        const fmt = v => v != null ? v.toLocaleString() : '—';
+        return `<div class="mf-head">
+                <span class="mf-tag mf-tag-prev">● LAST BOUT</span>
+                <span class="mf-sub">${m.label || ''}</span>
+            </div>
+            <div class="mf-bout">
+                <div class="mf-fighter mf-winner">
+                    ${this._flankVid(winner)}
+                    <div class="mf-fname">${this._short(winner)}</div>
+                    <div class="mf-fscore">${fmt(wScore)}</div>
+                    <div class="mf-ribbon mf-ribbon-win">★ WINNER</div>
+                </div>
+                <div class="mf-mid"><span class="mf-def">def.</span></div>
+                <div class="mf-fighter mf-loser">
+                    ${this._flankVid(loser)}
+                    <div class="mf-fname">${this._short(loser)}</div>
+                    <div class="mf-fscore">${fmt(lScore)}</div>
+                    <div class="mf-ribbon mf-ribbon-ko">DEFEATED</div>
+                </div>
+            </div>`;
+    }
+
+    // ESPN-style on-deck preview: both fighters loop their entrance clip over a
+    // tale-of-the-tape stat deck that flips between ELO / record / seed.
+    _flankNextHtml(m) {
+        const s1 = this._statOf(m.p1) || {};
+        const s2 = this._statOf(m.p2) || {};
+
+        // Each card: P1 value · metric · P2 value, with the leader's side lit.
+        const card = (i, key, v1, v2, lead) => {
+            const l1 = lead === 1 ? ' mf-sc-lead' : '';
+            const l2 = lead === 2 ? ' mf-sc-lead' : '';
+            return `<div class="mf-statcard" style="--i:${i}">
+                <span class="mf-sc-v mf-sc-l${l1}">${v1}</span>
+                <span class="mf-sc-k">${key}</span>
+                <span class="mf-sc-v mf-sc-r${l2}">${v2}</span>
+            </div>`;
+        };
+        const eloLead    = (s1.elo != null && s2.elo != null) ? (s1.elo > s2.elo ? 1 : s2.elo > s1.elo ? 2 : 0) : 0;
+        const recLead    = (s1.wins - s1.losses) === (s2.wins - s2.losses) ? 0 : ((s1.wins - s1.losses) > (s2.wins - s2.losses) ? 1 : 2);
+        // Lower seed number is the better seed; missing seeds don't lead.
+        const seedLead   = (s1.seed != null && s2.seed != null) ? (s1.seed < s2.seed ? 1 : s2.seed < s1.seed ? 2 : 0) : 0;
+        const eloV   = v => v?.elo != null ? Math.round(v.elo) : '—';
+        const recV   = v => (v?.wins != null) ? `${v.wins}-${v.losses}` : '—';
+        const seedV  = v => v?.seed != null ? `#${v.seed}` : '—';
+
+        const deck = card(0, '⚡ ELO', eloV(s1), eloV(s2), eloLead)
+                   + card(1, '📊 RECORD', recV(s1), recV(s2), recLead)
+                   + card(2, '🎖 SEED', seedV(s1), seedV(s2), seedLead);
+
+        return `<div class="mf-head">
+                <span class="mf-tag mf-tag-next">ON DECK</span>
+                <span class="mf-sub">${m.label || ''}</span>
+            </div>
+            <div class="mf-bout mf-bout-next">
+                <div class="mf-fighter mf-enter">
+                    ${this._flankVid(m.p1)}
+                    <div class="mf-fname">${this._short(m.p1)}</div>
+                </div>
+                <div class="mf-mid"><span class="mf-vs">VS</span></div>
+                <div class="mf-fighter mf-enter">
+                    ${this._flankVid(m.p2)}
+                    <div class="mf-fname">${this._short(m.p2)}</div>
+                </div>
+            </div>
+            <div class="mf-statdeck">${deck}</div>`;
+    }
+
+    // A video portrait cell — carries the model + emotion so _paintFlankVideos
+    // can drop in the looping clip after render (still portrait / initials until).
+    // The corner rank chip is a placeholder filled async by _paintFlankRanks so
+    // the leaderboard standing is showcased right over the fighter's animation.
+    _flankVid(model) {
+        const ini = this.game?._modelInitials ? this.game._modelInitials(model) : this._short(model).slice(0, 2).toUpperCase();
+        const hue = this._modelHue(model);
+        // The rank chip is a sibling of (not inside) .mf-vid so it can ride the
+        // top edge of the portrait — .mf-vid clips its clip with overflow:hidden,
+        // which would otherwise crop a chip lifted above the frame.
+        return `<span class="mf-rank mf-rank-pending" data-rank-for="${model}"><span class="mf-rank-num">·</span></span>
+            <div class="mf-vid" data-model="${model}" style="--bh:${hue}">
+                <span class="mf-vid-ini">${ini}</span>
+            </div>`;
+    }
+
+    // Paint each flank cell's looping clip: winners/losers get their result
+    // emotion, on-deck fighters loop their entrance. Falls back to the still
+    // portrait (then brand-hue + initials) when a clip isn't baked.
+    _paintFlankVideos(root, isPrev) {
+        if (!root) return;
+        root.querySelectorAll('.mf-fighter').forEach(f => {
+            const cell = f.querySelector('.mf-vid');
+            if (!cell || !cell.dataset.model) return;
+            let category = 'intro';
+            if (isPrev) category = f.classList.contains('mf-winner') ? 'victory' : 'defeat';
+            // Ping-pong the clip (forward → back → forward) so the loop never
+            // hard-cuts back to frame one.
+            applyAvatarVideo(cell, cell.dataset.model, { category, loop: true, bounce: true });
+        });
+    }
+
+    // Fill each portrait's corner rank chip with the model's live leaderboard
+    // standing (global rank + ELO, a crown for #1). Async — fetches rankings then
+    // writes, bailing if the panel was re-rendered for a new matchup meanwhile.
+    async _paintFlankRanks(root) {
+        if (!root) return;
+        const badges = [...root.querySelectorAll('.mf-rank[data-rank-for]')];
+        await Promise.all(badges.map(async (b) => {
+            const model = b.dataset.rankFor;
+            const r = await this.game?._fetchRanking?.(model);
+            if (!b.isConnected) return;   // panel flipped away before the fetch landed
+            b.classList.remove('mf-rank-pending');
+            if (!r || r.rank == null) {
+                b.classList.add('mf-rank-unranked');
+                b.innerHTML = `<span class="mf-rank-num">NR</span>`;
+                return;
+            }
+            if (r.rank === 1) b.classList.add('mf-rank-one');
+            const crown = r.rank === 1 ? `<span class="mf-rank-crown">♛</span>` : `<span class="mf-rank-hash">#</span>`;
+            const elo = r.elo != null ? `<span class="mf-rank-elo">${Math.round(r.elo)}</span>` : '';
+            b.innerHTML = `${crown}<span class="mf-rank-num">${r.rank}</span>${elo}`;
+        }));
     }
 
     _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

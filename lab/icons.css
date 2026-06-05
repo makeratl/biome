@@ -114,6 +114,19 @@ main { padding: 24px; max-width: 1400px; }
 .icon { position: relative; }
 .icon .layer { position: absolute; left: 0; top: 0; }
 
+/* ---- growth strip ---- */
+.growth-section { margin-top: 32px; }
+.growth {
+    display: grid;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.growth > div { background: var(--panel); }
+.growth .cell { justify-content: center; }
+
 /* ---- mock board ---- */
 .board-section { margin-top: 32px; }
 .board-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

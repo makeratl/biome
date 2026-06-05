@@ -174,7 +174,7 @@ export const CONFIG = {
 
     // Game
     GAME: {
-        TOTAL_ROUNDS: 20,
+        TOTAL_ROUNDS: 10,
         LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
         ROUND_OPTIONS: [5, 10, 15, 20],   // selectable round counts (default = TOTAL_ROUNDS)

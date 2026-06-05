@@ -16,12 +16,51 @@
                 <span class="cw-word">BIOME</span>
             </div>
 
-            <!-- Mute toggle (top-right). New Match / Rankings / Manage Models
-                 now live in the HUD console's MENU tab. -->
+            <!-- Top-right header controls: the primary nav menu (grouped dropdown)
+                 and the mute toggle. The nav lives here in the header — the bottom
+                 HUD console is now Stats / Bracket only. -->
             <div id="gear-menu" class="gear-menu">
+                <button id="btn-gear" class="gear-button gm-menu-btn" title="Menu"
+                        aria-label="Menu" aria-haspopup="true" aria-expanded="false">≡</button>
                 <button id="mute-toggle" class="mute-toggle gm-mute" title="Toggle sound" aria-label="Toggle sound">
                     <span class="mt-icon">🔊</span>
                 </button>
+
+                <!-- Grouped nav dropdown (Play / Learn / Compete / Build) -->
+                <div id="gear-dropdown" class="gear-dropdown gm-hidden" role="menu" aria-label="Main menu">
+                    <div class="gm-group-label">Play</div>
+                    <button class="gm-item" data-gm="new-match" role="menuitem">
+                        <span class="gm-icon">▶</span><span>New Match</span>
+                    </button>
+
+                    <div class="gm-sep" role="separator"></div>
+                    <div class="gm-group-label">Learn</div>
+                    <button class="gm-item" data-gm="field-guide" role="menuitem">
+                        <span class="gm-icon">❔</span><span>Field Guide</span>
+                    </button>
+
+                    <div class="gm-sep" role="separator"></div>
+                    <div class="gm-group-label">View</div>
+                    <button class="gm-item" data-gm="magnifier" role="menuitem">
+                        <span class="gm-icon">🔍</span><span>Magnifier</span>
+                        <span class="gm-check">✓</span>
+                    </button>
+
+                    <div class="gm-sep" role="separator"></div>
+                    <div class="gm-group-label">Compete</div>
+                    <button class="gm-item" data-gm="rankings" role="menuitem">
+                        <span class="gm-icon">🏆</span><span>Rankings</span>
+                    </button>
+
+                    <div class="gm-sep" role="separator"></div>
+                    <div class="gm-group-label">Build</div>
+                    <button class="gm-item" data-gm="labs" role="menuitem">
+                        <span class="gm-icon">🧪</span><span>Labs</span>
+                    </button>
+                    <button class="gm-item" data-gm="manage-models" role="menuitem">
+                        <span class="gm-icon">⚙</span><span>Manage Models</span>
+                    </button>
+                </div>
             </div>
 
             <canvas id="game-canvas"></canvas>
@@ -72,9 +111,6 @@
                             <span class="hc-tab-icon">⚔</span><span>BRACKET</span>
                             <span class="hc-tab-live" aria-hidden="true"></span>
                         </button>
-                        <button class="hc-tab" data-hc-tab="menu" role="tab" aria-selected="false">
-                            <span class="hc-tab-icon">≡</span><span>MENU</span>
-                        </button>
                     </div>
 
                     <!-- STATS view: timeline + biomass (eco) + terrain (biome), three abreast -->
@@ -92,27 +128,27 @@
                                     <div class="bt-tier-icon">🦅</div>
                                     <div class="bt-tier-label">Predators</div>
                                     <div class="bt-bars">
-                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-pred-p1"></span><span class="bt-count" id="bt-count-pred-p1">0</span></div>
+                                        <div class="bt-bar bt-p1" id="bt-bar-pred-p1"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-pred-p1"></span><span class="bt-count" id="bt-count-pred-p1">0</span></div>
                                         <div class="bt-divider"></div>
-                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-pred-p2"></span><span class="bt-count" id="bt-count-pred-p2">0</span></div>
+                                        <div class="bt-bar bt-p2" id="bt-bar-pred-p2"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-pred-p2"></span><span class="bt-count" id="bt-count-pred-p2">0</span></div>
                                     </div>
                                 </div>
                                 <div class="bt-row" data-tier="herbivore">
                                     <div class="bt-tier-icon">🦌</div>
                                     <div class="bt-tier-label">Herbivores</div>
                                     <div class="bt-bars">
-                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-herb-p1"></span><span class="bt-count" id="bt-count-herb-p1">0</span></div>
+                                        <div class="bt-bar bt-p1" id="bt-bar-herb-p1"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-herb-p1"></span><span class="bt-count" id="bt-count-herb-p1">0</span></div>
                                         <div class="bt-divider"></div>
-                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-herb-p2"></span><span class="bt-count" id="bt-count-herb-p2">0</span></div>
+                                        <div class="bt-bar bt-p2" id="bt-bar-herb-p2"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-herb-p2"></span><span class="bt-count" id="bt-count-herb-p2">0</span></div>
                                     </div>
                                 </div>
                                 <div class="bt-row" data-tier="plant">
                                     <div class="bt-tier-icon">🌿</div>
                                     <div class="bt-tier-label">Plants</div>
                                     <div class="bt-bars">
-                                        <div class="bt-bar bt-p1"><span class="bt-fill" id="bt-fill-plant-p1"></span><span class="bt-count" id="bt-count-plant-p1">0</span></div>
+                                        <div class="bt-bar bt-p1" id="bt-bar-plant-p1"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-plant-p1"></span><span class="bt-count" id="bt-count-plant-p1">0</span></div>
                                         <div class="bt-divider"></div>
-                                        <div class="bt-bar bt-p2"><span class="bt-fill" id="bt-fill-plant-p2"></span><span class="bt-count" id="bt-count-plant-p2">0</span></div>
+                                        <div class="bt-bar bt-p2" id="bt-bar-plant-p2"><span class="bt-track"></span><span class="bt-fill" id="bt-fill-plant-p2"></span><span class="bt-count" id="bt-count-plant-p2">0</span></div>
                                     </div>
                                 </div>
                                 <div class="bt-health-row">
@@ -125,19 +161,15 @@
                                 </div>
                             </div>
 
-                            <!-- Biome: terrain composition donut + legend -->
+                            <!-- Biome: living ecosystem-health orb -->
                             <div class="hc-biome">
-                                <div class="ws-chart-wrap">
-                                    <svg class="ws-donut" id="ws-donut" viewBox="0 0 80 80" aria-hidden="true">
-                                        <circle class="ws-track" cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12"/>
-                                        <g id="ws-segments"></g>
-                                    </svg>
-                                    <div class="ws-center" id="ws-center">
-                                        <div class="ws-c-name" id="ws-c-name">—</div>
-                                        <div class="ws-c-pct" id="ws-c-pct"></div>
-                                    </div>
+                                <div class="bio-orb-wrap">
+                                    <canvas id="bio-orb" class="bio-orb" width="120" height="120" aria-hidden="true"></canvas>
+                                    <div class="bio-rim" id="bio-rim" data-state="dormant"></div>
                                 </div>
-                                <div class="ws-legend" id="ws-legend"></div>
+                                <div class="bio-caption" id="bio-caption" data-state="dormant">
+                                    <span class="bio-icon" id="bio-icon">·</span><span class="bio-word" id="bio-word">DORMANT</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -151,24 +183,6 @@
                         <div id="bt-bracket-content" class="hc-bracket-content"></div>
                     </div>
 
-                    <!-- MENU view (absorbs the old gear dropdown) -->
-                    <div class="hc-view hc-view-menu hc-view-hidden" data-hc-view="menu">
-                        <button class="hc-menu-item" data-hc-menu="new-match" type="button">
-                            <span class="hc-mi-icon">▶</span><span>New Match</span>
-                        </button>
-                        <button class="hc-menu-item" data-hc-menu="field-guide" type="button">
-                            <span class="hc-mi-icon">❔</span><span>Field Guide</span>
-                        </button>
-                        <button class="hc-menu-item" data-hc-menu="rankings" type="button">
-                            <span class="hc-mi-icon">🏆</span><span>Rankings</span>
-                        </button>
-                        <button class="hc-menu-item" data-hc-menu="labs" type="button">
-                            <span class="hc-mi-icon">🧪</span><span>Labs</span>
-                        </button>
-                        <button class="hc-menu-item" data-hc-menu="manage-models" type="button">
-                            <span class="hc-mi-icon">⚙</span><span>Manage Models</span>
-                        </button>
-                    </div>
                 </div>
 
                 <!-- HANDLE: compact toggle — the console fully collapses to just this -->
@@ -223,21 +237,9 @@
                     </div>
                 </div>
                 <div class="aic-statblock" id="aic-statblock-p1">
-                    <div class="aic-stat-row" data-stat="might">
-                        <span class="aic-stat-label">MIGHT</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
-                    <div class="aic-stat-row" data-stat="renown">
-                        <span class="aic-stat-label">RENOWN</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
-                    <div class="aic-stat-row" data-stat="grit">
-                        <span class="aic-stat-label">GRIT</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
+                    <!-- Creature roster: the player's live species + counts, built
+                         by js/biome-roster.js. Replaces the old ELO stat bars. -->
+                    <div class="aic-roster" id="aic-roster-p1"></div>
                     <div class="aic-statfoot">
                         <span class="aic-tierline" id="aic-tier-p1"></span>
                         <span class="aic-role" id="aic-role-p1"></span>
@@ -249,6 +251,7 @@
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
                     </div>
                     <div class="aic-countdown" id="aic-countdown-p1" aria-hidden="true">
+                        <span class="aic-cd-spinner" aria-hidden="true"></span>
                         <span class="aic-cd-num"></span>
                         <span class="aic-cd-label">deciding…</span>
                         <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
@@ -271,21 +274,9 @@
                     </div>
                 </div>
                 <div class="aic-statblock" id="aic-statblock-p2">
-                    <div class="aic-stat-row" data-stat="might">
-                        <span class="aic-stat-label">MIGHT</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
-                    <div class="aic-stat-row" data-stat="renown">
-                        <span class="aic-stat-label">RENOWN</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
-                    <div class="aic-stat-row" data-stat="grit">
-                        <span class="aic-stat-label">GRIT</span>
-                        <span class="aic-bar"><span class="aic-bar-fill"></span></span>
-                        <span class="aic-stat-val"></span>
-                    </div>
+                    <!-- Creature roster: the player's live species + counts, built
+                         by js/biome-roster.js. Replaces the old ELO stat bars. -->
+                    <div class="aic-roster" id="aic-roster-p2"></div>
                     <div class="aic-statfoot">
                         <span class="aic-tierline" id="aic-tier-p2"></span>
                         <span class="aic-role" id="aic-role-p2"></span>
@@ -297,6 +288,7 @@
                         <span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span><span class="aic-p"></span>
                     </div>
                     <div class="aic-countdown" id="aic-countdown-p2" aria-hidden="true">
+                        <span class="aic-cd-spinner" aria-hidden="true"></span>
                         <span class="aic-cd-num"></span>
                         <span class="aic-cd-label">deciding…</span>
                         <span class="aic-cd-bar"><span class="aic-cd-bar-fill"></span></span>
@@ -309,6 +301,12 @@
                 <div id="ai-strategy-p2" class="ai-strategy-text aic-reason-collapsed"></div>
                 </div>
             </div>
+
+            <!-- Tournament broadcast flanks: previous bout (bottom-left) and the
+                 on-deck matchup (bottom-right). Driven by TournamentManager during
+                 live play; hidden whenever a tournament overlay screen is up. -->
+            <div id="match-flank-prev" class="match-flank mf-prev mf-hidden" aria-hidden="true"></div>
+            <div id="match-flank-next" class="match-flank mf-next mf-hidden" aria-hidden="true"></div>
 
 
             <!-- Round transition card (briefly fades in/out between rounds) -->
@@ -346,7 +344,7 @@
 
     <!-- Legacy compatibility containers — DOM kept so existing code paths
          (_updateCensus, _updateWorldInfo, _log, _onHover, species palette,
-         end-turn, btn-rankings) keep working. Replaced phase-by-phase. -->
+         end-turn) keep working. Replaced phase-by-phase. -->
     <div id="legacy-data" aria-hidden="true">
         <div id="census-content"></div>
         <div id="info-content"></div>
@@ -354,7 +352,6 @@
         <div id="action-log" class="action-log"></div>
         <div id="species-palette"></div>
         <button id="btn-end-turn" class="btn btn-primary" data-action="end-turn">End P1 Turn</button>
-        <button id="btn-rankings" class="btn btn-rankings">🏆 Rankings</button>
         <button id="btn-manage-models" class="btn-manage-models">⚙ Manage Models</button>
     </div>
 
@@ -416,21 +413,41 @@
     <div id="tournament-overlay" class="t-hidden event-stage">
 
         <!-- Pre-match VS screen (Solo/Watch) -->
-        <div class="t-screen t-hidden" id="match-prematch">
-            <div class="t-header">
-                <div class="t-subtitle">MATCH BEGINS</div>
-            </div>
-            <div class="prematch-row">
-                <div id="prematch-p1-card" class="player-card p1"></div>
+        <!-- Unified match intro / onboarding for ALL modes (solo, watch,
+             tournament): the fighting-game VS reveal. Holds with a "warming"
+             shimmer while a cold local model loads. Driven by Game._showMatchIntro;
+             the tournament passes a round label + final-champ flag. -->
+        <div class="t-screen t-hidden" id="match-intro">
+            <div class="t-match-label" id="match-intro-label">MATCH BEGINS</div>
+            <div class="prematch-row t-intro-row">
+                <div id="match-intro-p1-card" class="player-card p1"></div>
                 <div class="prematch-vs">VS</div>
-                <div id="prematch-p2-card" class="player-card p2"></div>
+                <div id="match-intro-p2-card" class="player-card p2"></div>
             </div>
             <div class="odds-row">
-                <span id="prematch-p1-odds" class="odds-side"></span>
+                <span id="match-intro-odds-p1" class="odds-side"></span>
                 <span class="odds-label">WIN ODDS</span>
-                <span id="prematch-p2-odds" class="odds-side"></span>
+                <span id="match-intro-odds-p2" class="odds-side"></span>
             </div>
-            <div class="prematch-hint">Click anywhere to skip</div>
+
+            <!-- Match detail panel: game type, map, and the AI's "vision" (map
+                 strategy). Populated by Game._renderMatchArena before the reveal. -->
+            <div class="match-arena" id="match-arena">
+                <div class="ma-title">THE ARENA</div>
+                <div class="ma-body">
+                    <div class="ma-vision">
+                        <span class="ma-vision-eye" aria-hidden="true">👁</span>
+                        <div class="ma-vision-text">
+                            <span class="ma-vision-name" id="ma-vision-name">—</span>
+                            <span class="ma-vision-desc" id="ma-vision-desc"></span>
+                        </div>
+                    </div>
+                    <div class="ma-stats" id="ma-stats"></div>
+                </div>
+                <div class="ma-stakes" id="ma-stakes"></div>
+            </div>
+
+            <div class="t-intro-note" id="match-intro-note"></div>
         </div>
 
         <!-- First-load launcher welcome -->
@@ -505,6 +522,9 @@
                     <div class="modelcard-row solo">
                         <div class="modelcard p2" id="pcard-p2-solo" data-slot="p2-solo"></div>
                     </div>
+                    <div class="matchup-roll solo">
+                        <button type="button" class="mr-theme" id="solo-roll" title="Pick a random opponent">🎲 Random opponent</button>
+                    </div>
                     <select id="match-model-p2-solo" class="match-model-picker p2 mmp-hidden-select"></select>
                 </div>
 
@@ -513,6 +533,17 @@
                         <div class="modelcard p1" id="pcard-p1-watch" data-slot="p1-watch"></div>
                         <div class="modelcard-vs" id="watch-vs"><span class="mc-vs-word">VS</span></div>
                         <div class="modelcard p2" id="pcard-p2-watch" data-slot="p2-watch"></div>
+                    </div>
+                    <div class="matchup-roll" id="watch-roll">
+                        <span class="mr-label">🎲 Random matchup</span>
+                        <div class="mr-themes">
+                            <button type="button" class="mr-theme" data-roll="random" title="Two random models">Random</button>
+                            <button type="button" class="mr-theme" data-roll="david" title="Smallest model vs largest">David v Goliath</button>
+                            <button type="button" class="mr-theme" data-roll="class" title="Two of the same size class">Same class</button>
+                            <button type="button" class="mr-theme" data-roll="localcloud" title="A local model vs a cloud model">Local v Cloud</button>
+                            <button type="button" class="mr-theme" data-roll="even" title="Two closely-rated models — a coin-flip">Evenly matched</button>
+                        </div>
+                        <span class="mr-msg" id="watch-roll-msg" aria-live="polite"></span>
                     </div>
                     <select id="match-model-p1-watch" class="match-model-picker p1 mmp-hidden-select"></select>
                     <select id="match-model-p2-watch" class="match-model-picker p2 mmp-hidden-select"></select>
@@ -592,22 +623,6 @@
             <div class="bracket-grid" id="bracket-grid"></div>
         </div>
 
-        <!-- Match intro — fighting-game VS reveal (player cards slam in) -->
-        <div class="t-screen t-hidden" id="t-match-intro">
-            <div class="t-match-label" id="t-match-label">ROUND 1 — MATCH 1</div>
-            <div class="prematch-row t-intro-row">
-                <div id="t-intro-p1-card" class="player-card p1"></div>
-                <div class="prematch-vs">VS</div>
-                <div id="t-intro-p2-card" class="player-card p2"></div>
-            </div>
-            <div class="odds-row t-intro-odds">
-                <span id="t-intro-odds-p1" class="odds-side"></span>
-                <span class="odds-label">WIN ODDS</span>
-                <span id="t-intro-odds-p2" class="odds-side"></span>
-            </div>
-            <div class="t-intro-note" id="t-intro-note">Match beginning...</div>
-        </div>
-
         <!-- Match result — fighting-game victor / defeated reveal -->
         <div class="t-screen t-hidden" id="t-match-result">
             <div class="t-match-label" id="t-result-label">RESULT</div>
@@ -655,37 +670,41 @@
             <h2 class="labs-title" id="labs-title">🧪 Labs</h2>
             <p class="labs-sub">Sandboxes &amp; tools for exploring Biome's AI and art.</p>
             <div class="labs-list">
-                <a class="labs-card" href="/vision-lab.html">
+                <button class="labs-card" type="button" data-lab-src="/vision-lab.html" data-lab-title="AI Vision Lab">
                     <span class="labs-card-glyph">👁</span>
                     <span class="labs-card-text"><b>AI Vision Lab</b><span>Chat with a model about a sandbox map — watch it highlight &amp; reason over the grid.</span></span>
-                </a>
-                <a class="labs-card" href="/lab/icons.html">
+                </button>
+                <button class="labs-card" type="button" data-lab-src="/lab/icons.html" data-lab-title="Icon Lab">
                     <span class="labs-card-glyph">🎨</span>
                     <span class="labs-card-text"><b>Icon Lab</b><span>Tune the procedural organism art shared by the game and renderer.</span></span>
-                </a>
-                <a class="labs-card" href="/lab/avatars.html">
+                </button>
+                <button class="labs-card" type="button" data-lab-src="/lab/avatars.html" data-lab-title="Avatar Lab">
                     <span class="labs-card-glyph">🧬</span>
                     <span class="labs-card-text"><b>Avatar Lab</b><span>Generate per-model biome-creature avatars for every installed model.</span></span>
-                </a>
-                <a class="labs-card" href="/dashboard.html">
+                </button>
+                <button class="labs-card" type="button" data-lab-src="/dashboard.html" data-lab-title="Analytics Dashboard">
                     <span class="labs-card-glyph">📊</span>
                     <span class="labs-card-text"><b>Analytics Dashboard</b><span>Live ELO, standings, and match-condition fields across all models.</span></span>
-                </a>
+                </button>
             </div>
         </div>
     </div>
 
-    <!-- Rankings panel (side drawer) -->
-    <div id="rankings-panel" class="rankings-hidden">
-        <div class="rk-header">
-            <span>ELO Rankings</span>
-            <div class="rk-header-actions">
-                <button id="btn-rankings-reset" class="rk-reset" title="Archive standings and start fresh">Reset</button>
-                <button id="btn-rankings-close" class="rk-close">×</button>
+    <!-- Lab frame modal — a near-fullscreen overlay that hosts a lab page in an
+         iframe so opening a lab never navigates the game away. Closing returns to
+         the live game untouched; the iframe is unloaded on close so the lab's
+         timers/audio stop. -->
+    <div id="lab-frame-modal" class="lab-frame-modal lfm-hidden" role="dialog" aria-modal="true" aria-label="Lab">
+        <div class="lfm-shell">
+            <div class="lfm-bar">
+                <span class="lfm-title" id="lfm-title">Lab</span>
+                <div class="lfm-actions">
+                    <a id="lfm-open-tab" class="lfm-iconbtn" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">↗</a>
+                    <button id="lfm-close" class="lfm-iconbtn lfm-close" type="button" title="Back to game" aria-label="Back to game">✕</button>
+                </div>
             </div>
+            <iframe id="lfm-frame" class="lfm-frame" title="Lab" src="about:blank"></iframe>
         </div>
-        <div id="rk-leaderboard" class="rk-content"></div>
-        <div id="rk-history" class="rk-content" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:8px;padding-top:8px;"></div>
     </div>
 
     <!-- Human handle prompt (first ranked solo match) -->

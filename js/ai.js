@@ -6,6 +6,8 @@ import { extractJSON } from './util.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
 import { getStrategy } from './map-strategies.js';
 import { parseTier } from './model-identity.js';
+import { trophicRead } from './trophic.js';
+import { captureTurn, isCaptureEnabled } from './capture.js';
 
 // How long a warmed/active model is asked to stay resident in Ollama. Long
 // enough to outlast a full match (and the short gap to its next match in a
@@ -451,6 +453,14 @@ export class AIPlayer {
                 candidates,
             },
             census: { mine: myCensus, enemy: enemyCensus },
+            // Trophic balance read — same helper that drives the human health
+            // orb. Derived from the FOGGED censuses above (enemy current-round
+            // placements already hidden), so it only synthesizes numbers the
+            // model is already shown — no fog leak.
+            trophic: {
+                mine: trophicRead(myCensus.plants, myCensus.herbs, myCensus.preds),
+                enemy: trophicRead(enemyCensus.plants, enemyCensus.herbs, enemyCensus.preds),
+            },
             strategy: {
                 ahead: myCensus.biomass > enemyCensus.biomass * 1.2,
                 behind: enemyCensus.biomass > myCensus.biomass * 1.2,
@@ -547,7 +557,13 @@ export class AIPlayer {
         if (!result) {
             throw new Error(`No valid JSON found in response (content:${content.length}b, thinking:${thinking.length}b)`);
         }
-        return result;
+        // Return the parsed action AND the verbatim raw response — capture keeps
+        // the raw so training data preserves exactly what the model emitted.
+        return {
+            parsed: result,
+            raw: { content, thinking, model: this.model,
+                   options: { temperature: 0.7, num_predict: numPredict, num_ctx: numCtx } },
+        };
     }
 
     // ── Execute actions ────────────────────────────────────────
@@ -622,7 +638,7 @@ export class AIPlayer {
         console.log(`[AI] Round ${this.game.turns.round}, P${this.player}, ${ap} AP, ${candidates.length} candidates`);
         console.log('[AI] Prompt:', user);
 
-        let response;
+        let response, raw = null;
         const controller = new AbortController();
         let timer;
         try {
@@ -633,7 +649,9 @@ export class AIPlayer {
                     reject(new Error(`AI timeout (${timeoutMs / 1000}s)`));
                 }, timeoutMs);
             });
-            response = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
+            const out = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
+            response = out.parsed;
+            raw = out.raw;
         } catch (err) {
             console.error('[AI] Ollama error:', err.message);
             // Classify so the card can speak to *what* went wrong, not just go mute.
@@ -641,14 +659,18 @@ export class AIPlayer {
             const reason = /timeout/i.test(msg) ? 'timeout'
                 : /no valid json/i.test(msg) ? 'badjson'
                 : 'offline';
-            return this._fallback(candidates, reason, startCensus);
+            const fb = this._fallback(candidates, reason, startCensus);
+            this._captureTurn({ system, user, raw: null, parsed: null, results: fb.actions, startCensus, ap, fallbackReason: reason });
+            return fb;
         } finally {
             clearTimeout(timer);
         }
 
         if (!response?.actions) {
             console.error('[AI] Bad response (no actions):', JSON.stringify(response));
-            return this._fallback(candidates, 'badjson', startCensus);
+            const fb = this._fallback(candidates, 'badjson', startCensus);
+            this._captureTurn({ system, user, raw, parsed: response, results: fb.actions, startCensus, ap, fallbackReason: 'badjson' });
+            return fb;
         }
 
         console.log('[AI] Response:', JSON.stringify(response));
@@ -672,6 +694,7 @@ export class AIPlayer {
         this.game.renderer.render();
 
         this._recordTurn(startCensus, response.reasoning, response.banter, results);
+        this._captureTurn({ system, user, raw, parsed: response, results, startCensus, ap, fallbackReason: null });
 
         return {
             reasoning: response.reasoning || '',
@@ -679,6 +702,44 @@ export class AIPlayer {
             actions: results,
             model: this.model,
         };
+    }
+
+    // Emit one training trajectory record for this turn (fire-and-forget; no-op
+    // unless capture is enabled). The training INPUT is the verbatim fog-honest
+    // prompt; full-board reward signals live in the separate round/outcome records.
+    _captureTurn({ system, user, raw, parsed, results, startCensus, ap, fallbackReason }) {
+        if (!isCaptureEnabled()) return;
+        try {
+            const g = this.game, tm = g.turns;
+            const enemy = this.player === 1 ? 2 : 1;
+            const turnUid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID() : `t_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
+            captureTurn({
+                schema: 1,
+                match_uid: g.matchUid || null,
+                turn_uid: turnUid,
+                seed: g.seed,
+                model: this.model,
+                player: this.player,
+                opponent_model: g.aiPlayers?.[enemy]?.model || null,
+                round: tm.round,
+                total_rounds: tm.totalRounds,
+                ap,
+                map_strategy: g.matchContext?.mapStrategy || null,
+                map_size: g.grid ? `${g.grid.cols}x${g.grid.rows}` : null,
+                prompt: { system, user },
+                response_raw: raw,
+                response_parsed: parsed
+                    ? { reasoning: parsed.reasoning ?? '', actions: parsed.actions ?? [], banter: parsed.banter ?? '' }
+                    : null,
+                exec: (results || []).map(r => ({
+                    ok: !!r.ok, species: r.species ?? null,
+                    col: r.cell?.col ?? null, row: r.cell?.row ?? null, msg: r.msg ?? '',
+                })),
+                start_census: startCensus,
+                fallback_reason: fallbackReason || null,
+            });
+        } catch (_) { /* capture must never break a turn */ }
     }
 
     // Spend remaining AP on grass spread across different regions
@@ -778,8 +839,8 @@ Opponent score: ${enemyScore.finalScore.toLocaleString()} (${enemyScore.speciesC
 JSON: {"statement":"<your 1-2 sentence post-game comment, be original and reference the actual scores/species>"}`;
 
         try {
-            const response = await this._callOllama(system, user);
-            return response.statement || '';
+            const out = await this._callOllama(system, user);
+            return out.parsed.statement || '';
         } catch {
             return won ? 'A well-played game.' : 'Next time will be different.';
         }
@@ -903,6 +964,17 @@ export async function listResidentModels() {
 // `:latest` tag the caller's bare name omits (mirrors tournament.js norm).
 function _normModel(name) {
     return String(name || '').replace(/:latest$/, '');
+}
+
+// Is this model currently loaded in Ollama? Cloud models are always "ready"
+// (no local VRAM load), so they report resident. Drives the per-turn "loading
+// model…" indicator: an empty /api/ps (cold, or unreachable) reads as not
+// resident, which the watcher self-corrects once the model finishes loading.
+export async function isModelResident(model) {
+    if (!model || isCloudModel(model)) return true;
+    const target = _normModel(model);
+    const resident = await listResidentModels();
+    return resident.some(m => _normModel(m.name) === target);
 }
 
 // "Warm the next match only" lifecycle. Given the local models the upcoming

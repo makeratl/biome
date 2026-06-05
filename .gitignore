@@ -22,3 +22,6 @@ nohup
 *.db-wal
 
 videos/
+
+# Training Lab capture (per-turn trajectories, round signals, outcomes, datasets)
+training-data/

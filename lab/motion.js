@@ -38,21 +38,26 @@ export const DEFAULT_MOTION = {
     },
     victory: (resolved) => {
         const a = resolved.family.archetype;
-        return `the ${a} rears up in triumph, head lifting high, glowing circuitry and `
-            + `bioluminescent accents flaring brighter, sparks of energy crackling around it, `
-            + `slow confident camera push-in; dark background, centered, subtle looping motion`;
+        return `the ${a} erupts in triumphant joy — rearing up tall, head thrown back in exultation, `
+            + `chest swelling with pride, every part of it blazing brighter as glowing circuitry and `
+            + `bioluminescent accents flare in radiant waves, sparks of energy bursting around it; `
+            + `pure exhilaration, hard-won and electric, alive with celebration; bold rising motion, `
+            + `dramatic and uplifting, cinematic and emotionally charged`;
     },
     defeat: (resolved) => {
         const a = resolved.family.archetype;
-        return `the ${a} staggers and slumps, head lowering, its glow dimming to faint embers, `
-            + `wisps of ash and smoke drifting upward, energy fading away; dark background, `
-            + `centered, slow mournful motion`;
+        return `the ${a} is overcome with grief — head bowing low, body sinking and trembling, `
+            + `shoulders caving under the unbearable weight of loss; its glow drains to cold, faint `
+            + `embers, the light leaving its eyes and guttering out; heartbroken and defeated, every `
+            + `line of the body aching with deep sadness and bitter regret, utterly crushed; slow, `
+            + `heavy, sinking motion, intimate and tender, cinematic — aching to break your heart`;
     },
     champion: (resolved) => {
         const a = resolved.family.archetype;
-        return `the ${a} stands crowned in glory, head raised regal and proud, a radiant aura `
-            + `blooming around it, golden light and bioluminescent circuitry pulsing in waves, `
-            + `slow majestic camera orbit; dark background, centered, triumphant sustained loop`;
+        return `the ${a} ascends in crowned glory — rising regal and proud, head held high in awe, a `
+            + `radiant golden aura blooming and swelling around it, light and bioluminescent circuitry `
+            + `pulsing in majestic waves; reverence and overwhelming triumph, the summit reached at `
+            + `last; slow soaring motion, grand and cinematic, a swelling triumphant crescendo`;
     },
 };
 

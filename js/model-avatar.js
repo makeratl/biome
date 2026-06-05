@@ -61,7 +61,7 @@ export function videoUrl(manifest, modelName, category = 'victory') {
 // paints the still portrait first (instant first frame + fallback), then overlays
 // a muted, looping <video> if a clip exists for this model+category. No clip →
 // the still stays. Re-entrant via el.dataset.model, like applyAvatar.
-export async function applyAvatarVideo(el, modelName, { category = 'victory', loop = true } = {}) {
+export async function applyAvatarVideo(el, modelName, { category = 'victory', loop = true, bounce = false } = {}) {
     if (!el) return;
     if (!modelName) { clearAvatar(el); return; }
     await applyAvatar(el, modelName);                  // still portrait underneath
@@ -70,16 +70,101 @@ export async function applyAvatarVideo(el, modelName, { category = 'victory', lo
     if (el.dataset.model !== modelName) return;        // slot reassigned under us
     const url = videoUrl(manifest, modelName, category);
     let vid = el.querySelector('video.avatar-clip');
-    if (!url) { if (vid) vid.remove(); return; }       // no clip → keep the still
+    if (!url) { if (vid) { teardownBounce(vid); vid.remove(); } return; }   // no clip → keep the still
     if (!vid) {
         vid = document.createElement('video');
         vid.className = 'avatar-clip';
         vid.muted = true; vid.playsInline = true; vid.autoplay = true;
         el.appendChild(vid);
     }
-    vid.loop = loop;
+    // Bounce overrides native looping (it drives the loop itself).
+    vid.loop = loop && !bounce;
     if (vid.getAttribute('src') !== url) vid.src = url;
+    setBounce(vid, bounce);
     vid.play?.().catch(() => { /* autoplay may be deferred; first frame still shows */ });
+}
+
+// Smooth ping-pong (forward → back → forward …). A <video> can't render reverse
+// playback — seeking a paused element every frame thrashes the decoder, so the
+// time advances but the painted frame locks and jumps. Instead we play the first
+// forward leg natively while caching every decoded frame, then hand off to a
+// <canvas> driven from that cache: a time cursor bounces end↔start and we blit
+// the nearest cached frame, which is buttery in both directions. Needs
+// requestVideoFrameCallback (Chromium has it); without it we fall back to a
+// plain forward loop. State lives on vid._bounce; teardownBounce cleans it up.
+function setBounce(vid, on) {
+    if (!on) { teardownBounce(vid); return; }
+    if (vid._bounce) return;
+    if (typeof vid.requestVideoFrameCallback !== 'function') { vid.loop = true; return; }
+
+    const st = { frames: [], times: [], canvas: null, ctx: null, raf: null };
+    vid._bounce = st;
+    vid.loop = false;
+
+    const begin = () => {
+        if (vid._bounce !== st) return;
+        const cap = 320;                                  // cap captured frame size
+        const vw = vid.videoWidth || cap, vh = vid.videoHeight || cap;
+        const s = Math.min(1, cap / Math.max(vw, vh));
+        const cw = Math.max(1, Math.round(vw * s)), ch = Math.max(1, Math.round(vh * s));
+
+        // Cache each decoded frame (synchronous canvas clone keeps them ordered).
+        const capture = (now, meta) => {
+            if (vid._bounce !== st) return;
+            const fc = document.createElement('canvas');
+            fc.width = cw; fc.height = ch;
+            fc.getContext('2d').drawImage(vid, 0, 0, cw, ch);
+            st.frames.push(fc); st.times.push(meta.mediaTime);
+            if (vid.currentTime < (vid.duration || Infinity) - 0.04) vid.requestVideoFrameCallback(capture);
+        };
+        vid.requestVideoFrameCallback(capture);
+
+        // First forward leg done → swap the video for the canvas bouncer.
+        vid.addEventListener('ended', () => {
+            if (vid._bounce !== st) return;
+            if (st.frames.length < 2) { vid.loop = true; vid.currentTime = 0; vid.play?.().catch(() => {}); return; }
+            const disp = document.createElement('canvas');
+            disp.className = 'avatar-clip avatar-clip-canvas';
+            disp.width = cw; disp.height = ch;
+            st.canvas = disp; st.ctx = disp.getContext('2d');
+            st.ctx.drawImage(st.frames[st.frames.length - 1], 0, 0);   // seamless handoff frame
+            vid.style.visibility = 'hidden';
+            vid.parentNode?.appendChild(disp);
+            runCanvasBounce(vid, st);
+        }, { once: true });
+    };
+    if (vid.readyState >= 1) begin();
+    else vid.addEventListener('loadedmetadata', begin, { once: true });
+}
+
+// Drive the cached frames at real-time pace, cursor bouncing end↔start.
+function runCanvasBounce(vid, st) {
+    const { frames, times, ctx } = st;
+    const n = frames.length;
+    const t0 = times[0], t1 = times[n - 1];
+    let cursor = t1, dir = -1, last = null;           // just played forward → reverse first
+    const tick = (ts) => {
+        if (vid._bounce !== st || !st.canvas?.isConnected) { st.raf = null; return; }
+        if (last == null) last = ts;
+        cursor += dir * (ts - last) / 1000;
+        last = ts;
+        if (cursor <= t0) { cursor = t0; dir = 1; }
+        else if (cursor >= t1) { cursor = t1; dir = -1; }
+        let i = 0; while (i < n - 1 && times[i + 1] <= cursor) i++;
+        ctx.drawImage(frames[i], 0, 0);
+        st.raf = requestAnimationFrame(tick);
+    };
+    st.raf = requestAnimationFrame(tick);
+}
+
+function teardownBounce(vid) {
+    const st = vid._bounce;
+    if (!st) return;
+    vid._bounce = null;
+    if (st.raf) cancelAnimationFrame(st.raf);
+    st.canvas?.remove();
+    st.frames = []; st.times = [];
+    vid.style.visibility = '';
 }
 
 // Resolved PNG url for a model+style, or null if nothing baked. Requires the
@@ -123,6 +208,14 @@ export async function applyAvatar(el, modelName, { style = 'cyber-organic', cove
     }
 }
 
+// Remove every animated clip (and its bounce machinery) under `root` — used when
+// a carousel swaps a panel's content, so departing clips stop decoding instead of
+// lingering as detached, still-playing media.
+export function teardownClips(root) {
+    root?.querySelectorAll?.('video.avatar-clip').forEach(v => { teardownBounce(v); v.pause?.(); v.remove(); });
+    root?.querySelectorAll?.('canvas.avatar-clip-canvas').forEach(c => c.remove());
+}
+
 export function clearAvatar(el) {
     if (!el) return;
     delete el.dataset.model;
@@ -130,6 +223,7 @@ export function clearAvatar(el) {
     el.style.backgroundSize = '';
     el.style.backgroundPosition = '';
     const vid = el.querySelector('video.avatar-clip');
-    if (vid) vid.remove();
+    if (vid) { teardownBounce(vid); vid.remove(); }
+    el.querySelector('canvas.avatar-clip-canvas')?.remove();
     el.classList.remove('has-avatar');
 }

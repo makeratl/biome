@@ -249,6 +249,134 @@ body {
     flex-shrink: 0;
 }
 
+/* Toggle items (e.g. Magnifier) — the check sits at the right edge and only
+   shows when the item is active. */
+.gm-check {
+    margin-left: auto;
+    font-size: 11px;
+    color: hsl(45, 80%, 70%);
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+.gm-item.gm-active .gm-check { opacity: 1; }
+.gm-item.gm-active { color: hsl(45, 80%, 75%); }
+
+/* Magnifier loupe — a rounded-rect lens that follows the cursor, re-renders the
+   board at zoom, and carries a stats strip for the hovered cell. pointer-events:
+   none so hover keeps hitting the board beneath. */
+.board-loupe {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 90;
+    border-radius: 12px;
+    overflow: hidden;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.6),
+        0 10px 28px rgba(0, 0, 0, 0.6);
+    background: #0a0d0c;
+    opacity: 1;
+    transition: opacity 0.12s ease;
+}
+.board-loupe.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+.board-loupe .bl-view {
+    display: block;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Cell-stats strip beneath the zoom view */
+.bl-stats {
+    padding: 8px 10px 9px;
+    background: linear-gradient(180deg, rgba(12,16,24,0.96), rgba(8,11,18,0.96));
+    font-size: 12px;
+    color: rgba(255,255,255,0.85);
+}
+.bl-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.bl-terrain {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+.bl-terrain.water     { color: hsl(200, 70%, 65%); }
+.bl-terrain.fertile   { color: hsl(140, 55%, 65%); }
+.bl-terrain.grassland { color: hsl(80, 55%, 60%); }
+.bl-terrain.rocky     { color: hsl(35, 30%, 60%); }
+.bl-pos {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.4);
+    font-variant-numeric: tabular-nums;
+}
+.bl-sub:empty { display: none; }
+.bl-soil {
+    display: inline-block;
+    margin-top: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.5);
+}
+.bl-orgs { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; }
+.bl-org {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+}
+.bl-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.bl-dot.p1 { background: hsl(var(--p1-hue), 80%, 60%); box-shadow: 0 0 4px hsla(var(--p1-hue), 80%, 60%, 0.5); }
+.bl-dot.p2 { background: hsl(var(--p2-hue), 80%, 60%); box-shadow: 0 0 4px hsla(var(--p2-hue), 80%, 60%, 0.5); }
+.bl-org-name { flex: 1; color: rgba(255,255,255,0.82); }
+.bl-org-e {
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.5);
+    font-variant-numeric: tabular-nums;
+}
+.bl-empty {
+    font-size: 11px;
+    font-style: italic;
+    color: rgba(255,255,255,0.35);
+}
+
+/* The header menu button is a hamburger, not a gear — keep the open-state
+   highlight but skip the 45° gear-rotate inherited from .gear-button. */
+.gm-menu-btn[aria-expanded="true"] { transform: none; }
+
+/* Grouped taxonomy inside the dropdown */
+.gm-group-label {
+    padding: 6px 12px 3px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.32);
+    pointer-events: none;
+}
+.gm-sep {
+    height: 1px;
+    margin: 4px 8px 2px;
+    background: rgba(255, 255, 255, 0.07);
+}
+
 /* ── Match Setup Sub-Screen (in launcher overlay) ───────── */
 .launcher-setup-card {
     background: rgba(15, 20, 38, 0.92);
@@ -683,6 +811,49 @@ body {
 .modelcard-row { display: flex; align-items: stretch; gap: 10px; }
 .modelcard-row.solo { justify-content: center; }
 .modelcard-row.watch .modelcard { flex: 1 1 0; }
+
+/* ── Random / themed matchup roll bar ────────────────────────── */
+.matchup-roll {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+.matchup-roll.solo { justify-content: center; }
+.mr-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.55);
+}
+.mr-themes { display: flex; flex-wrap: wrap; gap: 6px; }
+.mr-theme {
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.82);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 5px 11px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.mr-theme:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); }
+.mr-theme:active { transform: scale(0.96); }
+.mr-msg {
+    flex: 1 1 100%;
+    font-size: 11px;
+    color: hsl(38, 80%, 66%);
+    min-height: 14px;
+}
+/* Re-roll feedback — a quick highlight pulse on the filled card(s). */
+.mc-rolled { animation: mc-roll-pulse 0.5s ease; }
+@keyframes mc-roll-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.45); }
+    100% { box-shadow: 0 0 0 14px rgba(255, 255, 255, 0); }
+}
 
 .modelcard {
     position: relative;
@@ -1150,7 +1321,9 @@ body {
 }
 
 .score-block {
-    min-width: 180px;
+    width: 240px;
+    min-width: 240px;
+    max-width: 240px;
 }
 
 .score-block .score-name {
@@ -1199,6 +1372,11 @@ body {
     border-top: 1px solid #2a2a4e;
     line-height: 1.4;
     min-height: 20px;
+    /* Quote stays inside the score column — wrap long lines (and any
+       unbroken token) rather than stretching the card to one wide line. */
+    overflow-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
 }
 
 /* Live scoreboard overlay */
@@ -1421,78 +1599,56 @@ body {
     display: block;
 }
 
-/* ── Biome donut (inside the right-edge panel's Biome tab) ── */
-.ws-chart-wrap {
+/* ── Living Biosphere Orb (inside the stats panel's Biome slot) ── */
+.bio-orb-wrap {
     position: relative;
-    width: 104px;
-    height: 104px;
-    margin: 2px auto 4px;
+    width: 120px;
+    height: 120px;
+    margin: 2px auto;
 }
-.ws-donut {
-    width: 104px;
-    height: 104px;
-    transform: rotate(-90deg);
+.bio-orb {
+    display: block;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
 }
-.ws-seg {
-    fill: none;
-    stroke-width: 12;
-    transition: stroke-width 0.2s, opacity 0.2s;
-}
-.ws-seg.is-hovered { stroke-width: 14; }
-.ws-center {
+/* Rim glow — a cheap secondary state cue layered over the canvas edge. */
+.bio-rim {
     position: absolute;
-    inset: 0;
+    inset: -3px;
+    border-radius: 50%;
+    pointer-events: none;
+    transition: box-shadow 0.8s ease;
+}
+.bio-rim[data-state="dormant"] { box-shadow: 0 0 8px 1px hsla(210, 40%, 45%, 0.20); }
+.bio-rim[data-state="primordial"] { box-shadow: 0 0 13px 2px hsla(96, 60%, 45%, 0.38); }
+.bio-rim[data-state="infant"]  { box-shadow: 0 0 11px 1px hsla(160, 60%, 50%, 0.32); }
+.bio-rim[data-state="zen"] {
+    box-shadow: 0 0 16px 3px hsla(135, 75%, 52%, 0.50);
+    animation: live-pulse 4s ease-in-out infinite;
+}
+.bio-rim[data-state="alert"] {
+    box-shadow: 0 0 18px 4px hsla(8, 88%, 55%, 0.6);
+    animation: go-winner-glow 1.1s ease-in-out infinite;
+}
+.bio-caption {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    text-align: center;
-    pointer-events: none;
-    line-height: 1;
-}
-.ws-c-name {
-    font-size: 10px;
+    gap: 5px;
+    font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.04em;
-    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+    transition: color 0.5s ease;
 }
-.ws-c-pct {
-    font-size: 18px;
-    font-weight: 900;
-    color: hsl(45, 100%, 75%);
-    font-variant-numeric: tabular-nums;
-    margin-top: 1px;
-    min-height: 18px;
-}
-.ws-legend {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2px 8px;
-    width: 100%;
-    margin-top: 2px;
-}
-.ws-leg-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 9px;
-    color: rgba(255, 255, 255, 0.55);
-    cursor: default;
-    letter-spacing: 0.04em;
-}
-.ws-leg-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 2px;
-    flex-shrink: 0;
-}
-.ws-leg-pct {
-    color: rgba(255, 255, 255, 0.85);
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    margin-left: auto;
-}
+.bio-caption[data-state="dormant"] { color: rgba(255, 255, 255, 0.5); }
+.bio-caption[data-state="primordial"] { color: hsl(96, 55%, 68%); }
+.bio-caption[data-state="infant"]  { color: hsl(165, 58%, 70%); }
+.bio-caption[data-state="zen"]     { color: hsl(135, 70%, 70%); }
+.bio-caption[data-state="alert"]   { color: hsl(12, 90%, 68%); }
+.bio-icon { font-size: 13px; line-height: 1; }
+.bio-word { line-height: 1; }
 
 /* ── Unified bottom-center HUD console ───────────────────────────
    A live scoreline rail that slides up into Stats / Bracket / Menu.
@@ -1677,25 +1833,7 @@ body {
 .hc-bracket-content::-webkit-scrollbar { width: 4px; }
 .hc-bracket-content::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 2px; }
 
-/* Menu view */
-.hc-view-menu { display: flex; flex-direction: column; gap: 6px; }
-.hc-view-menu.hc-view-hidden { display: none; }
-.hc-menu-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 11px 14px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    color: #cdd6f4; font-size: 13px; font-weight: 600;
-    cursor: pointer; font-family: inherit; text-align: left;
-    transition: background 0.15s, border-color 0.15s, transform 0.12s;
-}
-.hc-menu-item:hover {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: rgba(255, 255, 255, 0.18);
-    transform: translateX(2px);
-}
-.hc-mi-icon { font-size: 14px; width: 18px; text-align: center; }
+/* (Menu view removed — nav now lives in the header gear dropdown.) */
 
 /* ── Right-edge tabbed panel: Ecosystem + Biome (legacy, retired) ── */
 .biomass-tower {
@@ -1829,6 +1967,40 @@ body {
     align-items: center;
 }
 
+/* ── Creature roster (inside each AI/banter card) ──────────────
+   Six species chips in tier order — a mini procedural creature icon over a live
+   count, dimmed when the player has none of that species (so it reads as a
+   legend). Replaces the old ELO stat bars in .aic-statblock. Built/updated by
+   js/biome-roster.js; tinted to the player's hue via drawOrganism. */
+.aic-roster {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 2px;
+}
+.br-cell {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 0;
+    border-radius: 6px;
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+.br-cell.br-dim { opacity: 0.24; filter: grayscale(0.7); }
+.br-icon { display: block; }
+.br-count {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+}
+.ai-overlay.p1 .br-count { color: hsl(var(--p1-hue), 70%, 74%); }
+.ai-overlay.p2 .br-count { color: hsl(var(--p2-hue), 75%, 72%); }
+
 .bt-row {
     display: grid;
     grid-template-columns: 22px 1fr;
@@ -1864,39 +2036,77 @@ body {
     align-items: center;
     height: 14px;
 }
+/* Each bar is the half-width canvas for one player's tier; its children radiate
+   from the central spine (P1 anchors right, P2 anchors left) so the three rows
+   stack into one symmetric pyramid. */
 .bt-bar {
     position: relative;
     height: 100%;
-    overflow: hidden;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.04);
-}
-.bt-bar.bt-p1 {
-    /* Fill grows from RIGHT edge toward LEFT (pointing at center divider) */
-    direction: rtl;
 }
 .bt-divider {
     width: 2px;
     height: 14px;
-    background: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.22);
     border-radius: 1px;
-    margin: 0 2px;
+    margin: 0 3px;
 }
-.bt-fill {
-    display: block;
-    height: 100%;
-    width: 0%;
-    transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+
+/* TARGET outline — faint frame from the spine out to the tier's ideal width.
+   Always drawn (even at low fill) so the healthy pyramid stays visible as a
+   reference shape the actual fill is measured against. */
+.bt-track {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--ideal, 0%);
+    background: rgba(255, 255, 255, 0.045);
     border-radius: 2px;
+    transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1);
 }
+/* FILL — actual count, radiating from the spine over the track. */
+.bt-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0%;
+    border-radius: 2px;
+    transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.bt-bar.bt-p1 .bt-track,
+.bt-bar.bt-p1 .bt-fill { right: 0; }
+.bt-bar.bt-p2 .bt-track,
+.bt-bar.bt-p2 .bt-fill { left: 0; }
 .bt-bar.bt-p1 .bt-fill {
-    background: linear-gradient(90deg, hsla(var(--p1-hue), 70%, 55%, 0.25), hsl(var(--p1-hue), 80%, 55%));
+    background: linear-gradient(270deg, hsl(var(--p1-hue), 80%, 55%), hsla(var(--p1-hue), 70%, 55%, 0.3));
     box-shadow: 0 0 6px hsla(var(--p1-hue), 80%, 55%, 0.4);
 }
 .bt-bar.bt-p2 .bt-fill {
-    background: linear-gradient(90deg, hsl(var(--p2-hue), 85%, 55%), hsla(var(--p2-hue), 75%, 55%, 0.25));
+    background: linear-gradient(90deg, hsl(var(--p2-hue), 85%, 55%), hsla(var(--p2-hue), 75%, 55%, 0.3));
     box-shadow: 0 0 6px hsla(var(--p2-hue), 85%, 55%, 0.4);
 }
+
+/* TARGET tick — a vertical marker at the ideal width, drawn above the fill so it
+   stays visible whether the tier is short of (gap) or past (overflow) its target.
+   Its colour is the health read: amber = build this tier up, green = balanced,
+   orange = overpopulated for what's beneath it. */
+.bt-bar::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    border-radius: 1px;
+    background: transparent;
+    transition: right 0.5s cubic-bezier(0.25, 1, 0.5, 1), left 0.5s cubic-bezier(0.25, 1, 0.5, 1), background 0.3s;
+    pointer-events: none;
+}
+.bt-bar.bt-p1::after { right: var(--ideal, 0%); }
+.bt-bar.bt-p2::after { left: var(--ideal, 0%); }
+.bt-bar[data-health="good"]::after  { background: hsl(140, 65%, 55%); box-shadow: 0 0 5px hsla(140, 65%, 55%, 0.7); }
+.bt-bar[data-health="under"]::after { background: hsla(42, 90%, 60%, 0.7); }
+.bt-bar[data-health="over"]::after   { background: hsl(18, 88%, 56%); box-shadow: 0 0 5px hsla(18, 88%, 56%, 0.7); }
+.bt-bar[data-health="empty"]::after  { background: transparent; }
+
 .bt-count {
     position: absolute;
     top: 50%;
@@ -1904,13 +2114,13 @@ body {
     font-size: 9px;
     font-weight: 800;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 3px rgba(0,0,0,0.7);
     font-variant-numeric: tabular-nums;
     pointer-events: none;
-    direction: ltr;
+    z-index: 3;
 }
-.bt-bar.bt-p1 .bt-count { left: 4px; }
-.bt-bar.bt-p2 .bt-count { right: 4px; }
+.bt-bar.bt-p1 .bt-count { right: 4px; }
+.bt-bar.bt-p2 .bt-count { left: 4px; }
 
 /* Ecosystem health badges */
 .bt-health-row {
@@ -2592,13 +2802,58 @@ body {
     text-overflow: ellipsis;
 }
 
+/* Ranking + stats line — the model's standing. Emphasized into distinct
+   segments: gold rank badge, bright ELO, win/loss record. */
 .aic-status {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 5px;
+}
+.ai-overlay.p2 .aic-status { flex-direction: row-reverse; }
+
+/* #rank — gold pill, the headline of the line */
+.aic-rank {
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    color: hsl(45, 88%, 66%);
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: hsla(45, 90%, 55%, 0.14);
+    box-shadow: inset 0 0 0 1px hsla(45, 90%, 60%, 0.38),
+                0 0 10px hsla(45, 90%, 55%, 0.2);
+}
+/* ELO — big, bright, the number that matters */
+.aic-elo {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: #f2f2fb;
+}
+.aic-elo i {
     font-size: 9px;
+    font-style: normal;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.08em;
+    color: hsla(var(--aic-hue, 210), 45%, 74%, 0.9);
+    margin-left: 3px;
+}
+/* W–L record — readable, with the counts brighter than the labels */
+.aic-record {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.45);
+}
+.aic-record b { color: rgba(255,255,255,0.85); font-weight: 800; }
+.aic-unranked {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.35);
-    margin-top: 2px;
+    color: rgba(255,255,255,0.4);
 }
 .aic-status.thinking {
     color: hsl(45, 80%, 65%);
@@ -2616,47 +2871,6 @@ body {
     border-radius: 8px;
     background: hsla(var(--aic-hue, 210), 30%, 18%, 0.35);
     border: 1px solid hsla(var(--aic-hue, 210), 40%, 50%, 0.18);
-}
-.aic-stat-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 4px 0;
-}
-.aic-stat-label {
-    flex: 0 0 52px;
-    font-family: 'Courier New', monospace;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: rgba(255,255,255,0.55);
-}
-.aic-bar {
-    flex: 1;
-    height: 7px;
-    border-radius: 4px;
-    background: rgba(0,0,0,0.35);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
-    overflow: hidden;
-}
-.aic-bar-fill {
-    display: block;
-    height: 100%;
-    width: 0;
-    border-radius: 4px;
-    background: linear-gradient(90deg,
-        hsl(var(--aic-hue, 210), 75%, 45%), hsl(var(--aic-hue, 210), 85%, 62%));
-    box-shadow: 0 0 8px hsla(var(--aic-hue, 210), 85%, 60%, 0.5);
-    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.aic-stat-val {
-    flex: 0 0 auto;
-    min-width: 34px;
-    text-align: right;
-    font-family: 'Courier New', monospace;
-    font-size: 10px;
-    font-weight: 700;
-    color: #eef0fb;
 }
 .aic-statfoot {
     display: flex;
@@ -2859,6 +3073,23 @@ body {
     0%, 100% { transform: scale(1);    opacity: 1;   }
     50%      { transform: scale(1.12); opacity: 0.7; }
 }
+
+/* Model-loading state — a local model cold-loading into VRAM. The spinner
+   replaces the move clock until the model is resident (Game._startModelLoadWatch). */
+.aic-cd-spinner {
+    display: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid hsla(var(--cd-hue), 60%, 60%, 0.22);
+    border-top-color: hsl(var(--cd-hue), 80%, 70%);
+    animation: aic-cd-spin 0.8s linear infinite;
+}
+@keyframes aic-cd-spin { to { transform: rotate(360deg); } }
+.aic-countdown.model-loading .aic-cd-num,
+.aic-countdown.model-loading .aic-cd-bar { display: none; }
+.aic-countdown.model-loading .aic-cd-spinner { display: block; }
+.aic-countdown.model-loading .aic-cd-label { color: hsla(var(--cd-hue), 50%, 82%, 0.85); }
 
 /* ── System voice — announcer line shown when a turn degrades (timeout /
    dropped connection / garbled output / hang) instead of leaving the card mute ── */
@@ -3167,6 +3398,7 @@ body {
 /* Crowned champion portrait — large hex with a golden victory aura. */
 .t-champ-avatar {
     display: none;
+    position: relative;
     width: 168px; height: 168px;
     margin: 2px auto 8px;
     clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
@@ -3175,6 +3407,15 @@ body {
     animation: go-winner-rise 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.3) both, go-winner-glow 2.6s ease-in-out 0.7s infinite;
 }
 .t-champ-avatar.show { display: block; }
+/* The champion clip must fill the hex (without this it renders at its intrinsic
+   size and spills past the small mask). Covers the bounce canvas too, in case
+   the clip is ever painted with bounce. */
+.t-champ-avatar video.avatar-clip,
+.t-champ-avatar canvas.avatar-clip-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+}
 .prematch-hint {
     font-size: 10px;
     letter-spacing: 0.18em;
@@ -3182,6 +3423,7 @@ body {
     text-transform: uppercase;
     margin-top: 12px;
 }
+
 
 /* ── Fighting-game VS entrance ───────────────────────────────── */
 @keyframes pm-slam-left {
@@ -4138,7 +4380,7 @@ body.event-promote #game-over-overlay {
 }
 
 /* Radial scrim so the matchup reads on any biome theme */
-#t-match-intro::before {
+#match-intro::before {
     content: '';
     position: absolute;
     left: 50%;
@@ -4156,22 +4398,22 @@ body.event-promote #game-over-overlay {
     z-index: 0;
 }
 
-#t-match-intro .t-match-label,
-#t-match-intro .t-vs-row,
-#t-match-intro .t-intro-note {
+#match-intro .t-match-label,
+#match-intro .t-vs-row,
+#match-intro .t-intro-note {
     position: relative;
     z-index: 1;
 }
 
-#t-match-intro .t-match-label {
+#match-intro .t-match-label {
     color: rgba(255,255,255,0.6);
 }
 
 /* Lift the model names off the map with a readable shadow */
-#t-match-intro .t-model {
+#match-intro .t-model {
     text-shadow: 0 2px 18px rgba(0,0,0,0.7);
 }
-#t-match-intro .t-vs {
+#match-intro .t-vs {
     color: rgba(255,255,255,0.4);
     text-shadow: 0 2px 12px rgba(0,0,0,0.6);
 }
@@ -5588,133 +5830,6 @@ body.event-promote #game-over-overlay {
     padding: 8px 0;
 }
 
-/* ── Rankings Panel ───────────────────────────── */
-
-.rankings-hidden { display: none !important; }
-
-.btn-rankings {
-    background: linear-gradient(135deg, hsl(45, 45%, 24%), hsl(30, 45%, 24%));
-    border-color: hsl(40, 40%, 40%);
-    color: hsl(40, 80%, 80%);
-}
-
-#rankings-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 280px;
-    height: 100vh;
-    background: rgba(22, 33, 62, 0.97);
-    border-left: 1px solid rgba(255,255,255,0.08);
-    z-index: 1100;
-    overflow-y: auto;
-    animation: rk-slidein 0.2s ease;
-}
-
-@keyframes rk-slidein {
-    from { transform: translateX(100%); }
-    to   { transform: translateX(0); }
-}
-
-.rk-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 16px;
-    font-weight: 700;
-    font-size: 13px;
-    letter-spacing: 0.06em;
-    color: hsl(40, 60%, 70%);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-
-.rk-close {
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.45);
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-}
-
-.rk-close:hover { color: rgba(255,255,255,0.7); }
-
-.rk-content {
-    padding: 12px 16px;
-    overflow-y: auto;
-}
-
-.rk-content::-webkit-scrollbar { width: 4px; }
-.rk-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-
-.rk-section-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.35);
-    margin-bottom: 8px;
-}
-
-.rk-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-
-.rk-table th {
-    text-align: left;
-    font-size: 10px;
-    font-weight: 600;
-    color: rgba(255,255,255,0.3);
-    padding: 4px 2px 6px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.rk-row td {
-    padding: 5px 2px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-}
-
-.rk-row.rk-top .rk-name { color: hsl(40, 65%, 72%); }
-
-.rk-rank { width: 18px; color: rgba(255,255,255,0.3); }
-.rk-name { color: rgba(255,255,255,0.75); }
-
-/* Avatar thumbnails on leaderboard rows + match history. Hex, brand-hue until a
-   baked portrait fills it (background set inline by model-avatar.applyAvatar). */
-.rk-ava {
-    display: inline-block; width: 22px; height: 22px; vertical-align: middle;
-    margin-right: 7px; flex: 0 0 auto;
-    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-    background: linear-gradient(135deg, hsl(var(--bh, 210), 55%, 56%), hsl(var(--bh, 210), 48%, 40%));
-}
-.rk-ava-sm { width: 18px; height: 18px; margin-right: 4px; }
-.rk-ava-you { background: none; text-align: center; line-height: 22px; font-size: 13px; }
-.rk-elo  { color: hsl(180, 55%, 60%); font-weight: 600; width: 42px; }
-.rk-w    { color: hsl(140, 50%, 60%); width: 24px; text-align: center; }
-.rk-l    { color: rgba(255,255,255,0.2); width: 24px; text-align: center; }
-
-.rk-empty {
-    font-size: 11px;
-    color: rgba(255,255,255,0.2);
-    padding: 8px 0;
-}
-
-.rk-match {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    padding: 4px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
-}
-
-.rk-m-winner { color: hsl(140, 50%, 60%); min-width: 60px; }
-.rk-m-beat   { color: rgba(255,255,255,0.2); }
-.rk-m-loser  { color: rgba(255,255,255,0.35); min-width: 60px; }
-.rk-m-scores { color: rgba(255,255,255,0.25); margin-left: auto; }
-
 /* ── Rank badge on player cards ─────────────────────────── */
 .pc-rank {
     position: absolute;
@@ -5770,35 +5885,135 @@ body.event-promote #game-over-overlay {
 .odds-dog  { color: hsl(210, 30%, 78%); background: hsla(210, 30%, 60%, 0.1); border: 1px solid hsla(210, 30%, 60%, 0.28); }
 .odds-even { color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); }
 
-/* ── Leaderboard "you" highlight + reset button ─────────── */
-.rk-row.rk-you {
-    background: hsla(150, 70%, 50%, 0.12);
-    box-shadow: inset 2px 0 0 hsl(150, 70%, 55%);
+/* ── Match-intro "ARENA" detail panel (game type · map · vision) ───────── */
+.match-arena {
+    position: relative;
+    z-index: 1;
+    max-width: 540px;
+    margin: 20px auto 2px;
+    padding: 14px 20px 16px;
+    border-radius: 14px;
+    border: 1px solid hsla(45, 60%, 60%, 0.22);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.18)),
+        rgba(6, 9, 18, 0.55);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.02);
+    backdrop-filter: blur(3px);
 }
-.rk-row.rk-you .rk-name { color: hsl(150, 75%, 72%); font-weight: 800; }
-.rk-header-actions {
-    display: inline-flex;
+.ma-title {
+    display: flex;
     align-items: center;
-    gap: 8px;
-}
-.rk-reset {
+    justify-content: center;
+    gap: 12px;
     font-size: 10px;
     font-weight: 800;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.32em;
+    color: hsl(45, 70%, 66%);
+    margin-bottom: 12px;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.55);
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 6px;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: all 0.15s ease;
 }
-.rk-reset:hover {
-    color: hsl(0, 75%, 72%);
-    border-color: hsla(0, 75%, 60%, 0.5);
-    background: hsla(0, 75%, 55%, 0.12);
+.ma-title::before, .ma-title::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    max-width: 90px;
+    background: linear-gradient(90deg, transparent, hsla(45, 60%, 60%, 0.45), transparent);
 }
+.ma-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+.ma-vision {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1 1 240px;
+    min-width: 220px;
+}
+.ma-vision-eye {
+    font-size: 22px;
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: hsla(45, 80%, 55%, 0.1);
+    border: 1px solid hsla(45, 70%, 60%, 0.32);
+    box-shadow: inset 0 0 12px hsla(45, 80%, 55%, 0.12);
+}
+.ma-vision-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ma-vision-name {
+    font-size: 15px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: 0.02em;
+}
+.ma-vision-name::before {
+    content: 'VISION · ';
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: hsl(45, 70%, 62%);
+    vertical-align: 1px;
+}
+.ma-vision-desc {
+    font-size: 11px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.5);
+}
+.ma-stats {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.ma-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: rgba(255,255,255,0.82);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    white-space: nowrap;
+}
+.ma-chip-ico { font-size: 12px; opacity: 0.85; }
+.ma-chip-fast {
+    color: hsl(45, 100%, 72%);
+    background: hsla(45, 100%, 55%, 0.12);
+    border-color: hsla(45, 100%, 60%, 0.35);
+}
+.ma-stakes {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    text-align: center;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.42);
+}
+.ma-stakes:empty { display: none; }
+
+/* Staged entrance — rises in just after the VS slam settles. */
+.pm-enter .match-arena { animation: ma-rise 0.5s cubic-bezier(0.2,0.8,0.3,1) 0.34s both; }
+@keyframes ma-rise {
+    from { opacity: 0; transform: translateY(14px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Championship final keeps the gold drama clean — drop the detail panel. */
+.t-intro-champ .match-arena { display: none; }
+
 
 /* ── Human handle prompt modal ──────────────────────────── */
 .handle-modal {
@@ -6236,6 +6451,31 @@ body.event-promote #game-over-overlay {
 }
 .lb-back:hover { background: rgba(255,255,255,0.12); color: #fff; transform: translateX(-2px); }
 
+/* Reset standings — mirrors the back chevron, parked top-right with a danger hue
+   on hover. (Inherited from the retired side drawer; the server archives first.) */
+.lb-reset {
+    position: absolute;
+    top: 22px;
+    right: 26px;
+    z-index: 3;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 8px 14px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.lb-reset:hover {
+    color: hsl(0, 75%, 74%);
+    border-color: hsla(0, 75%, 60%, 0.5);
+    background: hsla(0, 75%, 55%, 0.12);
+}
+
 /* ── Header ── */
 .lb-head { text-align: center; }
 .lb-title-row {
@@ -6318,12 +6558,22 @@ body.event-promote #game-over-overlay {
 }
 .lb-pod.p1 .lb-pod-medal { font-size: 38px; }
 .lb-pod-ava {
+    position: relative;
     width: 92px; height: 92px;
     clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
     background:
         linear-gradient(135deg, hsl(var(--bh,210), 60%, 56%), hsl(var(--bh,210), 50%, 38%));
     background-size: cover; background-position: center;
     box-shadow: 0 0 0 2px hsla(var(--bh,210), 70%, 60%, 0.4), 0 8px 26px rgba(0,0,0,0.5);
+}
+/* Animated podium clip: applyAvatarVideo() overlays a <video> (or, mid-bounce, its
+   frame canvas) on top of the still portrait. Fill the slot — the parent's hex
+   clip-path masks both — so a clip renders at hex size instead of its intrinsic box. */
+.lb-pod-ava video.avatar-clip,
+.lb-pod-ava canvas.avatar-clip-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
 }
 .lb-pod.p1 .lb-pod-ava {
     width: 116px; height: 116px;
@@ -6624,6 +6874,7 @@ body.event-promote #game-over-overlay {
 .labs-list { display: flex; flex-direction: column; gap: 10px; }
 .labs-card {
     display: flex; align-items: center; gap: 14px;
+    width: 100%; text-align: left; font-family: inherit; cursor: pointer;
     padding: 14px 16px; text-decoration: none; color: #e7ebf5;
     background: rgba(10, 14, 30, 0.7); border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px; transition: border-color .15s, transform .15s, background .15s;
@@ -6633,3 +6884,459 @@ body.event-promote #game-over-overlay {
 .labs-card-text { display: flex; flex-direction: column; gap: 3px; }
 .labs-card-text b { font-size: 15px; font-weight: 700; }
 .labs-card-text span { font-size: 12px; color: rgba(231, 235, 245, 0.55); line-height: 1.4; }
+
+/* ── Lab frame modal (near-fullscreen iframe host) ──────────────────────── */
+.lab-frame-modal {
+    position: fixed; inset: 0; z-index: 2200;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(4, 6, 14, 0.8); backdrop-filter: blur(6px);
+    opacity: 1; transition: opacity .18s ease;
+}
+.lab-frame-modal.lfm-hidden { opacity: 0; pointer-events: none; }
+.lfm-shell {
+    position: relative;
+    width: 96vw; height: 95vh;
+    display: flex; flex-direction: column;
+    background: #0a0e1c;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px; overflow: hidden;
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
+}
+.lfm-bar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 10px 8px 16px;
+    background: rgba(14, 18, 34, 0.96);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.lfm-title {
+    font-size: 12px; font-weight: 800; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #e7ebf5;
+}
+.lfm-actions { display: flex; align-items: center; gap: 6px; }
+.lfm-iconbtn {
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 7px; color: rgba(231, 235, 245, 0.7);
+    font-size: 14px; line-height: 1; cursor: pointer; text-decoration: none;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.lfm-iconbtn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; border-color: hsl(180, 62%, 64%); }
+.lfm-close:hover { border-color: hsl(0, 70%, 64%); }
+.lfm-frame { flex: 1 1 auto; width: 100%; border: none; background: #0a0e1c; }
+
+/* ── Tournament broadcast flanks (live-match corner panels) ──────────────
+   Two fight-night corner panels that frame the board during a live match:
+   bottom-left replays the LAST bout (winner on victory loop "def." loser on
+   defeat loop), bottom-right previews what's ON DECK (both fighters looping
+   their entrance over a flip-card tale-of-the-tape). They anchor to the board
+   gutters, mirroring .ai-overlay's top anchor with a bottom one, and are only
+   visible while the board is — TournamentManager._show hides them otherwise. */
+.match-flank {
+    position: fixed;
+    /* Pinned to the true screen-bottom corners. The collapsing stats console and
+       the activity ticker both live centered OVER the board (width never exceeds
+       --board-w), while the flanks sit in the side gutters — separate horizontal
+       tracks, so the console can grow tall without ever touching them. */
+    bottom: 14px;
+    width: calc(var(--card-gutter) - 28px);
+    height: clamp(200px, 30vh, 264px);
+    z-index: 14;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(15,20,38,0.92), rgba(10,12,26,0.94));
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    pointer-events: auto;
+}
+.mf-prev { left: 14px;  border-left: 3px solid hsl(150, 60%, 48%); }
+.mf-next { right: 14px; border-right: 3px solid hsl(42, 90%, 56%); }
+.match-flank.mf-hidden { display: none; }
+
+.mf-prev.mf-enter-anim { animation: mf-slide-left  .5s cubic-bezier(.2,.8,.2,1) both; }
+.mf-next.mf-enter-anim { animation: mf-slide-right .5s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes mf-slide-left  { from { opacity:0; transform: translateX(-24px); } to { opacity:1; transform:none; } }
+@keyframes mf-slide-right { from { opacity:0; transform: translateX( 24px); } to { opacity:1; transform:none; } }
+
+.mf-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex:0 0 auto; }
+.mf-tag { font-size:10px; font-weight:800; letter-spacing:.14em; padding:2px 7px; border-radius:4px; text-transform:uppercase; white-space:nowrap; }
+.mf-tag-prev { color: hsl(150,72%,74%); background: hsla(150,70%,45%,0.16); }
+.mf-tag-next { color: hsl(42,92%,72%);  background: hsla(42,90%,50%,0.16); }
+.mf-sub { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color: rgba(255,255,255,0.4);
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.mf-bout { flex:1 1 auto; min-height:0; display:flex; align-items:center; gap:6px; }
+.mf-fighter { position:relative; flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.mf-vid {
+    width:100%; aspect-ratio:1/1; max-height:118px;
+    position:relative; overflow:hidden; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; font-weight:800; letter-spacing:.04em;
+    color: hsl(var(--bh,210), 30%, 84%);
+    background: linear-gradient(150deg, hsl(var(--bh,210),45%,24%), hsl(var(--bh,210),50%,12%));
+    border:1px solid rgba(255,255,255,0.1);
+}
+.mf-vid.has-avatar { color: transparent; text-shadow:none; }
+.mf-vid-ini { display:flex; }
+.mf-vid .avatar-clip {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    border-radius:inherit; opacity:0; animation: avatar-clip-in .5s ease forwards;
+}
+/* The bounce canvas swaps in already painted — skip the fade so the handoff
+   from the native forward leg doesn't dip to black. */
+.mf-vid canvas.avatar-clip-canvas { opacity:1; animation:none; }
+
+/* Leaderboard rank chip — rides the top edge of the portrait (anchored to the
+   fighter wrapper so it can sit half-above the frame without being clipped). */
+.mf-rank {
+    position:absolute; top:-9px; left:6px; z-index:4;
+    display:flex; align-items:baseline; gap:2px;
+    padding:2px 6px 3px; border-radius:6px;
+    background: linear-gradient(180deg, rgba(8,10,22,0.94), rgba(8,10,22,0.82));
+    border:1px solid rgba(255,255,255,0.18);
+    box-shadow:0 2px 7px rgba(0,0,0,0.55);
+    font-variant-numeric: tabular-nums; line-height:1; pointer-events:none;
+}
+.mf-rank-hash  { font-size:10px; font-weight:800; color: rgba(255,255,255,0.5); }
+.mf-rank-num   { font-size:15px; font-weight:900; color:#fff; }
+.mf-rank-elo   { font-size:8px; font-weight:700; letter-spacing:.03em; color: hsl(42,90%,68%); margin-left:2px; }
+.mf-rank-crown { font-size:11px; line-height:1; color: hsl(45,95%,62%); }
+.mf-rank-pending { opacity:0; }
+.mf-rank-unranked .mf-rank-num { font-size:11px; color: rgba(255,255,255,0.55); }
+.mf-rank-one { border-color: hsla(45,95%,60%,0.6); box-shadow:0 2px 7px rgba(0,0,0,0.55), 0 0 12px hsla(45,95%,55%,0.4); }
+.mf-winner .mf-rank { border-color: hsla(150,80%,55%,0.55); }
+.mf-loser  .mf-rank { opacity:0.85; }
+.mf-fname { font-size:11px; font-weight:700; color: rgba(255,255,255,0.9);
+            max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; }
+.mf-fscore { font-size:13px; font-weight:800; font-variant-numeric: tabular-nums; }
+
+.mf-mid { flex:0 0 auto; align-self:center; display:flex; align-items:center; justify-content:center; }
+.mf-def { font-size:10px; font-weight:800; letter-spacing:.08em; color: rgba(255,255,255,0.5); text-transform:uppercase; }
+.mf-vs  { font-size:13px; font-weight:900; letter-spacing:.06em; color: rgba(255,255,255,0.8);
+          padding:3px 6px; border:1px solid rgba(255,255,255,0.16); border-radius:6px; }
+
+/* Winner glows on victory; loser is dimmed and crossed by a DEFEATED stamp. */
+.mf-winner .mf-vid { border-color: hsla(150,80%,55%,0.7);
+    box-shadow: 0 0 0 1px hsla(150,80%,55%,0.4), 0 0 18px hsla(150,80%,50%,0.3); }
+.mf-winner .mf-fscore { color: hsl(150,72%,68%); }
+.mf-loser .mf-vid { filter: grayscale(0.7) brightness(0.66); }
+.mf-loser .mf-fname, .mf-loser .mf-fscore { color: rgba(255,255,255,0.42); }
+.mf-ribbon { font-size:8px; font-weight:800; letter-spacing:.1em; padding:1px 6px; border-radius:3px; text-transform:uppercase; }
+.mf-ribbon-win { color:#06240f; background: hsl(150,75%,55%); }
+.mf-ribbon-ko  { color: hsl(0,80%,76%); background: hsla(0,70%,40%,0.3); border:1px solid hsla(0,75%,55%,0.5); }
+
+/* On-deck fighters pulse like they're walking out. */
+.mf-bout-next .mf-vid { border-color: hsla(42,90%,55%,0.4); }
+.mf-enter .mf-vid { animation: mf-enter-glow 2.6s ease-in-out infinite; }
+@keyframes mf-enter-glow {
+    0%,100% { box-shadow: 0 0 0 1px hsla(42,90%,55%,0.2); }
+    50%     { box-shadow: 0 0 0 1px hsla(42,90%,60%,0.5), 0 0 16px hsla(42,90%,50%,0.3); }
+}
+
+/* Tale-of-the-tape: three stat cards flip through one at a time (ESPN ticker). */
+.mf-statdeck { position:relative; height:30px; flex:0 0 auto; perspective:600px; }
+.mf-statcard {
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:space-between; gap:6px;
+    padding:0 9px; border-radius:6px;
+    background: rgba(255,255,255,0.045); border:1px solid rgba(255,255,255,0.07);
+    opacity:0; transform-origin:center; backface-visibility:hidden;
+    animation: mf-card-flip 7.2s linear infinite;
+    animation-delay: calc(var(--i) * 2.4s);
+}
+@keyframes mf-card-flip {
+    0%   { opacity:0; transform: rotateX(90deg); }
+    3%   { opacity:1; transform: rotateX(0); }
+    30%  { opacity:1; transform: rotateX(0); }
+    33%  { opacity:0; transform: rotateX(-90deg); }
+    100% { opacity:0; transform: rotateX(-90deg); }
+}
+.mf-sc-k { font-size:9px; font-weight:800; letter-spacing:.07em; color: rgba(255,255,255,0.55); text-transform:uppercase; white-space:nowrap; }
+.mf-sc-v { font-size:13px; font-weight:800; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.6); flex:1 1 0; }
+.mf-sc-l { text-align:left; }
+.mf-sc-r { text-align:right; }
+.mf-sc-lead { color: hsl(42,92%,68%); }
+
+/* ── Broadcast carousel (rotating flank panels) ─────────────────────────
+   Each flank is now a carousel that card-flips through several panels. The
+   flank box keeps its chrome; inside, .mf-stage is the flipping element and
+   .mf-prog is a dwell-timer bar pinned at the bottom. */
+.match-flank.mf-carousel { perspective: 1100px; }
+.mf-stage {
+    position:relative; flex:1 1 auto; min-height:0;
+    display:flex; flex-direction:column; gap:7px;
+    transform-style:preserve-3d; backface-visibility:hidden;
+    transform-origin:center center; will-change:transform;
+}
+.mf-stage > .mf-bout,
+.mf-stage > .bcl,
+.mf-stage > .bch-row,
+.mf-stage > .mf-empty { flex:1 1 auto; min-height:0; }
+
+.mf-prog { flex:0 0 auto; height:3px; border-radius:2px; background:rgba(255,255,255,0.07); overflow:hidden; }
+.mf-prog span { display:block; height:100%; width:0; border-radius:2px; }
+.mf-prev .mf-prog span { background:linear-gradient(90deg, hsl(150,65%,42%), hsl(150,70%,55%)); }
+.mf-next .mf-prog span { background:linear-gradient(90deg, hsl(42,85%,48%), hsl(42,92%,60%)); }
+
+.mf-empty { display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.4); font-size:11px; text-align:center; }
+
+/* Shared avatar base for the stat panels — still portrait (applyAvatar sets a
+   cover background + .has-avatar) or a looping clip (applyAvatarVideo). */
+.mf-av {
+    position:relative; overflow:hidden; flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; letter-spacing:.02em;
+    color: hsl(var(--bh,210), 32%, 82%);
+    background: linear-gradient(150deg, hsl(var(--bh,210),45%,24%), hsl(var(--bh,210),50%,12%));
+    border:1px solid rgba(255,255,255,0.1);
+}
+.mf-av.has-avatar { color:transparent; text-shadow:none; }
+.mf-av .avatar-clip {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    border-radius:inherit; opacity:0; animation: avatar-clip-in .5s ease forwards;
+}
+.mf-av canvas.avatar-clip-canvas { opacity:1; animation:none; }
+
+/* Hall of Champions */
+.mf-tag-champ { color:hsl(45,92%,72%); background:hsla(45,90%,50%,0.16); }
+.bcc-champ { display:flex; align-items:center; gap:9px; padding:6px 7px; border-radius:8px;
+    background:linear-gradient(100deg, hsla(45,90%,50%,0.13), rgba(255,255,255,0.03));
+    border:1px solid hsla(45,90%,55%,0.3); }
+.bcc-champ-ava { width:52px; height:52px; border-radius:8px; font-size:16px;
+    border-color:hsla(45,90%,60%,0.6); box-shadow:0 0 14px hsla(45,90%,55%,0.4); }
+.bcc-champ-meta { min-width:0; }
+.bcc-champ-name { font-size:13px; font-weight:800; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bcc-champ-stats { display:flex; gap:7px; align-items:baseline; }
+.bcc-champ-elo { font-size:16px; font-weight:900; color:hsl(45,92%,68%); font-variant-numeric:tabular-nums; }
+.bcc-champ-wl { font-size:10px; color:rgba(255,255,255,0.6); }
+.bcc-rows { display:flex; flex-direction:column; gap:3px; }
+.bcc-row { display:flex; align-items:center; gap:7px; padding:2px 5px; border-radius:5px; background:rgba(255,255,255,0.03); }
+.bcc-rank { width:14px; text-align:center; font-size:10px; font-weight:800; color:rgba(255,255,255,0.45); }
+.bcc-ava { width:24px; height:24px; border-radius:5px; font-size:9px; }
+.bcc-name { flex:1 1 0; min-width:0; font-size:11px; font-weight:700; color:rgba(255,255,255,0.88); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bcc-elo { font-size:11px; font-weight:800; color:rgba(255,255,255,0.78); font-variant-numeric:tabular-nums; }
+.bcc-wl { font-size:9px; color:rgba(255,255,255,0.45); font-variant-numeric:tabular-nums; }
+
+/* Fighter Dossier */
+.mf-tag-dossier { color:hsl(200,80%,74%); background:hsla(200,80%,50%,0.16); }
+.bcd-top { display:flex; align-items:center; gap:9px; }
+.bcd-ava { width:54px; height:54px; border-radius:8px; font-size:16px; }
+.bcd-id { min-width:0; }
+.bcd-name { font-size:14px; font-weight:800; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bcd-sub { font-size:9px; letter-spacing:.04em; text-transform:uppercase; color:rgba(255,255,255,0.5); }
+.bcd-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+.bcd-cell { display:flex; flex-direction:column; align-items:center; gap:1px; padding:3px 2px; border-radius:5px; background:rgba(255,255,255,0.04); }
+.bcd-k { font-size:7.5px; font-weight:800; letter-spacing:.04em; color:rgba(255,255,255,0.5); }
+.bcd-v { font-size:12px; font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
+.bcd-v.bcd-hot { color:hsl(30,90%,62%); }
+.bcd-v.bcd-cold { color:hsl(210,35%,62%); }
+.bcd-spark { width:100%; height:38px; display:block; }
+.bcd-h2h { display:flex; justify-content:center; align-items:baseline; gap:6px; font-size:10px; color:rgba(255,255,255,0.6); }
+.bcd-h2h b { color:rgba(255,255,255,0.85); }
+.bcd-h2h-rec { font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
+
+/* Tournament Details — bracket-at-a-glance (reuses .bcd-grid/.bcd-cell). */
+.mf-tag-tourney { color:hsl(42,92%,72%); background:hsla(42,90%,50%,0.16); }
+.bct-stage { font-size:15px; font-weight:900; letter-spacing:.02em; color:#fff; text-align:center;
+    text-shadow:0 1px 8px rgba(0,0,0,0.5); }
+.bct-prog { height:6px; border-radius:4px; overflow:hidden; background:rgba(255,255,255,0.08);
+    border:1px solid rgba(255,255,255,0.07); }
+.bct-prog span { display:block; height:100%; border-radius:inherit;
+    background:linear-gradient(90deg, hsl(42,90%,52%), hsl(42,95%,66%));
+    box-shadow:0 0 10px hsla(42,90%,55%,0.5); transition:width .6s ease; }
+.bct-foot { font-size:9px; letter-spacing:.06em; text-transform:uppercase; text-align:center;
+    color:rgba(255,255,255,0.5); }
+
+/* Match Details — watch-mode counterpart to Tournament Details (reuses .bct-*). */
+.mf-tag-details { color:hsl(160,70%,70%); background:hsla(160,68%,45%,0.16); }
+
+/* Scouting Report — storyline breakdown of two contestants (tournament on-deck
+   pairing + watch-match opener). */
+.mf-tag-scout { color:hsl(190,80%,72%); background:hsla(190,80%,50%,0.16); }
+.bcs-vs { display:flex; align-items:baseline; justify-content:center; gap:8px; font-size:13px; font-weight:800;
+    white-space:nowrap; overflow:hidden; }
+.bcs-vs b { color:hsl(var(--bh,200),68%,72%); max-width:42%; overflow:hidden; text-overflow:ellipsis; }
+.bcs-x { font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
+.bcs-facts { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; flex:1 1 auto;
+    justify-content:center; min-height:0; }
+.bcs-fact { display:flex; align-items:center; gap:8px; padding:4px 8px; border-radius:6px;
+    background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); }
+.bcs-ic { flex:0 0 auto; font-size:14px; line-height:1; width:18px; text-align:center; }
+.bcs-tx { font-size:11px; line-height:1.25; color:rgba(255,255,255,0.74); }
+.bcs-tx b { color:#fff; font-weight:800; }
+
+/* Head to Head */
+.mf-tag-h2h { color:hsl(280,72%,78%); background:hsla(280,70%,55%,0.16); }
+.bch-row { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.bch-side { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.bch-ava { width:62px; height:62px; border-radius:9px; font-size:17px; }
+.bch-name { font-size:11px; font-weight:700; color:rgba(255,255,255,0.9); max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bch-elo { font-size:12px; font-weight:800; color:hsl(200,72%,68%); font-variant-numeric:tabular-nums; }
+.bch-mid { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; }
+.bch-rec { font-size:21px; font-weight:900; color:#fff; font-variant-numeric:tabular-nums; }
+.bch-rec-k { font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+
+/* Around-the-League highlight card */
+.mf-tag-upset    { color:hsl(8,86%,72%);  background:hsla(8,80%,50%,0.16); }
+.mf-tag-improved { color:hsl(140,68%,70%); background:hsla(140,62%,45%,0.16); }
+.mf-tag-streak   { color:hsl(28,90%,68%); background:hsla(28,85%,50%,0.16); }
+.mf-tag-peak     { color:hsl(45,92%,72%); background:hsla(45,90%,50%,0.16); }
+/* Highlight card: the animated avatar is the hero — it fills the whole card,
+   with the headline stat overlaid on a bottom scrim for legibility. */
+.bcl { position:relative; overflow:hidden; border-radius:10px; display:flex; flex-direction:column; justify-content:flex-end;
+    border:1px solid rgba(255,255,255,0.08); }
+.bcl-ava {
+    position:absolute; inset:0; width:100%; height:100%;
+    border:none; border-radius:0; font-size:46px;
+    object-fit:cover;
+}
+.bcl-ava .avatar-clip { object-position:center 38%; }
+.bcl-scrim { position:absolute; left:0; right:0; bottom:0; height:66%; z-index:1; pointer-events:none;
+    background:linear-gradient(180deg, transparent, rgba(7,9,20,0.55) 42%, rgba(7,9,20,0.95)); }
+.bcl-text { position:relative; z-index:2; text-align:center; padding:0 10px 10px; }
+.bcl-big { font-size:40px; font-weight:900; line-height:1; color:#fff; letter-spacing:-0.01em; font-variant-numeric:tabular-nums;
+    text-shadow:0 2px 12px rgba(0,0,0,0.7); }
+.bcl-sub { font-size:11px; color:rgba(255,255,255,0.82); max-width:98%; line-height:1.3; margin:0 auto;
+    text-shadow:0 1px 6px rgba(0,0,0,0.8); }
+/* Accent the headline stat to its highlight type. */
+.bcl-upset .bcl-big    { color:hsl(8,90%,72%); }
+.bcl-improved .bcl-big { color:hsl(140,72%,68%); }
+.bcl-streak .bcl-big   { color:hsl(28,92%,66%); }
+.bcl-peak .bcl-big     { color:hsl(45,94%,68%); }
+
+/* ── Player detail card ────────────────────────────────────────────────────────
+   Opens when a banter-card avatar is clicked. An arcade "fighter dossier": rank
+   badge, win-streak, recent FORM, ELO trend, win-splits by vision/rounds and avg
+   biome by map size, plus tonight's head-to-head. Themed by the model's hue. */
+.pcm-backdrop {
+    position: fixed; inset: 0; z-index: 1300; --pc-hue: 190;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+    background: rgba(6, 7, 16, 0.74); backdrop-filter: blur(6px);
+}
+.pcm-backdrop[hidden] { display: none; }
+.pcm-card {
+    position: relative; width: 100%; max-width: 560px; max-height: 90vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: linear-gradient(180deg, hsl(var(--pc-hue) 32% 11%), #0c0e17 62%);
+    border: 1px solid hsl(var(--pc-hue) 60% 50% / 0.5); border-radius: 16px;
+    box-shadow: 0 30px 90px rgba(0,0,0,0.6), 0 0 0 1px hsl(var(--pc-hue) 70% 55% / 0.15),
+                0 0 64px hsl(var(--pc-hue) 70% 45% / 0.18);
+    animation: pcm-slam 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes pcm-slam { from { opacity: 0; transform: translateY(14px) scale(0.94); } to { opacity: 1; transform: none; } }
+.pcm-scroll { overflow-y: auto; padding: 24px; }
+.pcm-close {
+    position: absolute; top: 12px; right: 12px; z-index: 5; width: 32px; height: 32px;
+    border-radius: 9px; cursor: pointer; font-size: 14px;
+    background: rgba(10,12,20,0.6); color: #cdd6e6; border: 1px solid hsl(var(--pc-hue) 40% 50% / 0.4);
+    backdrop-filter: blur(4px);
+}
+.pcm-close:hover { color: #fff; border-color: hsl(var(--pc-hue) 65% 60%); }
+
+.pcm-hero { display: flex; gap: 16px; align-items: center; }
+.pcm-ava-wrap { position: relative; flex: 0 0 auto; }
+.pcm-ava {
+    width: 104px; height: 104px; border-radius: 16px; overflow: hidden; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; font-weight: 800; color: hsl(var(--pc-hue) 50% 80%);
+    background: radial-gradient(120% 120% at 50% 0%, hsl(var(--pc-hue) 45% 24%), #0a0c14);
+    border: 2px solid hsl(var(--pc-hue) 60% 55% / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--pc-hue) 70% 50% / 0.2), 0 10px 30px hsl(var(--pc-hue) 60% 25% / 0.4);
+}
+.pcm-ava.has-avatar { color: transparent; }
+.pcm-ava video.avatar-clip, .pcm-ava canvas.avatar-clip {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+.pcm-rank {
+    position: absolute; top: -8px; left: -8px; z-index: 2;
+    padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 800;
+    background: #11131e; color: hsl(var(--pc-hue) 55% 72%); border: 1px solid hsl(var(--pc-hue) 60% 55% / 0.6);
+}
+.pcm-rank.crown { color: #ffd76a; border-color: #d8a93e; background: linear-gradient(180deg,#2a2310,#14131e); }
+.pcm-id { min-width: 0; }
+.pcm-name { font-size: 24px; font-weight: 800; color: #f1f4fb; line-height: 1.1; }
+.pcm-sub { font-size: 13px; color: hsl(var(--pc-hue) 25% 72%); margin-top: 3px; }
+.pcm-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.pcm-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 6px;
+           background: rgba(255,255,255,0.05); color: #aeb8c9; border: 1px solid rgba(255,255,255,0.08); }
+.pcm-tag.tier { color: hsl(var(--pc-hue) 55% 70%); border-color: hsl(var(--pc-hue) 50% 50% / 0.4); }
+.pcm-tag.host.is-cloud { color: #c98bd8; }
+.pcm-tag.tech { font-family: ui-monospace, monospace; text-transform: none; }
+.pcm-role { margin-top: 10px; display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: 0.05em;
+            padding: 3px 11px; border-radius: 999px; }
+.pcm-role:empty { display: none; }
+.pcm-role.odds-fav { color: #7de2a0; background: hsl(140 50% 40% / 0.18); border: 1px solid hsl(140 50% 45% / 0.4); }
+.pcm-role.odds-dog { color: #f3a06a; background: hsl(20 60% 45% / 0.16); border: 1px solid hsl(20 60% 50% / 0.4); }
+.pcm-role.odds-even { color: #cdd6e6; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); }
+
+.pcm-body { margin-top: 20px; }
+.pcm-loading { color: #8b95a5; font-size: 13px; padding: 18px 0; text-align: center; }
+.pcm-unproven { display: flex; gap: 14px; align-items: center; padding: 20px; border-radius: 12px;
+                background: rgba(255,255,255,0.03); border: 1px dashed hsl(var(--pc-hue) 40% 50% / 0.35); }
+.pcm-unproven-bolt { font-size: 30px; }
+.pcm-unproven b { color: #f1f4fb; font-size: 15px; }
+.pcm-unproven p { color: #8b95a5; font-size: 12.5px; margin-top: 3px; line-height: 1.5; }
+
+.pcm-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pcm-tile { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 12px 4px;
+            background: hsl(var(--pc-hue) 25% 13% / 0.6); border: 1px solid rgba(255,255,255,0.07); border-radius: 11px; }
+.pcm-tile b { font-size: 20px; font-weight: 800; color: #f1f4fb; line-height: 1; }
+.pcm-tile span { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: #8b95a5; }
+.pcm-tile.hot b { color: #ffb053; }
+.pcm-subline { display: flex; justify-content: space-between; font-size: 11px;
+               color: hsl(var(--pc-hue) 30% 66%); margin-top: 9px; padding: 0 2px; }
+
+.pcm-form { display: flex; align-items: center; gap: 10px; margin-top: 15px; }
+.pcm-form-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #8b95a5; font-weight: 700; }
+.pcm-pips { display: flex; gap: 4px; flex-wrap: wrap; }
+.pcm-pip { width: 11px; height: 11px; border-radius: 3px; background: #2a3140; }
+.pcm-pip.w { background: hsl(140 60% 50%); box-shadow: 0 0 6px hsl(140 60% 50% / 0.5); }
+.pcm-pip.l { background: hsl(0 62% 55%); }
+
+.pcm-vs { margin-top: 15px; padding: 10px 13px; border-radius: 10px; font-size: 13px; color: #cdd6e6;
+          background: hsl(var(--pc-hue) 40% 16% / 0.5); border: 1px solid hsl(var(--pc-hue) 55% 50% / 0.35); }
+.pcm-vs b { color: #f1f4fb; }
+.pcm-vs.new { color: #aeb8c9; }
+.pcm-vs-rec { font-weight: 800; }
+.pcm-vs-rec.is-win { color: #7de2a0; } .pcm-vs-rec.is-loss { color: #f3796a; } .pcm-vs-rec.is-even { color: #cdd6e6; }
+
+.pcm-spark { margin-top: 17px; }
+.pcm-sub2 { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; color: #8b95a5; margin-bottom: 5px; }
+.pcm-svg { width: 100%; height: 38px; display: block; }
+.pcm-spark-line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.pcm-svg.up .pcm-spark-line { stroke: hsl(140 60% 55%); }
+.pcm-svg.up .pcm-spark-fill { fill: hsl(140 60% 50% / 0.14); }
+.pcm-svg.down .pcm-spark-line { stroke: hsl(0 65% 60%); }
+.pcm-svg.down .pcm-spark-fill { fill: hsl(0 65% 55% / 0.12); }
+.pcm-spark-fill { stroke: none; }
+.pcm-spark-base { stroke: #8b95a5; stroke-width: 0.5; stroke-dasharray: 2 2; opacity: 0.5; }
+.pcm-spark-dot { fill: #f1f4fb; }
+
+.pcm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 18px; margin-top: 17px; }
+.pcm-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pcm-split { display: flex; flex-direction: column; gap: 5px; }
+.pcm-bar { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 8px; }
+.pcm-bk { font-size: 11px; color: #e7ecf3; font-weight: 600; text-transform: capitalize;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm-bt { height: 8px; border-radius: 999px; background: #232a36; overflow: hidden; }
+.pcm-bf { display: block; height: 100%; border-radius: 999px; }
+.pcm-bf.biome { background: #57c8dd; }
+.pcm-bv { font-size: 10px; color: #8b95a5; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pcm-bv em { font-style: normal; opacity: 0.6; }
+.pcm-rival { display: flex; justify-content: space-between; align-items: center;
+             font-size: 12px; padding: 1px 0; color: #cdd6e6; }
+.pcm-rrec { font-weight: 800; font-variant-numeric: tabular-nums; }
+.pcm-rrec.is-win { color: #7de2a0; } .pcm-rrec.is-loss { color: #f3796a; } .pcm-rrec.is-even { color: #8b95a5; }
+
+/* The banter-card avatar becomes a tap target. */
+.aic-avatar.pcm-clickable { cursor: pointer; }
+.aic-avatar.pcm-clickable:hover { box-shadow: 0 0 0 2px hsl(var(--aic-hue, 190) 70% 60% / 0.75); }
+.aic-avatar.pcm-clickable:focus-visible { outline: 2px solid hsl(var(--aic-hue, 190) 70% 60%); outline-offset: 2px; }

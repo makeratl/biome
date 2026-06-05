@@ -108,6 +108,7 @@ def init_db():
         conn = _connect()
         conn.executescript(SCHEMA)
         _add_column_if_missing(conn, 'matches', 'map_strategy', 'TEXT')
+        _add_column_if_missing(conn, 'matches', 'seed', 'INTEGER')
         conn.commit()
         count = conn.execute('SELECT COUNT(*) AS c FROM matches').fetchone()['c']
         if count == 0 and os.path.exists(LEGACY_LOG):
@@ -202,12 +203,12 @@ def _insert_match(conn, body, played_at=None):
     cur = conn.execute(
         """INSERT INTO matches
            (played_at, tournament_id, round, mode, format, map_size, map_strategy, rounds,
-            p1, p2, p1_score, p2_score, winner, loser, margin)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            p1, p2, p1_score, p2_score, winner, loser, margin, seed)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (played_at, body.get('tournament_id'), body.get('round'),
          body.get('mode', 'standard'), body.get('format'), body.get('map_size'),
          body.get('map_strategy'), body.get('rounds'),
-         p1, p2, p1_score, p2_score, winner, loser, margin))
+         p1, p2, p1_score, p2_score, winner, loser, margin, body.get('seed')))
     match_id = cur.lastrowid
 
     _apply_player(conn, match_id, played_at, m1, p2, new_r1, e1, s1 == 1)
@@ -591,14 +592,19 @@ def get_model_detail(name):
         m['h2h'] = sorted(h2h.values(), key=lambda x: (-x['games'], -x['winrate']))
 
         def split(col):
+            # avg_score = this model's own biome (ecosystem) score in those matches —
+            # a magnitude that scales with the board, so it's the meaningful vertical
+            # for map size (the win/loss winrate stays the read for the other splits).
             rows = conn.execute(
                 f"""SELECT {col} AS key,
                           SUM(CASE WHEN winner=? THEN 1 ELSE 0 END) AS wins,
-                          COUNT(*) AS games
+                          COUNT(*) AS games,
+                          AVG(CASE WHEN p1=? THEN p1_score ELSE p2_score END) AS avg_score
                     FROM matches WHERE (p1=? OR p2=?) AND {col} IS NOT NULL
-                    GROUP BY {col} ORDER BY games DESC""", (name, name, name)).fetchall()
+                    GROUP BY {col} ORDER BY games DESC""", (name, name, name, name)).fetchall()
             return [{'key': r['key'], 'wins': r['wins'], 'games': r['games'],
-                     'winrate': round(r['wins'] / r['games'] * 100) if r['games'] else 0}
+                     'winrate': round(r['wins'] / r['games'] * 100) if r['games'] else 0,
+                     'avg_score': round(r['avg_score']) if r['avg_score'] is not None else 0}
                     for r in rows]
         m['splits'] = {'mode': split('mode'), 'map_size': split('map_size'), 'rounds': split('rounds'),
                        'map_strategy': split('map_strategy')}
