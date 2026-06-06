@@ -7,11 +7,17 @@ import { Renderer } from './renderer.js';
 import { Simulation } from './simulation.js';
 import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
-import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel } from './ai.js';
+import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel, isModelResident } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { buildField, FORMATS, DEFAULT_FORMAT } from './tournament-format.js';
+import { getStrategy } from './map-strategies.js';
 import { openCodex } from './codex.js';
 import { openLeaderboard } from './leaderboard.js';
+import { buildBiomeRosters, repaintBiomeRosterIcons, updateBiomeRosters } from './biome-roster.js';
+import { Biosphere } from './biosphere.js';
+import { trophicRead } from './trophic.js';
+import { setCaptureEnabled, isCaptureEnabled, newMatchUid, captureRound } from './capture.js';
+import { DYNAMICS_SCHEMA, PRESETS, applyDynamics, loadDynamics, saveDynamics, resetDynamics, settingValue, activePreset } from './game-dynamics.js';
 
 // Models excluded from tournaments: embeddings, vision / vision-language, and
 // code specialists. They can't follow the game's JSON action protocol or aren't
@@ -21,9 +27,11 @@ import { openLeaderboard } from './leaderboard.js';
 //   moondream/llava/*-vl → vision & vision-language
 //   *coder*/codellama    → code specialists
 const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vision|[-:]vl\b/i;
-import { fetchRankings, fetchHistory, renderRankingsPanel, renderHistoryPanel, postResult, resetRankings, renderOddsInto, expectedScore } from './rankings.js';
+import { fetchRankings, fetchHistory, postResult, renderOddsInto, expectedScore } from './rankings.js';
 import { applyAvatar, applyAvatarVideo, clearAvatar, preloadAvatars } from './model-avatar.js';
-import { resolveModel, paramLabel, mightLevel, titleCase, resolvePlayerPalettes } from './model-identity.js';
+import { openPlayerCard } from './player-card.js';
+import { resolveModel, titleCase, resolvePlayerPalettes } from './model-identity.js';
+import { loadIdentityOverrides } from './identity-overrides.js';
 import { shortId } from './util.js';
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
@@ -37,6 +45,10 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('game-canvas');
         this.seed = Math.floor(Math.random() * 100000);
+        // Apply the player's persisted Game Dynamics overrides onto CONFIG before
+        // any board/species is read. Baseline-clean if nothing was saved.
+        this._dynamics = loadDynamics();
+        applyDynamics(this._dynamics);
         this.grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS, CONFIG.HEX_SIZE);
         this.renderer = new Renderer(this.canvas, this.grid);
         this.simulation = new Simulation(this.grid);
@@ -62,8 +74,10 @@ class Game {
         generateTerrain(this.grid, this.seed);
         this.renderer.render();
         this._buildSpeciesPalette();
+        buildBiomeRosters();
         this._bindEvents();
         this._initModelConfig();
+        this._initSettingsPanel();
         this._initMatchSection();
         this._initLauncher();
         this._initMuteToggle();
@@ -71,16 +85,40 @@ class Game {
         this._initActivityTicker();
         this._initConsole();
         this._initAICards();
+        this._setMatchCardsActive(false);   // cards stay hidden until a match starts
         this._updateWorldInfo();
         this._scoreHistory = [];
+        this.biosphere = new Biosphere(document.getElementById('bio-orb'));
+        this.biosphere.start();
         this._updateCensus();
-        this._renderWorldSnapshot();
         this._updateTurnUI();
 
         // Show launcher overlay on first load — game does NOT auto-start
         this._openLauncherWelcome();
 
         console.log(`Biome initialized — seed: ${this.seed}`);
+        this._maybeAutoStart();
+    }
+
+    // Headless data-generation entry: `?gen=tournament` or `?gen=watch&p1=..&p2=..`
+    // auto-starts a match for the Training Lab generation harness (dev-session.mjs
+    // `generate` mode). Capture turns on automatically once an AI is assigned.
+    _maybeAutoStart() {
+        let params;
+        try { params = new URLSearchParams(location.search); } catch (_) { return; }
+        const gen = params.get('gen');
+        if (!gen) return;
+        console.log(`[gen] auto-start requested: ${gen}`);
+        if (gen === 'tournament') {
+            setTimeout(() => { try { this._startTournament(); } catch (e) { console.error('[gen]', e); } }, 800);
+        } else if (gen === 'watch') {
+            const p1Model = params.get('p1'), p2Model = params.get('p2');
+            if (!p1Model || !p2Model) { console.error('[gen] watch needs p1 & p2'); return; }
+            // Loop watch matches so a gauntlet (challenger vs base, N games) runs
+            // unattended — _showGameOver re-starts this when each match ends.
+            this._genWatch = { mode: 'watch', p1Model, p2Model };
+            setTimeout(() => { try { this._startMatch(this._genWatch); } catch (e) { console.error('[gen]', e); } }, 800);
+        }
     }
 
     // ── Activity Ticker (bottom-edge log feed) ──────────────
@@ -240,6 +278,7 @@ class Game {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const open = dropdown.classList.contains('gm-hidden');
+            if (open) this._syncMagnifierMenu();
             setOpen(open);
         });
 
@@ -260,13 +299,39 @@ class Game {
                     this._openLauncherWelcome();
                 } else if (action === 'manage-models') {
                     this._openModelConfigModal();
+                } else if (action === 'settings') {
+                    this._openSettingsModal();
                 } else if (action === 'rankings') {
-                    const rkBtn = document.getElementById('btn-rankings');
-                    if (rkBtn) rkBtn.click();
+                    // Full-screen Hall of Champions. Opened in-game, so Back drops
+                    // the overlay back to the board rather than the launcher welcome.
+                    this._showRankingsScene({ onBack: () => this._closeLauncherWelcome() });
+                } else if (action === 'labs') {
+                    this._openLabsChooser();
+                } else if (action === 'field-guide') {
+                    openCodex();
                 } else if (action === 'tournament-stats') {
                     this.tournament._toggleStats(true);
+                } else if (action === 'magnifier') {
+                    this._toggleMagnifier();
                 }
             });
+        }
+
+        // Reflect magnifier state when the menu opens.
+        this._syncMagnifierMenu();
+    }
+
+    /** Flip the magnifier loupe on/off and sync the menu indicator. */
+    _toggleMagnifier() {
+        if (!this.renderer) return;
+        this.renderer.setMagnifierEnabled(!this.renderer.isMagnifierEnabled());
+        this._syncMagnifierMenu();
+    }
+
+    _syncMagnifierMenu() {
+        const item = document.querySelector('.gm-item[data-gm="magnifier"]');
+        if (item && this.renderer) {
+            item.classList.toggle('gm-active', this.renderer.isMagnifierEnabled());
         }
     }
 
@@ -274,7 +339,7 @@ class Game {
      *  HUD console. Tournament code still calls this. */
     _refreshRightStackVisibility() { /* retired — console is always present */ }
 
-    // ── HUD console (bottom-center: scoreline rail + Stats/Bracket/Menu) ──
+    // ── HUD console (bottom-center: scoreline rail + Stats/Bracket) ──
 
     _initConsole() {
         // Tab switching
@@ -293,19 +358,8 @@ class Game {
             e.stopPropagation();
             this.tournament?._showExpandedBracket?.();
         });
-
-        // Menu items (absorbed from the old gear dropdown)
-        for (const item of document.querySelectorAll('#hud-console .hc-menu-item')) {
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const action = item.dataset.hcMenu;
-                if (action === 'new-match') this._openLauncherWelcome();
-                else if (action === 'manage-models') this._openModelConfigModal();
-                else if (action === 'rankings') document.getElementById('btn-rankings')?.click();
-                else if (action === 'labs') this._openLabsChooser();
-                else if (action === 'field-guide') openCodex();
-            });
-        }
+        // Nav (New Match / Field Guide / Rankings / Labs / Manage Models) now
+        // lives in the header gear dropdown — see _initGearMenu.
     }
 
     _consoleCollapsed() {
@@ -405,7 +459,7 @@ class Game {
             v.classList.toggle('hc-view-hidden', v.dataset.hcView !== target);
         }
         // Reflect the active tab on the collapse handle
-        const meta = { stats: ['⛧', 'Stats'], bracket: ['⚔', 'Bracket'], menu: ['≡', 'Menu'] }[target];
+        const meta = { stats: ['⛧', 'Stats'], bracket: ['⚔', 'Bracket'] }[target];
         if (meta) {
             const ico = document.getElementById('hc-handle-icon');
             const lbl = document.getElementById('hc-handle-label');
@@ -464,6 +518,158 @@ class Game {
         if (modal) modal.style.display = 'none';
     }
 
+    // ── Settings panel (global, tabbed) — Game Dynamics tab ──────
+    _initSettingsPanel() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        document.getElementById('btn-settings-close')?.addEventListener('click', () => this._closeSettingsModal());
+        modal.querySelector('.mcm-backdrop')?.addEventListener('click', () => this._closeSettingsModal());
+        document.getElementById('btn-settings-reset')?.addEventListener('click', () => {
+            this._dynamics = resetDynamics();
+            this._renderSettingsValues();
+            this._afterDynamicsChange();
+        });
+        for (const tab of modal.querySelectorAll('.hc-tab[data-settings-tab]')) {
+            tab.addEventListener('click', () => this._switchSettingsTab(tab.dataset.settingsTab));
+        }
+        this._buildSettingsDynamics();
+        this._renderSettingsValues();
+    }
+
+    _openSettingsModal() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        this._renderSettingsValues();   // reflect any external/default state
+        modal.style.display = 'flex';
+    }
+
+    _closeSettingsModal() {
+        const modal = document.getElementById('settings-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    _switchSettingsTab(name) {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        for (const tab of modal.querySelectorAll('.hc-tab[data-settings-tab]')) {
+            const on = tab.dataset.settingsTab === name;
+            tab.classList.toggle('active', on);
+            tab.setAttribute('aria-selected', String(on));
+        }
+        for (const view of modal.querySelectorAll('.settings-view[data-settings-view]')) {
+            view.classList.toggle('hc-view-hidden', view.dataset.settingsView !== name);
+        }
+    }
+
+    // Build the slider DOM once from DYNAMICS_SCHEMA (single source of truth).
+    _buildSettingsDynamics() {
+        const presetRow = document.getElementById('settings-preset-row');
+        if (presetRow) {
+            presetRow.innerHTML = '';
+            for (const name of Object.keys(PRESETS)) {
+                const btn = document.createElement('button');
+                btn.className = 'settings-preset';
+                btn.dataset.preset = name;
+                btn.textContent = name;
+                btn.addEventListener('click', () => {
+                    this._dynamics = { ...PRESETS[name] };
+                    saveDynamics(this._dynamics);
+                    applyDynamics(this._dynamics);
+                    this._renderSettingsValues();
+                    this._afterDynamicsChange();
+                });
+                presetRow.appendChild(btn);
+            }
+        }
+
+        const body = document.getElementById('settings-dynamics-body');
+        if (!body) return;
+        body.innerHTML = '';
+
+        // Group sliders in declaration order; Per-Species lives in an expander.
+        const groups = [];
+        const byName = {};
+        for (const s of DYNAMICS_SCHEMA) {
+            if (!byName[s.group]) { byName[s.group] = []; groups.push(s.group); }
+            byName[s.group].push(s);
+        }
+
+        const rowHTML = (s) => `
+            <div class="settings-row" data-row="${s.id}">
+                <label class="settings-row-label" title="${s.hint || ''}">${s.label}</label>
+                <input type="range" class="world-range settings-range" data-slider="${s.id}"
+                       min="${s.min}" max="${s.max}" step="${s.step}">
+                <span class="mw-readout settings-readout" data-readout="${s.id}"></span>
+            </div>`;
+
+        for (const group of groups) {
+            const rows = byName[group].map(rowHTML).join('');
+            if (group === 'Per-Species') {
+                const det = document.createElement('details');
+                det.className = 'settings-advanced';
+                det.innerHTML = `<summary>Per-Species (advanced)</summary>${rows}`;
+                body.appendChild(det);
+            } else {
+                const sec = document.createElement('div');
+                sec.className = 'settings-group';
+                sec.innerHTML = `<div class="hc-section-label">${group}</div>${rows}`;
+                body.appendChild(sec);
+            }
+        }
+
+        // Wire slider input — live readout + persist + apply.
+        for (const input of body.querySelectorAll('.settings-range')) {
+            input.addEventListener('input', () => {
+                const slider = DYNAMICS_SCHEMA.find(s => s.id === input.dataset.slider);
+                if (!slider) return;
+                const v = parseFloat(input.value);
+                this._dynamics = { ...this._dynamics, [slider.id]: v };
+                this._updateSettingsReadout(slider, v);
+                saveDynamics(this._dynamics);
+                applyDynamics(this._dynamics);
+                this._highlightActivePreset();
+                this._afterDynamicsChange();
+            });
+        }
+    }
+
+    _fmtDynamic(slider, v) {
+        if (slider.kind === 'int') return `${Math.round(v)}${slider.unit || ''}`;
+        return `${v.toFixed(2)}×`;
+    }
+
+    _updateSettingsReadout(slider, v) {
+        const out = document.querySelector(`.settings-readout[data-readout="${slider.id}"]`);
+        if (out) {
+            out.textContent = this._fmtDynamic(slider, v);
+            out.classList.toggle('settings-readout-off', v !== slider.default);
+        }
+    }
+
+    // Push this._dynamics into every slider + readout, and highlight presets.
+    _renderSettingsValues() {
+        for (const slider of DYNAMICS_SCHEMA) {
+            const v = settingValue(this._dynamics, slider);
+            const input = document.querySelector(`.settings-range[data-slider="${slider.id}"]`);
+            if (input) input.value = String(v);
+            this._updateSettingsReadout(slider, v);
+        }
+        this._highlightActivePreset();
+    }
+
+    _highlightActivePreset() {
+        const active = activePreset(this._dynamics);
+        for (const btn of document.querySelectorAll('.settings-preset')) {
+            btn.classList.toggle('on', btn.dataset.preset === active);
+        }
+    }
+
+    // Re-render the board when idle so terrain/nutrient-tint changes show; live
+    // gameplay values take effect on the next simulation read regardless.
+    _afterDynamicsChange() {
+        if (!this.simulating) this.renderer?.render();
+    }
+
     _playSound(key) {
         try { playSound(key); } catch (_) { /* audio not ready */ }
     }
@@ -514,12 +720,20 @@ class Game {
 
         const ai = this.aiPlayers[playerNum];
         if (ai) {
-            if (overlayEl) overlayEl.style.display = '';
             const id = resolveModel(ai.model);
             avatarEl.textContent = this._modelInitials(ai.model);   // fallback under the avatar
-            applyAvatar(avatarEl, ai.model);                         // baked PNG if one exists
+            applyAvatarVideo(avatarEl, ai.model, { category: 'idle', loop: true });  // idle loop, else baked PNG, else procedural
             nameEl.textContent = this._prettyModelName(ai.model);
-            // Tint the whole card with the model's brand hue (bars, frame, role glow).
+            // The avatar is a tap target → opens the player detail card.
+            avatarEl.classList.add('pcm-clickable');
+            avatarEl.setAttribute('role', 'button');
+            avatarEl.setAttribute('tabindex', '0');
+            avatarEl.title = 'View player card';
+            avatarEl.onclick = () => this._openPlayerCard(playerNum);
+            avatarEl.onkeydown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._openPlayerCard(playerNum); }
+            };
+            // Tint the whole card with the model's brand hue (frame, role glow).
             if (overlayEl) overlayEl.style.setProperty('--aic-hue', id.hue);
             // Subtitle: "Class · Origin" — the creature archetype + the vendor
             // (drop the vendor when it's the unknown-family placeholder).
@@ -529,52 +743,70 @@ class Game {
             }
             // Deployment tier line.
             if (tierEl) tierEl.textContent = /cloud/i.test(ai.model) ? 'CLOUD' : 'LOCAL';
-            // MIGHT is static (size-derived) — set it immediately.
-            this._setStatRow(playerNum, 'might', mightLevel(ai.model), paramLabel(ai.model));
             if (statusEl) {
                 // Show rank/place status (persistent — fetched async below)
-                statusEl.textContent = '— ELO · — W —L';
+                statusEl.innerHTML = '<span class="aic-elo">—<i>ELO</i></span>';
                 statusEl.className = 'aic-status';
             }
-            // Async populate ranking-dependent stats (RENOWN, GRIT, status, role).
+            // Async populate ranking-dependent status + role pill.
             this._updateAICardStats(playerNum);
         } else {
-            // Human slots get no fighter card — hide the whole overlay.
-            if (overlayEl) overlayEl.style.display = 'none';
+            // Human slots get a card too (for the creature roster), just no AI
+            // identity/banter. Tint to the player's own hue.
             clearAvatar(avatarEl);
+            avatarEl.classList.remove('pcm-clickable');
+            avatarEl.removeAttribute('role'); avatarEl.removeAttribute('tabindex');
+            avatarEl.onclick = null; avatarEl.onkeydown = null; avatarEl.title = '';
             avatarEl.textContent = `P${playerNum}`;
             nameEl.textContent = `Player ${playerNum}`;
             if (subEl) subEl.textContent = '';
+            if (overlayEl) {
+                const hue = (playerNum === 1 ? CONFIG.PLAYER_1 : CONFIG.PLAYER_2).PRIMARY.h;
+                overlayEl.style.setProperty('--aic-hue', hue);
+            }
+            if (tierEl) tierEl.textContent = 'HUMAN';
+            const roleEl = document.getElementById(`aic-role-p${playerNum}`);
+            if (roleEl) { roleEl.textContent = ''; roleEl.className = 'aic-role'; }
             if (statusEl) {
                 statusEl.textContent = 'Human';
                 statusEl.className = 'aic-status';
             }
         }
-        this._syncBanterMode();
     }
 
-    // Reserve side gutters (so the board can't grow over the cards) only when at
-    // least one banter card is in play. _refitBoard() recomputes against the new
-    // container padding; pure human-vs-human keeps the board full-bleed.
-    _syncBanterMode() {
+    // Show/hide both player cards and reserve their board gutters. Cards (with
+    // the creature roster) appear for AI and human slots alike while a match is
+    // running, and vanish on the launcher/menu. Call BEFORE a grid rebuild so
+    // the board fits between the cards. _refitBoard recomputes against the new
+    // container padding.
+    _setMatchCardsActive(active) {
+        for (const p of [1, 2]) {
+            const el = document.getElementById(`ai-overlay-p${p}`);
+            if (el) el.style.display = active ? '' : 'none';
+        }
         const container = document.querySelector('.canvas-container');
-        if (!container) return;
-        const leftAI = !!this.aiPlayers[1], rightAI = !!this.aiPlayers[2];
-        const changed = container.classList.contains('banter-left') !== leftAI
-            || container.classList.contains('banter-right') !== rightAI;
-        container.classList.toggle('banter-left', leftAI);
-        container.classList.toggle('banter-right', rightAI);
-        if (changed) this._refitBoard();
+        if (container) {
+            container.classList.toggle('banter-left', active);
+            container.classList.toggle('banter-right', active);
+        }
+        this._refitBoard();
     }
 
-    // Set one stat row's bar fill (level 0..5) and raw value label.
-    _setStatRow(playerNum, stat, level, value) {
-        const row = document.querySelector(`#aic-statblock-p${playerNum} [data-stat="${stat}"]`);
-        if (!row) return;
-        const fill = row.querySelector('.aic-bar-fill');
-        const val = row.querySelector('.aic-stat-val');
-        if (fill) fill.style.width = `${Math.max(0, Math.min(5, level)) / 5 * 100}%`;
-        if (val) val.textContent = value;
+    // Open the gamified player detail card for a banter-card avatar. Resolves the
+    // canonical ranking name here (reusing _fetchRanking's aliasing) and hands the
+    // live opponent in so the card can show tonight's head-to-head.
+    async _openPlayerCard(playerNum) {
+        const ai = this.aiPlayers[playerNum];
+        if (!ai) return;
+        const opp = this.aiPlayers[playerNum === 1 ? 2 : 1];
+        const ranking = await this._fetchRanking(ai.model);
+        openPlayerCard({
+            model: ai.model,
+            charName: this._aiCharacterName(ai.model),
+            prettyName: this._prettyModelName(ai.model),
+            ranking,
+            opponent: opp ? { model: opp.model, charName: this._aiCharacterName(opp.model) } : null,
+        });
     }
 
     async _updateAICardStats(playerNum) {
@@ -586,21 +818,19 @@ class Game {
         if (this.aiPlayers[playerNum]?.model !== ai.model) return;
 
         if (r) {
-            // RENOWN — ELO mapped to a 1..5 bar (≈800 floor, ≈1450 ceiling).
-            const renown = Math.max(1, Math.min(5, Math.round((r.elo - 800) / 130)));
-            this._setStatRow(playerNum, 'renown', renown, Math.round(r.elo));
-            // GRIT — win-rate over a provisional ledger (<3 games stays at one pip).
-            const games = (r.wins || 0) + (r.losses || 0);
-            const grit = games < 3 ? 1 : Math.max(1, Math.min(5, Math.round((r.wins / games) * 5)));
-            this._setStatRow(playerNum, 'grit', grit, `${r.wins}-${r.losses}`);
             if (statusEl) {
-                const rankPrefix = r.rank ? `#${r.rank} · ` : '';
-                statusEl.textContent = `${rankPrefix}${Math.round(r.elo)} ELO · ${r.wins}W ${r.losses}L`;
+                const rankHtml = r.rank ? `<span class="aic-rank">#${r.rank}</span>` : '';
+                statusEl.className = 'aic-status';
+                statusEl.innerHTML =
+                    `${rankHtml}` +
+                    `<span class="aic-elo">${Math.round(r.elo)}<i>ELO</i></span>` +
+                    `<span class="aic-record"><b>${r.wins}</b>W <b>${r.losses}</b>L</span>`;
             }
         } else {
-            this._setStatRow(playerNum, 'renown', 1, '—');
-            this._setStatRow(playerNum, 'grit', 1, '—');
-            if (statusEl) statusEl.textContent = 'Unranked';
+            if (statusEl) {
+                statusEl.className = 'aic-status';
+                statusEl.innerHTML = '<span class="aic-unranked">Unranked</span>';
+            }
         }
         this._renderRole(playerNum, r, this._matchupOdds);
     }
@@ -779,7 +1009,10 @@ class Game {
 
     _bindEvents() {
         this.canvas.addEventListener('mousemove', (e) => this._onHover(e));
-        this.canvas.addEventListener('mouseleave', () => this._hideCellTooltip());
+        this.canvas.addEventListener('mouseleave', () => {
+            this._hideCellTooltip();
+            this.renderer?.hideMagnifier();
+        });
         this.canvas.addEventListener('click', (e) => this._onClick(e));
 
         // Keep the board fitted to the window as it resizes (always the current
@@ -817,6 +1050,9 @@ class Game {
                     endTurn();
                     e.preventDefault();
                 }
+            } else if (e.key === 'm' || e.key === 'M') {
+                this._toggleMagnifier();
+                e.preventDefault();
             }
         });
     }
@@ -935,13 +1171,20 @@ class Game {
         const y = (e.clientY - rect.top) * sy;
         const cell = this.renderer.getCellAtPixel(x, y);
 
+        // Feed the magnifier loupe before render() — its tail paints the loupe.
+        if (cell) this.renderer.setMagnifierTarget(cell, e.clientX, e.clientY);
+        else this.renderer.hideMagnifier();
+
         this.renderer.render();
         if (cell) {
             const canPlace = this.turns.isPlayerTurn() && this.selectedSpecies && cell.terrain !== TERRAIN_TYPES.WATER;
             const color = canPlace ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)';
             this.renderer.highlightCell(cell, color);
             this._updateCellInfo(cell);
-            this._showCellTooltip(cell, e.clientX, e.clientY);
+            // The loupe carries its own cell stats, so the floating tooltip would
+            // be a redundant second hover display — suppress it while it's on.
+            if (this.renderer.isMagnifierEnabled()) this._hideCellTooltip();
+            else this._showCellTooltip(cell, e.clientX, e.clientY);
         } else {
             this._hideCellTooltip();
         }
@@ -976,7 +1219,7 @@ class Game {
         // Check plant cap per cell
         if (template.type === 'plant') {
             const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant');
-            if (existingPlants.length >= 2) {
+            if (existingPlants.length >= CONFIG.SIM.PLANT_CAP) {
                 this._log('Cell already has maximum plants');
                 return;
             }
@@ -1016,7 +1259,29 @@ class Game {
 
         this.simulating = false;
         this._log(`Round ${this.turns.round} simulation complete`);
+        this._captureRound();
         this.turns.simulationComplete();
+    }
+
+    // Per-round reward signals (full board — validator-only, never fed to a model
+    // as input). Joined to the round's turn records by match_uid + round.
+    _captureRound() {
+        if (!isCaptureEnabled()) return;
+        try {
+            const census = this.simulation.census();
+            const tr = (p) => trophicRead(census[p].plants, census[p].herbivores, census[p].predators);
+            captureRound({
+                schema: 1,
+                match_uid: this.matchUid || null,
+                seed: this.seed,
+                round: this.turns.round,
+                census,
+                events: this.simulation.getEvents ? this.simulation.getEvents() : null,
+                final_score: this.simulation.finalScore(),
+                score_history: this._scoreHistory[this._scoreHistory.length - 1] || null,
+                trophic: { 1: tr(1), 2: tr(2) },
+            });
+        } catch (_) { /* capture must never break the round */ }
     }
 
     _sleep(ms) {
@@ -1294,9 +1559,65 @@ class Game {
             // Track last lead-leader to detect comebacks
             lastLeader:    0,
             biggestDeficit: { 1: 0, 2: 0 },
+            // GOLD MOVE detection — per-player running state for the in-game
+            // training-data celebration (see _detectMilestones).
+            goldMoves:  { 1: 0, 2: 0 },
+            goldMargin: { 1: 0, 2: 0 },
+            goldHealth: { 1: 0, 2: 0 },
+            goldRisk:   { 1: 1, 2: 1 },
         };
         this._calloutQueue = [];
         this._calloutBusy = false;
+        // Clear both cards' gold-move trays for the new match.
+        this._renderGoldStars(1);
+        this._renderGoldStars(2);
+    }
+
+    // Paint a player's on-board card with one HOLLOW ☆ per training-gold move this
+    // match (this._milestones.goldMoves[p]) — these are POTENTIAL gold: a move only
+    // becomes earned training gold if its side wins (the dataset gold-gate). Appends
+    // only the missing stars so existing ones don't re-animate; `pop` pops the
+    // newest, then yields back to the idle shimmer. Hidden at zero.
+    _renderGoldStars(playerNum, pop = false) {
+        const el = document.getElementById(`aic-golds-p${playerNum}`);
+        if (!el) return;
+        const n = (this._milestones?.goldMoves?.[playerNum]) || 0;
+        if (n <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        el.hidden = false;
+        el.setAttribute('aria-label', `${n} potential gold move${n > 1 ? 's' : ''} this match`);
+        while (el.children.length > n) el.removeChild(el.lastChild);
+        for (let i = el.children.length; i < n; i++) {
+            const s = document.createElement('span');
+            s.className = 'aic-gold-star';
+            s.textContent = '☆';
+            if (pop && i === n - 1) {
+                s.classList.add('pop');
+                s.addEventListener('animationend', () => s.classList.remove('pop'), { once: true });
+            }
+            el.appendChild(s);
+        }
+    }
+
+    // Win-screen highlight: the winner's potential gold is EARNED by the win (the
+    // dataset gold-gate IS winning), so its hollow ☆s become solid ★s and cascade
+    // in. The loser's potential is forfeited — noted, muted. `el` is a screen's
+    // gold slot (#go-golds / #t-result-golds). Hidden when nothing to show.
+    _renderGoldsWon(el, won, forfeited = 0) {
+        if (!el) return;
+        won = won || 0; forfeited = forfeited || 0;
+        if (won <= 0 && forfeited <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        el.hidden = false;
+        let html = '';
+        if (won > 0) {
+            const stars = Array.from({ length: won }, (_, i) =>
+                `<span class="gw-star" style="animation-delay:${i * 90}ms">★</span>`).join('');
+            html += `<div class="gw-stars">${stars}</div>
+                <div class="gw-label">${won} gold move${won > 1 ? 's' : ''} banked for training</div>`;
+        }
+        if (forfeited > 0) {
+            html += `<div class="gw-forfeit">${forfeited} potential gold forfeited — no win</div>`;
+        }
+        el.innerHTML = html;
     }
 
     _dispatchCallout({ text, subtitle = '', tone = 'neutral', sound = 'callout' }) {
@@ -1404,6 +1725,37 @@ class Game {
                     tone: `p${p}`,
                 });
             }
+        }
+
+        // GOLD MOVE — a training-worthy turn captured this round: a real
+        // (non-fallback) answer that grew the score lead AND improved trophic
+        // balance. True dataset "gold" also needs the match WIN (applied at
+        // export); here we celebrate the move in the moment, like other events.
+        if (isCaptureEnabled()) {
+            for (const p of [1, 2]) {
+                const other = p === 1 ? 2 : 1;
+                const c = census[p];
+                const pop = (c.plants || 0) + (c.herbivores || 0) + (c.predators || 0);
+                const tr = trophicRead(c.plants, c.herbivores, c.predators);
+                const margin = scores[p].finalScore - scores[other].finalScore;
+                const real = !!(this._roundMoveReal && this._roundMoveReal[p]);
+                const grew = margin > ms.goldMargin[p] + 1;
+                const improved = tr.health > ms.goldHealth[p] && tr.risk <= ms.goldRisk[p] && tr.state !== 'collapsing';
+                if (real && grew && improved && pop > 0) {
+                    ms.goldMoves[p] += 1;
+                    this._renderGoldStars(p, true);
+                    this._dispatchCallout({
+                        text: 'GOLD MOVE',
+                        subtitle: `${this._playerTag(p)} · banked for training${ms.goldMoves[p] > 1 ? ` (×${ms.goldMoves[p]})` : ''}`,
+                        tone: 'gold',
+                        sound: 'score',
+                    });
+                }
+                ms.goldMargin[p] = margin;
+                ms.goldHealth[p] = tr.health;
+                ms.goldRisk[p] = tr.risk;
+            }
+            this._roundMoveReal = {};   // reset for next round's turns
         }
 
         // DOMINANCE — one player has ≥60% of total biomass
@@ -1837,26 +2189,57 @@ class Game {
         el.innerHTML = playerBlock(p1Label, census[1], 'p1') + playerBlock(p2Label, census[2], 'p2');
 
         this._renderBiomassTower(census);
+        updateBiomeRosters(census);
+        this.biosphere?.update(census, this.simulation?.getEvents?.());
     }
 
     _renderBiomassTower(census) {
-        const tiers = [
-            { key: 'pred',  field: 'predators' },
-            { key: 'herb',  field: 'herbivores' },
-            { key: 'plant', field: 'plants' },
-        ];
-        for (const t of tiers) {
-            const v1 = census[1][t.field] || 0;
-            const v2 = census[2][t.field] || 0;
-            const max = Math.max(v1, v2, 1);
-            const fill1 = document.getElementById(`bt-fill-${t.key}-p1`);
-            const fill2 = document.getElementById(`bt-fill-${t.key}-p2`);
-            const c1 = document.getElementById(`bt-count-${t.key}-p1`);
-            const c2 = document.getElementById(`bt-count-${t.key}-p2`);
-            if (fill1) fill1.style.width = `${Math.round((v1 / max) * 100)}%`;
-            if (fill2) fill2.style.width = `${Math.round((v2 / max) * 100)}%`;
-            if (c1) c1.textContent = String(v1);
-            if (c2) c2.textContent = String(v2);
+        // Trophic pyramid. A healthy biome is a 9:3:1 stack — herbivores ≈ 1/3 of
+        // plants, predators ≈ 1/3 of herbivores. Each tier radiates from the central
+        // spine: a faint TARGET outline (+ tick) marks the tier's ideal width, a
+        // solid FILL marks its actual count, both on one shared scale so the panel
+        // reads as a tapering pyramid and shape-conformity = biome health. A gap
+        // between fill and tick = starving tier; fill past the tick = overpopulated.
+        const MIN_PCT = 5;     // a nonzero tier always shows a sliver
+        const CAP = 100;       // a tier can't fill past its half of the bar
+
+        // Shared scale: the larger plant base spans a full half-width, so both
+        // pyramids stay comparable — a bigger healthy biome is a physically
+        // bigger pyramid, while P1-vs-P2 within a tier reads off the same ruler.
+        const S = Math.max(census[1].plants || 0, census[2].plants || 0, 1);
+        const w = (v) => (v <= 0 ? 0 : Math.max(MIN_PCT, Math.min(CAP, Math.round((v / S) * 100))));
+        const idealW = (v) => Math.min(CAP, Math.round((v / S) * 100));
+
+        const health = (actual, ideal) => {
+            if (actual <= 0) return ideal <= 0 ? 'empty' : 'under';
+            if (ideal <= 0) return 'over';              // a tier with nothing beneath to feed it
+            const r = actual / ideal;
+            if (r < 0.5) return 'under';
+            if (r > 1.75) return 'over';
+            return 'good';
+        };
+
+        for (const p of [1, 2]) {
+            const c = census[p];
+            const plants = c.plants || 0, herbs = c.herbivores || 0, preds = c.predators || 0;
+            // Targets cascade down the chain (each tier ≈ 1/3 of the one below it).
+            const tiers = [
+                { key: 'pred',  actual: preds,  ideal: herbs / 3,  health: health(preds, herbs / 3) },
+                { key: 'herb',  actual: herbs,  ideal: plants / 3, health: health(herbs, plants / 3) },
+                // The base sets the pyramid's footprint; its only "target" is to exist.
+                { key: 'plant', actual: plants, ideal: plants,     health: plants > 0 ? 'good' : 'empty' },
+            ];
+            for (const t of tiers) {
+                const bar = document.getElementById(`bt-bar-${t.key}-p${p}`);
+                const fill = document.getElementById(`bt-fill-${t.key}-p${p}`);
+                const cnt = document.getElementById(`bt-count-${t.key}-p${p}`);
+                if (fill) fill.style.width = `${w(t.actual)}%`;
+                if (cnt) cnt.textContent = String(t.actual);
+                if (bar) {
+                    bar.style.setProperty('--ideal', `${idealW(t.ideal)}%`);
+                    bar.dataset.health = t.health;
+                }
+            }
         }
 
         for (const p of [1, 2]) {
@@ -1867,82 +2250,6 @@ class Game {
             badge.dataset.state = state.state;
             const icon = badge.querySelector('.bt-h-icon');
             if (icon) icon.textContent = state.icon;
-        }
-    }
-
-    _renderWorldSnapshot() {
-        const segContainer = document.getElementById('ws-segments');
-        const legend = document.getElementById('ws-legend');
-        const centerName = document.getElementById('ws-c-name');
-        const centerPct = document.getElementById('ws-c-pct');
-        if (!segContainer || !legend) return;
-
-        // Count terrain types on the current board
-        const counts = { WATER: 0, FERTILE: 0, GRASSLAND: 0, ROCKY: 0 };
-        let total = 0;
-        this.grid.forEach(cell => {
-            if (counts[cell.terrain] != null) {
-                counts[cell.terrain]++;
-                total++;
-            }
-        });
-        if (total === 0) return;
-
-        // Terrain metadata (HSL pulled from CONFIG.COLORS so it matches the canvas)
-        const TERRAIN_META = {
-            FERTILE:   { label: 'Fertile',   color: 'hsl(130, 50%, 45%)' },
-            GRASSLAND: { label: 'Grassland', color: 'hsl(80, 45%, 50%)' },
-            ROCKY:     { label: 'Rocky',     color: 'hsl(35, 25%, 55%)' },
-            WATER:     { label: 'Water',     color: 'hsl(215, 60%, 50%)' },
-        };
-
-        // Render donut segments (r=32, stroke-width=12, circumference = 2πr ≈ 201)
-        segContainer.innerHTML = '';
-        const r = 32;
-        const cir = 2 * Math.PI * r;
-        let offset = 0;
-        let dominant = null;
-        let dominantPct = 0;
-        for (const [key, meta] of Object.entries(TERRAIN_META)) {
-            const count = counts[key] || 0;
-            const pct = count / total;
-            if (pct > dominantPct) { dominantPct = pct; dominant = key; }
-            if (count === 0) continue;
-            const len = pct * cir;
-            const seg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            seg.setAttribute('class', `ws-seg ws-seg-${key.toLowerCase()}`);
-            seg.setAttribute('cx', '40');
-            seg.setAttribute('cy', '40');
-            seg.setAttribute('r', String(r));
-            seg.setAttribute('stroke', meta.color);
-            seg.setAttribute('stroke-dasharray', `${len} ${cir - len}`);
-            seg.setAttribute('stroke-dashoffset', String(-offset));
-            seg.dataset.terrain = key;
-            seg.addEventListener('mouseenter', () => this._wsFocusSegment(key, pct, meta.label));
-            seg.addEventListener('mouseleave', () => this._wsFocusSegment(dominant, dominantPct, TERRAIN_META[dominant].label));
-            segContainer.appendChild(seg);
-            offset += len;
-        }
-
-        // Legend rows
-        legend.innerHTML = '';
-        for (const [key, meta] of Object.entries(TERRAIN_META)) {
-            const count = counts[key] || 0;
-            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-            const row = document.createElement('div');
-            row.className = 'ws-leg-row';
-            row.innerHTML = `
-                <span class="ws-leg-dot" style="background:${meta.color}"></span>
-                <span>${meta.label}</span>
-                <span class="ws-leg-pct">${pct}%</span>
-            `;
-            legend.appendChild(row);
-        }
-
-        // Center label = dominant terrain by default
-        if (dominant && centerName && centerPct) {
-            centerName.textContent = TERRAIN_META[dominant].label;
-            centerPct.textContent = `${Math.round(dominantPct * 100)}%`;
         }
     }
 
@@ -1979,31 +2286,18 @@ class Game {
         `;
     }
 
-    _wsFocusSegment(terrain, pct, label) {
-        const centerName = document.getElementById('ws-c-name');
-        const centerPct = document.getElementById('ws-c-pct');
-        if (centerName) centerName.textContent = label || '—';
-        if (centerPct) centerPct.textContent = `${Math.round((pct || 0) * 100)}%`;
-        for (const seg of document.querySelectorAll('#ws-segments .ws-seg')) {
-            seg.classList.toggle('is-hovered', seg.dataset.terrain === terrain);
-        }
-    }
-
     _ecosystemHealth(c) {
-        const total = (c.plants || 0) + (c.herbivores || 0) + (c.predators || 0);
-        if (total === 0) return { state: 'empty', icon: '–' };
-
-        const tiers = ['plants', 'herbivores', 'predators'].filter(t => (c[t] || 0) > 0).length;
-        if (tiers === 0) return { state: 'collapse', icon: '💀' };
-        if (tiers === 1) return { state: 'collapse', icon: '✕' };
-
-        // Check skew — >80% of biomass in one tier is unbalanced
-        const sharePlant = (c.plants || 0) / total;
-        const shareHerb  = (c.herbivores || 0) / total;
-        const sharePred  = (c.predators || 0) / total;
-        const maxShare = Math.max(sharePlant, shareHerb, sharePred);
-        if (tiers < 3 || maxShare > 0.8) return { state: 'warn', icon: '⚠' };
-
+        // Read the SAME trophic model the info orb uses, so the per-player badge
+        // and the central orb tell one coherent story. Base failing (herbivores
+        // with nothing to eat) is grave (collapse); a tilt or apex glut is a warn.
+        const r = trophicRead(c.plants, c.herbivores, c.predators);
+        if (r.state === 'empty') return { state: 'empty', icon: '–' };
+        // Only a failing BASE (herbivores with nothing to eat) is grave. Predators
+        // starving for lack of herbivores is an apex hiccup — a warn, matching the
+        // orb's "PREDATORS STARVING". A primordial/building web is simply ok.
+        if (r.baseStarved) return { state: 'collapse', icon: '✕' };
+        if (r.apexStarved || r.state === 'overgrazed' || r.state === 'top-heavy')
+            return { state: 'warn', icon: '⚠' };
         return { state: 'ok', icon: '✓' };
     }
 
@@ -2017,6 +2311,10 @@ class Game {
             resolve(scores);
             return;
         }
+
+        // Retire the live broadcast flanks (a watch match raised them) before the
+        // result scene covers the board.
+        this.tournament?._hideMatchFlanks();
 
         // Paint the result scene immediately — before any populate logic that could
         // throw — so a watch/solo match ALWAYS visibly ends. (Regression guard: a
@@ -2059,6 +2357,14 @@ class Game {
             if (winnerModel) { applyAvatarVideo(goAva, winnerModel, { category: 'victory' }); goAva.classList.add('show'); }
             else { clearAvatar(goAva); goAva.classList.remove('show'); }
         }
+
+        // Gold won: the winner's potential gold (banked this match) is earned by the
+        // win; the loser's is forfeited. Ties claim none.
+        const winSlot = s1.finalScore > s2.finalScore ? 1 : s2.finalScore > s1.finalScore ? 2 : 0;
+        const gm = this._milestones?.goldMoves || {};
+        this._renderGoldsWon(document.getElementById('go-golds'),
+            winSlot ? gm[winSlot] : 0, winSlot ? gm[winSlot === 1 ? 2 : 1] : 0);
+
         this._playSound('victory');
 
         const card = overlay.querySelector('.game-over-card');
@@ -2082,6 +2388,14 @@ class Game {
         });
         overlay.querySelector('.final-score').innerHTML =
             breakdown(p1Label, s1, 'final-stmt-p1') + breakdown(p2Label, s2, 'final-stmt-p2');
+
+        // Headless gauntlet/generation loop: auto-start the next watch match.
+        if (this._genWatch) {
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                try { this._startMatch(this._genWatch); } catch (e) { console.error('[gen]', e); }
+            }, 2500);
+        }
 
         document.getElementById('btn-play-again').addEventListener('click', () => {
             overlay.style.display = 'none';
@@ -2140,12 +2454,16 @@ class Game {
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         const sEl = document.getElementById(`ai-strategy-p${playerNum}`);
         const toggle = document.getElementById(`aic-reason-toggle-p${playerNum}`);
+        const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
         // Clear previous banter and mark as thinking — placeholder renders "thinking…"
         if (bEl) {
             bEl.textContent = '';
             bEl.classList.add('thinking');
             bEl.classList.remove('entering');
         }
+        // Swap the HUD avatar from its idle loop to the thinking clip while the model
+        // computes (falls back to the still/procedural if no thinking clip is baked).
+        if (avatarEl) applyAvatarVideo(avatarEl, ai.model, { category: 'thinking', loop: true });
         if (sEl) {
             sEl.textContent = '';
             sEl.classList.add('aic-reason-collapsed');
@@ -2158,6 +2476,9 @@ class Game {
         // Start the move-clock countdown so the wait has stakes — it ticks toward
         // the same deadline the model call self-limits to.
         this._startThinkingCountdown(playerNum, ai.timeoutMs());
+        // If the local model is cold, surface a "loading model…" state until it's
+        // resident (runs concurrently with takeTurn, which triggers the load).
+        this._startModelLoadWatch(playerNum, ai.model);
 
         this._updateTurnUI();
 
@@ -2176,6 +2497,11 @@ class Game {
 
             // Move resolved — stop the clock and drop the thinking state.
             this._stopThinkingCountdown(playerNum);
+
+            // Record whether THIS round's move was a real model answer (not a
+            // fallback) for the in-game GOLD MOVE check at round end.
+            this._roundMoveReal = this._roundMoveReal || {};
+            this._roundMoveReal[playerNum] = !result.degraded;
             if (bEl) { bEl.classList.remove('thinking', 'system'); }
             if (bEl && result.degraded) {
                 // The model didn't really answer — speak to it in the game's voice
@@ -2264,8 +2590,14 @@ class Game {
     _teardownAITurn(playerNum) {
         this._aiThinking = false;
         this._stopThinkingCountdown(playerNum);
+        this._stopModelLoadWatch(playerNum);
         const bEl = document.getElementById(`ai-banter-p${playerNum}`);
         if (bEl) bEl.classList.remove('thinking');
+        // Revert the HUD avatar from its thinking clip back to the idle loop, however
+        // the turn finished (success, error, or watchdog) — this is the single clear point.
+        const ai = this.aiPlayers[playerNum];
+        const avatarEl = document.getElementById(`aic-avatar-p${playerNum}`);
+        if (ai && avatarEl) applyAvatarVideo(avatarEl, ai.model, { category: 'idle', loop: true });
         if (this._turnEnded) return;
         this._turnEnded = true;
         this.turns.endTurn();
@@ -2301,6 +2633,52 @@ class Game {
         }
         const el = document.getElementById(`aic-countdown-p${playerNum}`);
         if (el) el.classList.remove('urgent');
+    }
+
+    // ── Model-load indicator ─────────────────────────────────────
+    // A local model that isn't resident in VRAM cold-loads when first called
+    // (notably between tournament matches, where the prior models are evicted).
+    // While it loads, show a "loading model…" spinner on the card's countdown
+    // instead of the move clock; flip to the normal countdown the moment the
+    // model goes resident. Cloud models never load locally, so they're skipped.
+    async _startModelLoadWatch(playerNum, model) {
+        this._loadWatch = this._loadWatch || {};
+        this._stopModelLoadWatch(playerNum);
+        if (!model || isCloudModel(model)) return;
+
+        // Token guards against a stale async check landing after teardown.
+        const token = (this._loadWatchToken = (this._loadWatchToken || 0) + 1);
+        const entry = { token, timer: null };
+        this._loadWatch[playerNum] = entry;
+
+        const setLoading = (on) => {
+            const el = document.getElementById(`aic-countdown-p${playerNum}`);
+            if (el) el.classList.toggle('model-loading', on);
+            const label = el?.querySelector('.aic-cd-label');
+            if (label) label.textContent = on ? 'loading model…' : 'deciding…';
+        };
+        const finish = () => { this._stopModelLoadWatch(playerNum); };
+
+        // If it's already warm, never flash a loading state.
+        const resident = await isModelResident(model);
+        if (entry.token !== this._loadWatch[playerNum]?.token) return; // superseded
+        if (resident) return;
+
+        setLoading(true);
+        entry.timer = setInterval(async () => {
+            if (entry.token !== this._loadWatch[playerNum]?.token) { clearInterval(entry.timer); return; }
+            if (await isModelResident(model)) finish();
+        }, 700);
+    }
+
+    _stopModelLoadWatch(playerNum) {
+        const entry = this._loadWatch?.[playerNum];
+        if (entry?.timer) clearInterval(entry.timer);
+        if (this._loadWatch) delete this._loadWatch[playerNum];
+        const el = document.getElementById(`aic-countdown-p${playerNum}`);
+        if (el) el.classList.remove('model-loading');
+        const label = el?.querySelector('.aic-cd-label');
+        if (label) label.textContent = 'deciding…';
     }
 
     // A concise character name for system-voice lines (family label when known,
@@ -2363,6 +2741,8 @@ class Game {
 
     setAI(playerNum, model) {
         this.aiPlayers[playerNum] = new AIPlayer(this, playerNum, { model });
+        // An AI is playing → this match produces training trajectories.
+        setCaptureEnabled(true);
         this._log(`P${playerNum} is now AI (${model})`);
         this._setAICardIdentity(playerNum);
         // Surface identity in the header immediately — don't wait for the first move.
@@ -2682,6 +3062,116 @@ class Game {
         return other ? other.name : excludeName;
     }
 
+    // ── Random / themed matchup picker ───────────────────────────
+    // Pick a model pair by theme and fill the Watch slots (the user reviews +
+    // can re-roll, then hits Start). Themes draw on per-model metadata: size
+    // tier (resolveModel), local-vs-cloud (isCloudModel), and ELO (_modelMeta).
+    _rollMatchup(theme) {
+        const models = (this._installedModels || []).map(m => m.name);
+        if (models.length < 2) { this._flashRollMsg('Need at least 2 installed models'); return; }
+        const pair = this._pickPairForTheme(theme, models);
+        if (!pair) { this._flashRollMsg(this._rollFailMsg(theme)); return; }
+        this._flashRollMsg('');
+        this._applyWatchPick(pair[0], pair[1]);
+    }
+
+    _rollSoloOpponent() {
+        const models = (this._installedModels || []).map(m => m.name);
+        if (!models.length) return;
+        const pick = models[Math.floor(Math.random() * models.length)];
+        const sel = document.getElementById('match-model-p2-solo');
+        if (!sel) return;
+        sel.value = pick;
+        sel._userSet = true;
+        sel.dispatchEvent(new Event('change'));
+        this._pulseCard('pcard-p2-solo');
+    }
+
+    // Returns [p1, p2] distinct model names for the theme, or null if no pair fits.
+    _pickPairForTheme(theme, models) {
+        const pick2 = (arr) => {
+            if (arr.length < 2) return null;
+            const i = Math.floor(Math.random() * arr.length);
+            let j = Math.floor(Math.random() * (arr.length - 1));
+            if (j >= i) j++;
+            return [arr[i], arr[j]];
+        };
+        const tierRank = { small: 0, mid: 1, large: 2, cloud: 3 };
+        const sizeOf = (n) => this._installedModels.find(m => m.name === n)?.size || 0;
+        const weight = (n) => (tierRank[resolveModel(n).sizeTier] ?? 1) * 1e13 + sizeOf(n);
+        const eloOf = (n) => { const m = this._modelMeta?.get(n); return m && m.elo != null ? m.elo : null; };
+
+        if (theme === 'david') {
+            const sorted = [...models].sort((a, b) => weight(a) - weight(b));
+            const light = sorted[0], heavy = sorted[sorted.length - 1];
+            return (light && heavy && light !== heavy) ? [light, heavy] : null;   // David (P1) vs Goliath (P2)
+        }
+        if (theme === 'class') {
+            // Same size tier first; fall back to same family.
+            const group = (keyFn) => {
+                const map = {};
+                for (const n of models) (map[keyFn(n)] ||= []).push(n);
+                const groups = Object.values(map).filter(g => g.length >= 2);
+                return groups.length ? pick2(groups[Math.floor(Math.random() * groups.length)]) : null;
+            };
+            return group(n => resolveModel(n).sizeTier) || group(n => resolveModel(n).family.id);
+        }
+        if (theme === 'localcloud') {
+            const cloud = models.filter(n => isCloudModel(n));
+            const local = models.filter(n => !isCloudModel(n));
+            if (!cloud.length || !local.length) return null;
+            return [local[Math.floor(Math.random() * local.length)], cloud[Math.floor(Math.random() * cloud.length)]];
+        }
+        if (theme === 'even') {
+            const ranked = models.filter(n => eloOf(n) != null);
+            const pairs = [];
+            for (let i = 0; i < ranked.length; i++) {
+                for (let j = i + 1; j < ranked.length; j++) {
+                    const p = expectedScore(eloOf(ranked[i]), eloOf(ranked[j]));
+                    if (p >= 0.42 && p <= 0.58) pairs.push([ranked[i], ranked[j]]);
+                }
+            }
+            return pairs.length ? pairs[Math.floor(Math.random() * pairs.length)] : null;
+        }
+        return pick2(models);   // 'random'
+    }
+
+    _rollFailMsg(theme) {
+        return {
+            localcloud: 'Need at least one local and one cloud model',
+            even: 'No closely-rated pair yet — play more matches',
+            class: 'No two models share a class',
+        }[theme] || 'No pair fits that theme';
+    }
+
+    _applyWatchPick(p1, p2) {
+        const s1 = document.getElementById('match-model-p1-watch');
+        const s2 = document.getElementById('match-model-p2-watch');
+        if (!s1 || !s2) return;
+        s1.value = p1; s2.value = p2;
+        s1._userSet = true; s2._userSet = true;
+        s1.dispatchEvent(new Event('change'));
+        s2.dispatchEvent(new Event('change'));
+        this._pulseCard('pcard-p1-watch');
+        this._pulseCard('pcard-p2-watch');
+    }
+
+    _pulseCard(id) {
+        const c = document.getElementById(id);
+        if (!c) return;
+        c.classList.remove('mc-rolled');
+        void c.offsetWidth;   // restart the animation
+        c.classList.add('mc-rolled');
+    }
+
+    _flashRollMsg(text) {
+        const el = document.getElementById('watch-roll-msg');
+        if (!el) return;
+        el.textContent = text || '';
+        if (this._rollMsgTimer) clearTimeout(this._rollMsgTimer);
+        if (text) this._rollMsgTimer = setTimeout(() => { el.textContent = ''; }, 2600);
+    }
+
     // ── Match section (sidebar mode-switcher) ────────────────
 
     _initMatchSection() {
@@ -2695,6 +3185,14 @@ class Game {
         document.getElementById('btn-start-match').addEventListener('click', () => {
             this._onStartMatchClick();
         });
+
+        // Random / themed matchup pickers — fill the slots so the user can review
+        // (and re-roll) before starting.
+        document.getElementById('watch-roll')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-roll]');
+            if (btn) this._rollMatchup(btn.dataset.roll);
+        });
+        document.getElementById('solo-roll')?.addEventListener('click', () => this._rollSoloOpponent());
 
         document.getElementById('btn-match-expand')?.addEventListener('click', () => {
             this._expandMatchSection();
@@ -2782,7 +3280,7 @@ class Game {
     // World settings: grid size / hex zoom / round count, shared across modes.
     _initWorldControls() {
         this._world = {
-            mapSize: 'auto',
+            mapSize: 'medium',
             hexZoom: CONFIG.HEX_ZOOM.default,
             rounds: CONFIG.GAME.TOTAL_ROUNDS,
             mapStrategy: 'mediated',   // how the board is presented to the AI (see js/map-strategies.js)
@@ -3004,42 +3502,55 @@ class Game {
         const warmNeeded = config.mode === 'solo' ? [config.p2Model]
                          : config.mode === 'watch' ? [config.p1Model, config.p2Model]
                          : [];
-        this._warmPromise = warmNeeded.some(m => m && !isCloudModel(m))
-            ? this._warmForMatch(warmNeeded)
-            : Promise.resolve();
+        const warm = this._warmMatch(warmNeeded);
+        this._warmPromise = warm.promise || Promise.resolve();
 
         // Solo matches are ranked under the human's handle — prompt once up front.
         if (config.mode === 'solo') {
             this._humanHandle = await this._ensureHandle();
         }
 
-        // Solo/Watch matches clear any prior tournament state from the panel
+        // Solo/Watch matches clear any prior tournament state from the panel, then
+        // play the shared match intro (which holds for model warming).
         if (config.mode === 'solo' || config.mode === 'watch') {
             this.setBracketAvailable({ available: false });
-            try { await this._showPrematch(config); } catch (_) { /* ignore */ }
+            const handle = this._humanHandle || this._getHandle() || 'You';
+            try {
+                await this._showMatchIntro({
+                    p1: config.mode === 'solo' ? { isHuman: true, handle } : { model: config.p1Model },
+                    p2: { model: config.p2Model },
+                    label: 'MATCH BEGINS',
+                    sound: 'vs',
+                    minMs: 2200,
+                    skippable: true,
+                    warmPromise: warm.promise,
+                    warmLabel: warm.label,
+                    mode: config.mode,
+                    world: config.world || this._worldSettings(),
+                    rounds: (config.world || {}).rounds,
+                });
+            } catch (_) { /* ignore */ }
         }
+
+        // Show both player cards (with their creature rosters) and reserve their
+        // gutters before sizing the world, so the board fits between them. Icons
+        // get re-tinted in _applyPlayerPalettes below.
+        this._setMatchCardsActive(true);
 
         // Reset world: fresh seed, terrain, simulation, turn manager.
         // Grid size / hex zoom / round count come from the chosen world settings.
         const world = config.world || this._worldSettings();
         const dims = this._resolveWorld(world);
         this.seed = Math.floor(Math.random() * 100000);
-        this.grid = new HexGrid(dims.cols, dims.rows, dims.hexSize);
-        this.renderer = new Renderer(this.canvas, this.grid);
-        this.simulation = new Simulation(this.grid);
+        this._buildBoardCore(dims);
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.turns.totalRounds = world.rounds || CONFIG.GAME.TOTAL_ROUNDS;
         this.matchContext = this._describeMatch(config.mode, world.mapStrategy);
-        this.aiPlayers = {};
-        this._matchResolve = null;
-        this._matchupOdds = null;
-        this._scoreHistory = [];
-        this.simulating = false;
+        this._resetMatchState();
 
         generateTerrain(this.grid, this.seed);
         this.renderer.render();
         this._updateWorldInfo();
-        this._renderWorldSnapshot();
 
         // Configure AI players based on mode
         if (config.mode === 'solo' && config.p2Model) {
@@ -3074,6 +3585,15 @@ class Game {
         // Ensure warming (started at the top of _startMatch) finished before the
         // clock starts, so cold load never eats a player's turn budget.
         try { await this._warmPromise; } catch (_) { /* best-effort */ }
+
+        // Broadcast flanks: a single watch match (AI vs AI) gets the same rotating
+        // corner panels as a tournament bout — scouting report, dossiers, standings,
+        // match details, fun facts. Solo (human) matches stay clean.
+        if (config.mode === 'watch') {
+            this.tournament?.showWatchFlanks(config.p1Model, config.p2Model, world, 'watch');
+        } else {
+            this.tournament?._hideMatchFlanks();
+        }
 
         this._playSound('match-start');
         this.turns.startGame();
@@ -3112,6 +3632,7 @@ class Game {
         root.setProperty('--p1-hue', pal[1].h);
         root.setProperty('--p2-hue', pal[2].h);
         if (this.renderer) this.renderer.render();
+        repaintBiomeRosterIcons();   // re-tint roster icons to the resolved hues
     }
 
     _collapseMatchSection() {
@@ -3244,6 +3765,8 @@ class Game {
             map_size: cfg.world?.mapSize || null,
             rounds: cfg.world?.rounds ?? null,
             map_strategy: cfg.world?.mapStrategy || 'mediated',
+            match_uid: this.matchUid,
+            seed: this.seed,
         });
     }
 
@@ -3502,10 +4025,13 @@ class Game {
         // Baked cyber-organic portrait for AI players (humans keep the "YOU" chip).
         // The match-result screen passes opts.clip ('victory'|'defeat') so the hex
         // plays the winner's/loser's animated clip instead of the still (falls back
-        // to the still automatically if no clip is baked for that model).
+        // to the still automatically if no clip is baked for that model). The match
+        // intro passes clip:'intro' with clipLoop:false so the entrance plays once
+        // rather than re-looping; the looping clips (victory/defeat/champion) leave
+        // clipLoop undefined and default to true.
         if (!isHuman && model) {
             const avaEl = el.querySelector('.pc-avatar');
-            if (opts.clip) applyAvatarVideo(avaEl, model, { category: opts.clip });
+            if (opts.clip) applyAvatarVideo(avaEl, model, { category: opts.clip, loop: opts.clipLoop !== false });
             else applyAvatar(avaEl, model);
         }
 
@@ -3524,57 +4050,155 @@ class Game {
         }
     }
 
-    async _showPrematch(config) {
+    // Orchestrate model warming for a match: kick off prepareResidentSet for the
+    // local models that need loading (cloud models are no-ops) and return the
+    // promise plus a label for the warming UI. One warming entry point for every
+    // mode — solo/watch and tournament both call this.
+    _warmMatch(models) {
+        const local = (models || []).filter(m => m && !isCloudModel(m));
+        const promise = local.length ? this._warmForMatch(models) : null;
+        const label = local.length === 1 ? this._prettyModelName(local[0]) : 'models';
+        return { promise, label, hasLocal: local.length > 0 };
+    }
+
+    // Unified match intro / onboarding — the fighting-game VS reveal used by every
+    // mode (solo, watch, tournament). Renders both fighters' cards, win odds, the
+    // slam-in entrance + sound, and (if a local model is still cold-loading) holds
+    // the screen with the "warming" shimmer until it's resident, so the board never
+    // opens to an idle, frozen-looking state. Resolves when the intro is done.
+    //
+    // opts: { p1:{model|isHuman,handle}, p2:{model}, label, note, isFinal,
+    //         warmPromise, warmLabel, sound, minMs, skippable }
+    // Populate the match-intro "ARENA" panel from the match config: game type +
+    // stakes, map size/dims/rounds, and the AI's vision (map strategy + meaning).
+    // All values are config-derived, so this runs before terrain is generated.
+    _renderMatchArena(opts = {}) {
+        const panel = document.getElementById('match-arena');
+        if (!panel) return;
+
+        const world = opts.world || this._worldSettings();
+        const mode = opts.mode || this._matchMode || 'solo';
+        const desc = this._describeMatch(mode, world.mapStrategy);
+
+        // Game type — short label + glyph (the modeLabel is the verbose form).
+        const TYPE_META = {
+            solo: { icon: '⚔', name: 'Solo Ladder' },
+            watch: { icon: '📺', name: 'Exhibition' },
+            tournament: { icon: '🏆', name: 'Tournament' },
+        };
+        const type = TYPE_META[mode] || { icon: '◆', name: mode };
+
+        // Map size + grid dimensions (resolved the same way the board will be).
+        const dims = this._resolveWorld(world);
+        const sizeLabel = world.mapSize === 'auto'
+            ? 'Auto-fit'
+            : (CONFIG.MAPS[world.mapSize]?.label || 'Custom');
+
+        // Round count + lightning badge for short matches.
+        const rounds = opts.rounds ?? world.rounds ?? CONFIG.GAME.TOTAL_ROUNDS;
+        const lightning = rounds <= CONFIG.GAME.LIGHTNING_ROUNDS;
+
+        // Vision = map strategy (UI calls it "Map vision"). Friendly names match
+        // the dashboard's: mediated → Standard, ascii → ASCII, raw → Raw.
+        const strat = getStrategy(world.mapStrategy);
+        const VISION_NAMES = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+        const visionName = VISION_NAMES[strat.id] || strat.label;
+
+        const nameEl = document.getElementById('ma-vision-name');
+        const descEl = document.getElementById('ma-vision-desc');
+        if (nameEl) nameEl.textContent = visionName;
+        if (descEl) descEl.textContent = strat.description || '';
+
+        const chips = [
+            `<span class="ma-chip"><span class="ma-chip-ico">${type.icon}</span>${type.name}</span>`,
+            `<span class="ma-chip"><span class="ma-chip-ico">▦</span>${sizeLabel} · ${dims.cols}×${dims.rows}</span>`,
+            `<span class="ma-chip${lightning ? ' ma-chip-fast' : ''}"><span class="ma-chip-ico">${lightning ? '⚡' : '◷'}</span>${rounds} rounds</span>`,
+        ];
+        const statsEl = document.getElementById('ma-stats');
+        if (statsEl) statsEl.innerHTML = chips.join('');
+
+        const stakesEl = document.getElementById('ma-stakes');
+        if (stakesEl) stakesEl.textContent = (desc.stakes || '').replace(/^STAKES:\s*/, '');
+    }
+
+    async _showMatchIntro(opts = {}) {
         const overlay = document.getElementById('tournament-overlay');
-        const screen = document.getElementById('match-prematch');
+        const screen = document.getElementById('match-intro');
         if (!overlay || !screen) return;
 
-        // Hide other screens, show prematch
         overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
         screen.classList.remove('t-hidden');
         overlay.classList.remove('t-hidden');
+        screen.classList.toggle('t-intro-champ', !!opts.isFinal);
+        screen.classList.remove('t-warming');
 
-        // Render cards
-        const handle = this._humanHandle || this._getHandle() || 'You';
-        const p1Opts = config.mode === 'solo'
-            ? { player: 1, isHuman: true, handle }
-            : { player: 1, model: config.p1Model };
-        const p2Opts = { player: 2, model: config.p2Model };
+        const labelEl = document.getElementById('match-intro-label');
+        const noteEl = document.getElementById('match-intro-note');
+        const baseNote = opts.note || (opts.skippable ? 'Click anywhere to skip' : '');
+        if (labelEl) labelEl.textContent = opts.label || '';
+        if (noteEl) noteEl.textContent = baseNote;
+
+        // Match-detail panel: game type, map, and the AI's vision (map strategy).
+        this._renderMatchArena(opts);
+
+        // Cards (P1 may be human in solo)
+        const p1Opts = opts.p1?.isHuman
+            ? { player: 1, isHuman: true, handle: opts.p1.handle }
+            : { player: 1, model: opts.p1?.model, clip: 'intro', clipLoop: false };
+        const p2Opts = { player: 2, model: opts.p2?.model, clip: 'intro', clipLoop: false };
         await Promise.all([
-            this._renderPlayerCard('prematch-p1-card', p1Opts),
-            this._renderPlayerCard('prematch-p2-card', p2Opts),
+            this._renderPlayerCard('match-intro-p1-card', p1Opts),
+            this._renderPlayerCard('match-intro-p2-card', p2Opts),
         ]);
 
-        // Fighting-game entrance: fighters slam in from both sides, VS clashes in
-        // the middle, with a matching sound sting. Re-trigger by reflow each time.
+        // Slam-in entrance + sound (reflow re-triggers the animation each time)
         screen.classList.remove('pm-enter');
         void screen.offsetWidth;
         screen.classList.add('pm-enter');
-        this._playSound('vs');
+        this._playSound?.(opts.sound || 'vs');
 
-        // Pre-match odds from current ELO (favorite / underdog read)
-        const p1Lookup = config.mode === 'solo' ? handle : config.p1Model;
+        // Win odds from current ELO
+        const p1Lookup = opts.p1?.isHuman ? opts.p1.handle : opts.p1?.model;
         const [r1, r2] = await Promise.all([
             p1Lookup ? this._fetchRanking(p1Lookup) : null,
-            config.p2Model ? this._fetchRanking(config.p2Model) : null,
+            opts.p2?.model ? this._fetchRanking(opts.p2.model) : null,
         ]);
         renderOddsInto(
-            document.getElementById('prematch-p1-odds'),
-            document.getElementById('prematch-p2-odds'),
+            document.getElementById('match-intro-odds-p1'),
+            document.getElementById('match-intro-odds-p2'),
             r1, r2,
         );
 
-        // Auto-dismiss + skip-on-click
+        const minMs = opts.minMs ?? 2200;
+        const warmPromise = opts.warmPromise || null;
         return new Promise(resolve => {
-            const close = () => {
-                overlay.removeEventListener('click', close);
-                clearTimeout(timer);
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                overlay.removeEventListener('click', onClick);
+                screen.classList.remove('t-warming');
+                if (noteEl) noteEl.textContent = baseNote;
                 screen.classList.add('t-hidden');
                 overlay.classList.add('t-hidden');
                 resolve();
             };
-            const timer = setTimeout(close, 2800);
-            overlay.addEventListener('click', close);
+            const onClick = () => { if (opts.skippable) finish(); };
+            overlay.addEventListener('click', onClick);
+
+            (async () => {
+                await this._sleep(minMs);           // min on-screen time for the drama
+                if (done) return;
+                if (warmPromise) {
+                    // Still loading? Reveal the warming shimmer and hold until resident.
+                    screen.classList.add('t-warming');
+                    if (noteEl) noteEl.textContent = `Warming up ${opts.warmLabel || 'models'}…`;
+                    try { await warmPromise; } catch (_) { /* best-effort */ }
+                    screen.classList.remove('t-warming');
+                    if (noteEl) noteEl.textContent = baseNote;
+                }
+                finish();
+            })();
         });
     }
 
@@ -3604,8 +4228,9 @@ class Game {
 
     // ── Labs chooser ─────────────────────────────────────────
     // Front door for the standalone labs (AI Vision Lab, Icon/Avatar labs,
-    // Analytics). Each entry is a plain link to its own page; this just toggles
-    // the overlay. Wired once on first open.
+    // Analytics). Each card opens its lab in a near-fullscreen iframe modal
+    // (_openLabFrame) so a game in progress is never navigated away — closing
+    // the lab returns straight to the live board. Wired once on first open.
     _openLabsChooser() {
         const overlay = document.getElementById('labs-overlay');
         if (!overlay) return;
@@ -3614,6 +4239,13 @@ class Game {
             for (const c of overlay.querySelectorAll('[data-labs-close]')) {
                 c.addEventListener('click', () => overlay.classList.add('labs-hidden'));
             }
+            for (const card of overlay.querySelectorAll('.labs-card')) {
+                card.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    overlay.classList.add('labs-hidden');
+                    this._openLabFrame(card.dataset.labSrc, card.dataset.labTitle);
+                });
+            }
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') overlay.classList.add('labs-hidden');
             });
@@ -3621,11 +4253,45 @@ class Game {
         overlay.classList.remove('labs-hidden');
     }
 
-    // ── Full-screen leaderboard scene ────────────────────────
-    // Opened from the launcher welcome. Mirrors _showLauncherSetup's hide-all-
-    // then-reveal plumbing; the scene module owns its own content + lens UI, and
-    // the back chevron returns to the welcome screen.
-    _showRankingsScene() {
+    // ── Lab frame modal ──────────────────────────────────────
+    // Hosts a lab page in a near-fullscreen iframe layered over the game. The
+    // game page itself never navigates, so all match state survives; closing
+    // unloads the iframe so the lab's timers/audio/network stop.
+    _openLabFrame(src, title) {
+        if (!src) return;
+        const modal = document.getElementById('lab-frame-modal');
+        const frame = document.getElementById('lfm-frame');
+        if (!modal || !frame) return;
+        if (!modal._wired) {
+            modal._wired = true;
+            document.getElementById('lfm-close')?.addEventListener('click', () => this._closeLabFrame());
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && !modal.classList.contains('lfm-hidden')) this._closeLabFrame();
+            });
+        }
+        const titleEl = document.getElementById('lfm-title');
+        const openTab = document.getElementById('lfm-open-tab');
+        if (titleEl) titleEl.textContent = title || 'Lab';
+        if (openTab) openTab.href = src;
+        frame.src = src;
+        modal.classList.remove('lfm-hidden');
+    }
+
+    _closeLabFrame() {
+        const modal = document.getElementById('lab-frame-modal');
+        const frame = document.getElementById('lfm-frame');
+        if (!modal) return;
+        modal.classList.add('lfm-hidden');
+        if (frame) frame.src = 'about:blank';   // unload the lab; stop its timers/audio
+    }
+
+    // ── Full-screen "Hall of Champions" leaderboard scene ────
+    // The primary rankings view, reachable from the launcher welcome and the
+    // in-game gear menu. Mirrors _showLauncherSetup's hide-all-then-reveal
+    // plumbing; the scene module owns its own content + lens UI. Back defaults to
+    // the welcome screen (launcher entry); callers in a live match pass an onBack
+    // that drops the overlay back to the board instead.
+    _showRankingsScene(opts = {}) {
         const overlay = document.getElementById('tournament-overlay');
         const scene = document.getElementById('launcher-rankings');
         if (!overlay || !scene) return;
@@ -3634,7 +4300,7 @@ class Game {
         overlay.classList.remove('t-hidden');
         openLeaderboard(scene, {
             humanHandle: this._humanHandle,
-            onBack: () => this._openLauncherWelcome(),
+            onBack: opts.onBack || (() => this._openLauncherWelcome()),
         });
     }
 
@@ -3752,6 +4418,7 @@ class Game {
         const screen = document.getElementById('launcher-welcome');
         if (!overlay || !screen) return;
         this._setConsoleVisible(false);   // console belongs to an active match
+        this._setMatchCardsActive(false); // ...and so do the player cards
         overlay.querySelectorAll('.t-screen').forEach(s => s.classList.add('t-hidden'));
         screen.classList.remove('t-hidden');
         overlay.classList.remove('t-hidden');
@@ -3901,14 +4568,37 @@ class Game {
 
     // ── Tournament support ────────────────────────────────────
 
+    // Construct a fresh grid + renderer + simulation for the given dimensions.
+    // The single board-construction path, shared by _startMatch (always rebuilds)
+    // and resetForMatch (rebuilds only when the tournament's world spec differs).
+    _buildBoardCore(dims) {
+        this.grid = new HexGrid(dims.cols, dims.rows, dims.hexSize);
+        this.renderer = new Renderer(this.canvas, this.grid);
+        this.simulation = new Simulation(this.grid);
+    }
+
+    // Clear per-match tracking state — AI slots, result hooks, score history.
+    // Shared by _startMatch and resetForMatch so a fresh match always starts clean.
+    _resetMatchState() {
+        this.aiPlayers = {};
+        this._matchResolve = null;
+        this._matchupOdds = null;
+        this._scoreHistory = [];
+        this.simulating = false;
+        // Fresh capture identity per match; disabled until an AI is assigned
+        // (setAI re-enables). Human-vs-human matches never capture.
+        this.matchUid = newMatchUid();
+        setCaptureEnabled(false);
+    }
+
     resetForMatch(rounds, world) {
+        // Show both player cards + reserve their gutters before any grid rebuild
+        // so the board fits between them (mirrors _startMatch).
+        this._setMatchCardsActive(true);
         // Rebuild the grid if a world spec is given (tournament map size / hex
         // zoom can differ); otherwise just clear the existing grid in place.
         if (world) {
-            const dims = this._resolveWorld(world);
-            this.grid = new HexGrid(dims.cols, dims.rows, dims.hexSize);
-            this.renderer = new Renderer(this.canvas, this.grid);
-            this.simulation = new Simulation(this.grid);
+            this._buildBoardCore(this._resolveWorld(world));
         } else {
             this.grid.forEach(cell => { cell.organisms = []; });
         }
@@ -3925,16 +4615,16 @@ class Game {
         this.turns.players[1] = { ap: 0, actions: [] };
         this.turns.players[2] = { ap: 0, actions: [] };
 
-        // Clear AI players and callbacks
-        this.aiPlayers = {};
-        this._matchResolve = null;
-        this._matchupOdds = null;
-        this._scoreHistory = [];
-        this.simulating = false;
+        // Clear per-match tracking state (AI slots, result hooks, score history)
+        this._resetMatchState();
 
         // Clear AI cards
         this._resetAICard(1);
         this._resetAICard(2);
+        // Reset per-match milestones too — zeroes goldMoves and clears both gold-star
+        // trays. _startMatch (solo/watch) does this separately; the tournament path
+        // goes through resetForMatch, so without this the stars carried across matches.
+        this._resetMilestones();
         const log = document.getElementById('action-log');
         if (log) log.innerHTML = '';
 
@@ -4005,43 +4695,10 @@ class Game {
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+    // Load lab-authored creature renames before anything resolves a model, so the
+    // HUD/leaderboard/win screens show the overridden identities.
+    await loadIdentityOverrides();
     window.game = new Game();
-    setupRankings();
 });
 
-async function setupRankings() {
-    const btn = document.getElementById('btn-rankings');
-    const panel = document.getElementById('rankings-panel');
-    const closeBtn = document.getElementById('btn-rankings-close');
-    const resetBtn = document.getElementById('btn-rankings-reset');
-    const lbEl = document.getElementById('rk-leaderboard');
-    const histEl = document.getElementById('rk-history');
-    if (!btn || !panel) return;
-
-    const getHandle = () => { try { return localStorage.getItem('biome.handle'); } catch { return null; } };
-    const refresh = async () => {
-        const [rankings, history] = await Promise.all([fetchRankings(), fetchHistory()]);
-        renderRankingsPanel(lbEl, rankings, { humanHandle: getHandle() });
-        renderHistoryPanel(histEl, history);
-    };
-
-    let open = false;
-    const toggle = async (force) => {
-        open = force !== undefined ? force : !open;
-        if (open) {
-            panel.classList.remove('rankings-hidden');
-            await refresh();
-        } else {
-            panel.classList.add('rankings-hidden');
-        }
-    };
-    btn.addEventListener('click', () => toggle());
-    closeBtn?.addEventListener('click', () => toggle(false));
-    resetBtn?.addEventListener('click', async () => {
-        if (!confirm('Reset the leaderboard? Current standings are archived to a backup file and can be restored.')) return;
-        const res = await resetRankings();
-        await refresh();
-        if (res?.archived) console.log(`Rankings reset — standings archived to ${res.archived}`);
-    });
-}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome · Training Lab</title>
+    <link rel="stylesheet" href="train.css">
+</head>
+<body>
+    <header class="lab-header">
+        <div>
+            <h1>Training Lab</h1>
+            <p class="sub">Turn gameplay into training data: generate trajectories, curate the moves the
+               engine says worked, export an SFT dataset. <a href="/">← back to game</a></p>
+        </div>
+        <nav class="tabs" id="tabs">
+            <button data-tab="dashboard" class="on">Dashboard</button>
+            <button data-tab="generate">Generate</button>
+            <button data-tab="curate">Curate</button>
+            <button data-tab="export">Export</button>
+        </nav>
+    </header>
+
+    <!-- DASHBOARD ----------------------------------------------------------->
+    <section class="view" data-view="dashboard">
+        <div class="hero">
+            <div class="hero-side">
+                <div class="live" id="db-live"><span class="live-dot"></span><span id="db-live-text">idle</span></div>
+                <div class="hero-refresh muted small" id="db-refresh"></div>
+            </div>
+            <div class="hero-main">
+                <div class="hero-num" id="db-gold">—</div>
+                <div class="hero-label">GOLD MOVES BANKED</div>
+            </div>
+        </div>
+        <div class="goals" id="db-goals"></div>
+        <div class="tiles" id="db-tiles"></div>
+        <div class="card">
+            <h2>Gold by teacher</h2>
+            <div id="db-bymodel" class="bymodel muted">—</div>
+        </div>
+    </section>
+
+    <!-- GENERATE ------------------------------------------------------------>
+    <section class="view hidden" data-view="generate">
+        <div class="card">
+            <h2>Teacher = reigning champion</h2>
+            <p class="muted">Good answers come from whoever leads the ladder; the simulation then validates
+               each move (kept only if its side won, grew its lead, and stayed in balance). A flaky model
+               wastes wall-clock — generate with reliable instruction-followers.</p>
+            <div class="champ" id="champ">loading champion…</div>
+        </div>
+        <div class="card">
+            <h2>Generation run</h2>
+            <p class="muted">Capture is passive — any tournament/watch match logs trajectories. Run a headless
+               batch unattended with the command below (edit the pool / count), then watch the counts climb.</p>
+            <label class="field"><span>Mode</span>
+                <select id="gen-mode">
+                    <option value="tournament">tournament (bracket — volume)</option>
+                    <option value="watch">watch (one P1 vs P2 match)</option>
+                </select>
+            </label>
+            <div id="watch-models" class="row hidden">
+                <label class="field"><span>P1</span><select id="gen-p1"></select></label>
+                <label class="field"><span>P2</span><select id="gen-p2"></select></label>
+            </div>
+            <label class="field"><span>Target matches</span><input id="gen-matches" type="number" value="8" min="1"></label>
+            <pre class="cmd" id="gen-cmd"></pre>
+            <p class="muted small">Runs locally over the Ollama proxy — no API cost. Trajectories stream to
+               <code>training-data/turns.jsonl</code>.</p>
+        </div>
+    </section>
+
+    <!-- CURATE -------------------------------------------------------------->
+    <section class="view hidden" data-view="curate">
+        <div class="curate-bar">
+            <label class="inline"><input type="checkbox" id="gold-only"> gold only</label>
+            <label class="inline">model <select id="filter-model"><option value="">any</option></select></label>
+            <button id="reload">↻ reload</button>
+            <span class="muted" id="curate-count"></span>
+        </div>
+        <div class="curate-split">
+            <div class="turn-list" id="turn-list"></div>
+            <div class="turn-detail" id="turn-detail"><p class="muted">Select a turn to inspect its prompt, the
+               model's answer, and why the engine scored it.</p></div>
+        </div>
+    </section>
+
+    <!-- EXPORT -------------------------------------------------------------->
+    <section class="view hidden" data-view="export">
+        <div class="card">
+            <h2>Build dataset</h2>
+            <p class="muted">Joins turns → rounds → outcomes, keeps engine-validated GOLD moves (plus your
+               manual ★ stars, minus ✕ rejects), and writes provider-neutral
+               <code>messages</code> rows to <code>training-data/dataset.jsonl</code> + a manifest.</p>
+            <button id="build-btn" class="primary">Build dataset.jsonl</button>
+            <pre class="manifest" id="manifest"></pre>
+        </div>
+        <div class="card">
+            <h2>Compact logs</h2>
+            <p class="muted">Capture logs are append-only. Purge keeps gold + still-curatable turns and
+               drops what can never be gold (losers' turns, fallbacks) plus your ✕ rejects — so the logs
+               don't backfill forever. Originals are backed up to <code>*.jsonl.bak</code>.</p>
+            <label class="field"><span>Mode</span>
+                <select id="purge-mode">
+                    <option value="curatable">curatable — keep gold + winner answers (safe)</option>
+                    <option value="gold">gold only — keep just gold + ★ stars (smallest)</option>
+                </select>
+            </label>
+            <button id="purge-btn">Compact now</button>
+            <pre class="manifest" id="purge-out"></pre>
+            <p class="muted small">Next: <code>python3 tools/train_biome.py</code> (see
+               <code>tools/README-training.md</code>) → LoRA-tune a student → <code>ollama create</code> →
+               enter it on the ladder.</p>
+        </div>
+    </section>
+
+    <div class="fx-layer" id="fx-layer" aria-hidden="true"></div>
+    <script type="module" src="train.js"></script>
+</body>
+</html>

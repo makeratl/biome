@@ -12,8 +12,8 @@
 // container and an onBack callback; it fetches, renders, and wires lens
 // switching internally.
 
-import { fetchRankings, fetchHistory } from './rankings.js';
-import { applyAvatar } from './model-avatar.js';
+import { fetchRankings, fetchHistory, resetRankings } from './rankings.js';
+import { applyAvatar, applyAvatarVideo, teardownClips } from './model-avatar.js';
 import { resolveModel, paramLabel, mightLevel } from './model-identity.js';
 
 const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' };
@@ -97,6 +97,7 @@ export async function openLeaderboard(root, opts = {}) {
     root.innerHTML = `
         <div class="lb-shell">
             <button class="lb-back" id="lb-back">‹ Back</button>
+            <button class="lb-reset" id="lb-reset" title="Archive standings and start fresh">⟲ Reset</button>
 
             <div class="lb-head">
                 <div class="lb-title-row">
@@ -137,9 +138,21 @@ export async function openLeaderboard(root, opts = {}) {
     });
 
     renderLens('overall');
-    paintAvatars(root.querySelector('.lb-podium'));
+    paintPodium(root.querySelector('.lb-podium'));
     paintAvatars(root.querySelector('.lb-history'));
-    root.querySelector('#lb-back')?.addEventListener('click', onBack);
+
+    // Leaving the scene: stop every podium decoder before handing control back, so
+    // no <video>/bounce-canvas keeps running off-screen.
+    const back = () => { teardownClips(root); onBack(); };
+    root.querySelector('#lb-back')?.addEventListener('click', back);
+
+    root.querySelector('#lb-reset')?.addEventListener('click', async () => {
+        if (!confirm('Reset the leaderboard? Current standings are archived to a backup file and can be restored.')) return;
+        teardownClips(root);
+        const res = await resetRankings();
+        if (res?.archived) console.log(`Rankings reset — standings archived to ${res.archived}`);
+        openLeaderboard(root, opts);   // re-fetch and repaint the now-empty hall
+    });
 }
 
 // ── Podium (top 3), centre-tallest ───────────────────────────
@@ -288,4 +301,17 @@ function short(model) {
 // Drop baked portraits into every avatar slot under `scope`.
 function paintAvatars(scope) {
     scope?.querySelectorAll?.('[data-model]').forEach(el => applyAvatar(el, el.dataset.model));
+}
+
+// Bring the podium to life: the leader plays a celebratory "champion" clip, the
+// runners-up an "idle" loop — all ping-pong bounced so a short clip never hard-
+// cuts. Each falls back to the still portrait (then the brand-hue gradient) when
+// no clip is baked for that model. Confined to the three podium slots; the rows
+// stay as still PNGs so we never spin up a wall of decoders. (The human slot has
+// no data-model, so it keeps its 👤 placeholder.)
+function paintPodium(scope) {
+    scope?.querySelectorAll?.('.lb-pod-ava[data-model]').forEach(el => {
+        const category = el.closest('.lb-pod')?.classList.contains('p1') ? 'champion' : 'idle';
+        applyAvatarVideo(el, el.dataset.model, { category, loop: true, bounce: true });
+    });
 }

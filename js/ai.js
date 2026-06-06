@@ -4,7 +4,10 @@ import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 import { extractJSON } from './util.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
-import { getStrategy, DEFAULT_STRATEGY } from './map-strategies.js';
+import { getStrategy } from './map-strategies.js';
+import { parseTier } from './model-identity.js';
+import { trophicRead } from './trophic.js';
+import { captureTurn, isCaptureEnabled } from './capture.js';
 
 // How long a warmed/active model is asked to stay resident in Ollama. Long
 // enough to outlast a full match (and the short gap to its next match in a
@@ -176,6 +179,18 @@ export class AIPlayer {
             return n;
         };
 
+        // Tiny per-cell deterministic perturbation (≈[0, 0.001)) added to every
+        // score. Early game most cells tie on raw nutrients; without this the
+        // sort falls back to grid iteration order (top-left→bottom-right), so
+        // pickDiverse always grabbed the northern regions first and the AI's
+        // whole opening clustered at the top of the map. Far smaller than any
+        // real score gap, so it only breaks ties — it never reorders genuinely
+        // better spots. Deterministic (no Math.random) for stable replays.
+        const tieJitter = (cell) => {
+            const h = Math.sin(cell.col * 12.9898 + cell.row * 78.233) * 43758.5453;
+            return (h - Math.floor(h)) * 1e-3;
+        };
+
         const plantSpots = [], herbSpots = [], predSpots = [];
 
         grid.forEach(cell => {
@@ -183,11 +198,12 @@ export class AIPlayer {
 
             const plantsHere = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
 
-            // Plant candidates: skip cells at plant cap (2)
-            if (plantsHere < 2) {
+            // Plant candidates: skip cells at plant cap
+            if (plantsHere < CONFIG.SIM.PLANT_CAP) {
                 let ps = cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1);
                 ps += nearby(cell, ownPlants, 3) * 0.08;
                 ps -= nearby(cell, enemyHerbs, 4) * 0.15;
+                ps += tieJitter(cell);
                 plantSpots.push({ cell, score: ps });
             }
 
@@ -197,12 +213,12 @@ export class AIPlayer {
                 const op = nearby(cell, ownPlants, 5);
                 const anyPlants = ep + op;
                 const danger = nearby(cell, enemyPreds, 4);
-                const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0);
+                const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0) + tieJitter(cell);
                 herbSpots.push({ cell, score: herbScore, nearEnemyPlants: ep, nearOwnPlants: op, nearPreds: danger });
 
                 const eh = nearby(cell, enemyHerbs, 5);
                 const oh = nearby(cell, ownHerbs, 5);
-                const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0);
+                const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0) + tieJitter(cell);
                 predSpots.push({ cell, score: predScore, nearEnemyHerbs: eh, nearOwnHerbs: oh });
             }
         });
@@ -251,7 +267,7 @@ export class AIPlayer {
             }
         };
 
-        addSpots(plantSpots, 'plant', ['GRASS','SHRUB','TREE'], '1 AP grass/shrub, 2 AP tree', 3, (s) => {
+        addSpots(plantSpots, 'plant', ['GRASS','SHRUB','TREE'], '1 AP grass/shrub, 2 AP tree', 5, (s) => {
             const c = s.cell;
             const r = this._regionOf(c.col, c.row);
             const herbs = nearby(c, enemyHerbs, 4);
@@ -262,22 +278,27 @@ export class AIPlayer {
 
         addSpots(herbSpots, 'herbivore', ['GRAZER','BROWSER'], '2 AP (energy counts ×2!)', 3, (s) => {
             const r = this._regionOf(s.cell.col, s.cell.row);
+            const hasFood = s.nearEnemyPlants > 0 || s.nearOwnPlants > 0;
             let d = `${r}`;
             if (s.nearEnemyPlants > 0) d += `, ${s.nearEnemyPlants} enemy plants nearby (raid!)`;
             else if (s.nearOwnPlants > 0) d += `, near ${s.nearOwnPlants} of your plants (builds ×2 biomass)`;
-            else d += `, open territory`;
+            else d += `, no plants in reach (will starve here)`;
             d += s.nearPreds > 0 ? `, ${s.nearPreds} predators (dangerous)` : '';
-            d += ` — adds species diversity +10%`;
+            // Only dangle the diversity payoff where the creature can actually
+            // live to claim it — the bonus counts only for species alive at game
+            // end, so a starving placement earns nothing.
+            d += hasFood ? ` — survives to add species diversity +10%` : '';
             return d;
         });
 
         addSpots(predSpots, 'predator', ['PREDATOR'], '2 AP (energy counts ×3!)', 2, (s) => {
             const r = this._regionOf(s.cell.col, s.cell.row);
+            const hasPrey = s.nearEnemyHerbs > 0 || s.nearOwnHerbs > 0;
             let d = `${r}`;
             if (s.nearEnemyHerbs > 0) d += `, ${s.nearEnemyHerbs} enemy herbivores to hunt`;
             else if (s.nearOwnHerbs > 0) d += `, ${s.nearOwnHerbs} of your herbivores nearby`;
-            else d += `, patrolling territory`;
-            d += ` — adds species diversity +10%, enables trophic chain ×1.25!`;
+            else d += `, no prey in reach (will starve here)`;
+            d += hasPrey ? ` — survives to add species diversity +10% and complete the trophic chain ×1.25!` : '';
             return d;
         });
 
@@ -411,8 +432,9 @@ export class AIPlayer {
 
         // The map block is produced by the active orientation strategy (shared
         // with the Vision Lab); only PRESENTATION changes, candidates/placement
-        // stay constant. Default = mediated when no match context is set.
-        const strategy = getStrategy(mc.mapStrategy || DEFAULT_STRATEGY);
+        // stay constant. An explicit match-context override wins (the lab A/B
+        // tests strategies); otherwise we pick by the model's size tier.
+        const strategy = getStrategy(mc.mapStrategy || this._tierStrategy());
         const mapBlock = strategy.buildMapBlock({
             grid,
             candidates,
@@ -431,6 +453,14 @@ export class AIPlayer {
                 candidates,
             },
             census: { mine: myCensus, enemy: enemyCensus },
+            // Trophic balance read — same helper that drives the human health
+            // orb. Derived from the FOGGED censuses above (enemy current-round
+            // placements already hidden), so it only synthesizes numbers the
+            // model is already shown — no fog leak.
+            trophic: {
+                mine: trophicRead(myCensus.plants, myCensus.herbs, myCensus.preds),
+                enemy: trophicRead(enemyCensus.plants, enemyCensus.herbs, enemyCensus.preds),
+            },
             strategy: {
                 ahead: myCensus.biomass > enemyCensus.biomass * 1.2,
                 behind: enemyCensus.biomass > myCensus.biomass * 1.2,
@@ -454,6 +484,15 @@ export class AIPlayer {
         return isCloudModel(this.model);
     }
 
+    // Pick the board-orientation strategy from the model's size tier. Small/mid
+    // models reason better from the compact, coordinate-anchored ascii grid
+    // (≈constant tokens, whole board visible); large/cloud models can take the
+    // full raw cell dump that pairs with free-coordinate placement.
+    _tierStrategy() {
+        const tier = parseTier(this.model);
+        return (tier === 'large' || tier === 'cloud') ? 'raw' : 'ascii';
+    }
+
     // How long a single model call is allowed before we abandon it. Now that the
     // match warms models BEFORE the clock starts (prepareResidentSet), cold-load
     // no longer eats this budget — and in practice both local (2–6s) and cloud
@@ -466,13 +505,16 @@ export class AIPlayer {
 
     async _callOllama(system, user, signal) {
         const url = `${this.ollamaUrl}/api/chat`;
-        // Some models ignore think:false and still use thinking tokens,
-        // so budget enough for thinking overhead + JSON content
-        const numPredict = this._isCloudModel() ? 1000 : 600;
+        // Token budget scales with the model's size tier (config.MODEL_BUDGETS):
+        // big/cloud models get headroom for the raw board view + free-placement
+        // reasoning, small models stay lean. numPredict covers thinking overhead
+        // (some models ignore think:false) + JSON content.
+        const budget = CONFIG.GAME.MODEL_BUDGETS[parseTier(this.model)] || CONFIG.GAME.MODEL_BUDGETS.mid;
+        const numPredict = budget.numPredict;
         // Size the context window to the prompt so a large map representation
         // isn't silently front-truncated against Ollama's ~2048 default. Capped
-        // to bound VRAM; ~3 chars/token is conservative for coord-heavy text.
-        const numCtx = Math.min(CONFIG.GAME.NUM_CTX_MAX,
+        // by tier to bound VRAM; ~3 chars/token is conservative for coord-heavy text.
+        const numCtx = Math.min(budget.numCtx,
             Math.max(2048, Math.ceil((system.length + user.length) / 3)));
 
         const response = await fetch(url, {
@@ -515,21 +557,44 @@ export class AIPlayer {
         if (!result) {
             throw new Error(`No valid JSON found in response (content:${content.length}b, thinking:${thinking.length}b)`);
         }
-        return result;
+        // Return the parsed action AND the verbatim raw response — capture keeps
+        // the raw so training data preserves exactly what the model emitted.
+        return {
+            parsed: result,
+            raw: { content, thinking, model: this.model,
+                   options: { temperature: 0.7, num_predict: numPredict, num_ctx: numCtx } },
+        };
     }
 
     // ── Execute actions ────────────────────────────────────────
 
     _executeActions(actions, candidates) {
         const tm = this.game.turns;
+        const grid = this.game.grid;
         const lookup = {};
         for (const c of candidates) lookup[c.label] = c;
 
         const results = [];
 
         for (const action of actions) {
-            const cand = lookup[action.spot?.toUpperCase()];
-            if (!cand) { results.push({ ok: false, msg: `Bad spot: ${action.spot}` }); continue; }
+            // Resolve the target cell from EITHER a curated candidate letter
+            // ({spot:"A"}) OR free coordinates ({col,row}). Free placement gives
+            // capable models real spatial agency over the whole board; the
+            // lettered menu stays as the always-legal floor for smaller models.
+            // Both paths land in the same validation below (water/cap/AP).
+            let cell;
+            const col = Number(action.col), row = Number(action.row);
+            const hasCoords = action.col != null && action.row != null
+                && Number.isInteger(col) && Number.isInteger(row);
+            if (hasCoords) {
+                cell = grid.getCell(col, row);
+                if (!cell) { results.push({ ok: false, msg: `Off-board: (${action.col},${action.row})` }); continue; }
+                if (cell.terrain === 'WATER') { results.push({ ok: false, msg: `Water cell: (${col},${row})` }); continue; }
+            } else {
+                const cand = lookup[action.spot?.toUpperCase()];
+                if (!cand) { results.push({ ok: false, msg: `Bad spot: ${action.spot}` }); continue; }
+                cell = cand.cell;
+            }
 
             const species = action.species?.toUpperCase();
             const template = CONFIG.SPECIES[species];
@@ -540,10 +605,9 @@ export class AIPlayer {
                 continue;
             }
 
-            const cell = cand.cell;
             if (template.type === 'plant') {
                 const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-                if (existingPlants >= 2) {
+                if (existingPlants >= CONFIG.SIM.PLANT_CAP) {
                     results.push({ ok: false, msg: `Cell (${cell.col},${cell.row}) already has max plants` });
                     continue;
                 }
@@ -574,7 +638,7 @@ export class AIPlayer {
         console.log(`[AI] Round ${this.game.turns.round}, P${this.player}, ${ap} AP, ${candidates.length} candidates`);
         console.log('[AI] Prompt:', user);
 
-        let response;
+        let response, raw = null;
         const controller = new AbortController();
         let timer;
         try {
@@ -585,7 +649,9 @@ export class AIPlayer {
                     reject(new Error(`AI timeout (${timeoutMs / 1000}s)`));
                 }, timeoutMs);
             });
-            response = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
+            const out = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
+            response = out.parsed;
+            raw = out.raw;
         } catch (err) {
             console.error('[AI] Ollama error:', err.message);
             // Classify so the card can speak to *what* went wrong, not just go mute.
@@ -593,14 +659,18 @@ export class AIPlayer {
             const reason = /timeout/i.test(msg) ? 'timeout'
                 : /no valid json/i.test(msg) ? 'badjson'
                 : 'offline';
-            return this._fallback(candidates, reason, startCensus);
+            const fb = this._fallback(candidates, reason, startCensus);
+            this._captureTurn({ system, user, raw: null, parsed: null, results: fb.actions, startCensus, ap, fallbackReason: reason });
+            return fb;
         } finally {
             clearTimeout(timer);
         }
 
         if (!response?.actions) {
             console.error('[AI] Bad response (no actions):', JSON.stringify(response));
-            return this._fallback(candidates, 'badjson', startCensus);
+            const fb = this._fallback(candidates, 'badjson', startCensus);
+            this._captureTurn({ system, user, raw, parsed: response, results: fb.actions, startCensus, ap, fallbackReason: 'badjson' });
+            return fb;
         }
 
         console.log('[AI] Response:', JSON.stringify(response));
@@ -624,6 +694,7 @@ export class AIPlayer {
         this.game.renderer.render();
 
         this._recordTurn(startCensus, response.reasoning, response.banter, results);
+        this._captureTurn({ system, user, raw, parsed: response, results, startCensus, ap, fallbackReason: null });
 
         return {
             reasoning: response.reasoning || '',
@@ -631,6 +702,44 @@ export class AIPlayer {
             actions: results,
             model: this.model,
         };
+    }
+
+    // Emit one training trajectory record for this turn (fire-and-forget; no-op
+    // unless capture is enabled). The training INPUT is the verbatim fog-honest
+    // prompt; full-board reward signals live in the separate round/outcome records.
+    _captureTurn({ system, user, raw, parsed, results, startCensus, ap, fallbackReason }) {
+        if (!isCaptureEnabled()) return;
+        try {
+            const g = this.game, tm = g.turns;
+            const enemy = this.player === 1 ? 2 : 1;
+            const turnUid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID() : `t_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
+            captureTurn({
+                schema: 1,
+                match_uid: g.matchUid || null,
+                turn_uid: turnUid,
+                seed: g.seed,
+                model: this.model,
+                player: this.player,
+                opponent_model: g.aiPlayers?.[enemy]?.model || null,
+                round: tm.round,
+                total_rounds: tm.totalRounds,
+                ap,
+                map_strategy: g.matchContext?.mapStrategy || null,
+                map_size: g.grid ? `${g.grid.cols}x${g.grid.rows}` : null,
+                prompt: { system, user },
+                response_raw: raw,
+                response_parsed: parsed
+                    ? { reasoning: parsed.reasoning ?? '', actions: parsed.actions ?? [], banter: parsed.banter ?? '' }
+                    : null,
+                exec: (results || []).map(r => ({
+                    ok: !!r.ok, species: r.species ?? null,
+                    col: r.cell?.col ?? null, row: r.cell?.row ?? null, msg: r.msg ?? '',
+                })),
+                start_census: startCensus,
+                fallback_reason: fallbackReason || null,
+            });
+        } catch (_) { /* capture must never break a turn */ }
     }
 
     // Spend remaining AP on grass spread across different regions
@@ -647,7 +756,7 @@ export class AIPlayer {
         grid.forEach(cell => {
             if (cell.terrain === 'WATER') return;
             const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) return;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) return;
             if (usedCells.has(`${cell.col},${cell.row}`)) return;
             spots.push({ cell, score: cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1) });
         });
@@ -690,7 +799,7 @@ export class AIPlayer {
         for (const c of plants) {
             if (tm.players[this.player].ap < 1) break;
             const existingPlants = c.cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) continue;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) continue;
             tm.spendAP(1);
             const org = createOrganism('GRASS', this.player, c.cell.col, c.cell.row);
             org._placedRound = tm.round;
@@ -730,8 +839,8 @@ Opponent score: ${enemyScore.finalScore.toLocaleString()} (${enemyScore.speciesC
 JSON: {"statement":"<your 1-2 sentence post-game comment, be original and reference the actual scores/species>"}`;
 
         try {
-            const response = await this._callOllama(system, user);
-            return response.statement || '';
+            const out = await this._callOllama(system, user);
+            return out.parsed.statement || '';
         } catch {
             return won ? 'A well-played game.' : 'Next time will be different.';
         }
@@ -855,6 +964,17 @@ export async function listResidentModels() {
 // `:latest` tag the caller's bare name omits (mirrors tournament.js norm).
 function _normModel(name) {
     return String(name || '').replace(/:latest$/, '');
+}
+
+// Is this model currently loaded in Ollama? Cloud models are always "ready"
+// (no local VRAM load), so they report resident. Drives the per-turn "loading
+// model…" indicator: an empty /api/ps (cold, or unreachable) reads as not
+// resident, which the watcher self-corrects once the model finishes loading.
+export async function isModelResident(model) {
+    if (!model || isCloudModel(model)) return true;
+    const target = _normModel(model);
+    const resident = await listResidentModels();
+    return resident.some(m => _normModel(m.name) === target);
 }
 
 // "Warm the next match only" lifecycle. Given the local models the upcoming

@@ -252,6 +252,25 @@ export function familyFor(name) {
     return MODEL_FAMILIES.find(f => f.match.test(name || '')) || MODEL_FAMILIES[MODEL_FAMILIES.length - 1];
 }
 
+// ── Per-avatar identity overrides ───────────────────────────
+//
+// The lab lets a creature's identity be re-authored (rename the family label,
+// retheme its archetype/motif) and persists it to avatars/lab-overrides.json
+// under an `identity` bucket keyed by avatarKey (`family-tier`). Both the lab and
+// the game load that file at startup and feed the map in here, so a renamed
+// creature shows everywhere resolveModel() is consumed (HUD subtitle, leaderboard,
+// win screens) — not just in the lab. The store is keyed by avatarKey, matching
+// how the baked PNG, clips, and prompt overrides are keyed: one creature, shared
+// by every model that resolves to it.
+let _identityOverrides = {};   // { <avatarKey>: { label?, archetype?, motif? } }
+
+export function applyIdentityOverrides(map) {
+    _identityOverrides = map && typeof map === 'object' ? map : {};
+}
+export function identityOverrideFor(avatarKey) {
+    return _identityOverrides[avatarKey] || null;
+}
+
 // 2-letter badge initials (ported from game.js _modelInitials so all callers
 // share one rule).
 export function modelInitials(model) {
@@ -284,9 +303,22 @@ function hashHue(s) {
 
 // The one resolver. Returns a complete identity descriptor for any model name.
 export function resolveModel(name) {
-    const family = familyFor(name);
+    const baseFamily = familyFor(name);
     const tier = parseTier(name);
     const short = baseName(name);
+    const avatarKey = `${baseFamily.id}-${tier}`;
+    // A lab-authored identity override reskins the creature (label / archetype /
+    // motif) for this avatarKey. We clone the family so the shared MODEL_FAMILIES
+    // entry is never mutated; hue/palette/match stay intact.
+    const ov = _identityOverrides[avatarKey];
+    const family = ov
+        ? {
+            ...baseFamily,
+            label: ov.label || baseFamily.label,
+            archetype: ov.archetype || baseFamily.archetype,
+            promptMotif: ov.motif || baseFamily.promptMotif,
+        }
+        : baseFamily;
     const hue = family.palette.hue != null ? family.palette.hue : hashHue(short);
     const palette = { ...family.palette, hue, accentHue: family.palette.accentHue != null ? family.palette.accentHue : hue };
     return {
@@ -299,7 +331,7 @@ export function resolveModel(name) {
         hue,
         initials: modelInitials(name),
         palette,
-        avatarKey: `${family.id}-${tier}`,
+        avatarKey,
     };
 }
 
@@ -403,9 +435,12 @@ export const STYLE_PRESETS = {
     'cyber-organic': {
         label: 'Cyber-organic',
         lora: 'qwen/CreatureFeature01_CE_QWEN_AIT3k.safetensors',
+        // Style control is the cyber-organic *material* identity only. We deliberately
+        // do NOT force composition (no "centered emblem / game avatar icon / rim
+        // lighting" — those make the LoRA wrap the subject in a glowing ring/halo).
+        // Framing, background, and lighting stay free for the motif to drive.
         suffix: 'bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, '
-            + 'bioluminescent accents, sleek living machine, dark background, centered emblem, game avatar icon, '
-            + 'highly detailed, dramatic rim lighting',
+            + 'bioluminescent accents, sleek living machine, highly detailed',
     },
     'creature-feature': {
         label: 'Creature-feature',
@@ -422,7 +457,8 @@ export const STYLE_PRESETS = {
 };
 
 export const NEGATIVE_PROMPT = 'text, words, letters, watermark, signature, human, person, face, '
-    + 'multiple subjects, frame, border, blurry, low quality';
+    + 'multiple subjects, frame, border, halo, glowing ring, circular frame, medallion, emblem ring, '
+    + 'blurry, low quality';
 
 export function avatarPrompt(resolved, styleId = 'cyber-organic') {
     const style = STYLE_PRESETS[styleId] || STYLE_PRESETS['cyber-organic'];

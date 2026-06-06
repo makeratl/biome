@@ -15,6 +15,10 @@
                <a href="/">← back to game</a></p>
         </div>
         <div class="controls">
+            <button id="activity-chip" class="activity-chip is-idle" title="Show the activity panel">
+                <span class="activity-spinner"></span>
+                <span id="activity-chip-text">Activity</span>
+            </button>
             <span id="comfy-pill" class="status-pill">checking…</span>
             <label class="vq-wrap">clip quality
                 <select id="vquality">
@@ -36,6 +40,13 @@
                creature. Generation runs through <code>server.py → ComfyUI :8188</code> and writes
                <code>avatars/cyber-organic/&lt;key&gt;.png</code> + the manifest.</p>
             <p id="gstatus" class="hint gstatus"></p>
+            <div class="dash-toolbar">
+                <input id="dash-search" class="dash-search" type="search" placeholder="🔎 Search model, family, key…">
+                <select id="dash-family" class="dash-family"><option value="">All families</option></select>
+                <label class="dash-toggle"><input type="checkbox" id="dash-unbaked"> Unbaked only</label>
+                <label class="dash-toggle"><input type="checkbox" id="dash-clips"> Has clips</label>
+                <span id="dash-count" class="muted-tag"></span>
+            </div>
             <div id="groups" class="groups"></div>
         </section>
 
@@ -53,28 +64,117 @@
         </details>
     </main>
 
+    <!-- Per-avatar studio: two-pane on desktop. Left = preview hub (still + every
+         clip, respin in place). Right = scrolling control rail. -->
     <div id="preview-modal" class="modal-backdrop" hidden>
-        <div class="modal-card">
+        <div class="modal-card studio">
             <button id="preview-close" class="modal-close" title="Close (Esc)">✕</button>
-            <div id="preview-stage" class="modal-stage"></div>
-            <div id="preview-note" class="modal-note" hidden>Procedural placeholder — generate the still to preview the baked image.</div>
-            <div id="preview-title" class="modal-title"></div>
-            <div class="modal-regen">
-                <textarea id="preview-prompt" class="prompt-edit" rows="4"></textarea>
-                <div class="modal-regen-row">
-                    <span id="preview-status" class="status-pill"></span>
-                    <label class="seed-wrap">seed
-                        <input id="preview-seed" class="seed-input" type="number">
-                        <button id="preview-dice" class="dice" title="randomize seed">🎲</button>
-                    </label>
-                    <span class="modal-regen-actions">
-                        <button id="preview-save" class="mini-btn">Save prompt</button>
-                        <button id="preview-reset" class="mini-btn ghost">Reset</button>
-                        <button id="preview-regen" class="gen-btn">Regenerate</button>
-                    </span>
+            <div class="studio-grid">
+
+                <!-- LEFT — preview hub -->
+                <div class="studio-left">
+                    <div class="studio-stage-wrap">
+                        <div id="preview-stage" class="modal-stage"></div>
+                        <span id="preview-status" class="status-pill stage-status"></span>
+                        <button id="preview-regen" class="stage-respin" title="Respin">🎲</button>
+                        <div id="stage-loading" class="stage-loading" hidden>
+                            <span class="stage-spinner"></span>
+                            <span id="stage-loading-label" class="stage-loading-label">Generating…</span>
+                        </div>
+                    </div>
+                    <div id="preview-note" class="modal-note" hidden></div>
+                    <div id="studio-tabs" class="studio-tabs">
+                        <button class="studio-tab is-on" data-tab="still">Still</button>
+                        <button class="studio-tab" data-tab="intro">Intro</button>
+                        <button class="studio-tab" data-tab="idle">Idle</button>
+                        <button class="studio-tab" data-tab="thinking">Thinking</button>
+                        <button class="studio-tab" data-tab="victory">Victory</button>
+                        <button class="studio-tab" data-tab="defeat">Defeat</button>
+                        <button class="studio-tab" data-tab="champion">Champion</button>
+                    </div>
+                    <!-- Performance infographics, stacked under the preview so the
+                         image + stats together line up with the editor rail height. -->
+                    <div id="studio-stats" class="studio-stats" hidden></div>
+                </div>
+
+                <!-- RIGHT — control rail -->
+                <div class="studio-right">
+                    <div id="preview-title" class="modal-title"></div>
+
+                    <!-- Identity: rename / retheme the creature (flows into the game) -->
+                    <div class="modal-identity">
+                        <div class="mi-head">Identity <span id="preview-family-count" class="fam-count"></span></div>
+                        <div class="mi-fields">
+                            <label class="mi-field">Name
+                                <input id="preview-name" class="id-input" type="text" placeholder="e.g. Qwen">
+                            </label>
+                            <label class="mi-field">Archetype
+                                <input id="preview-archetype" class="id-input" type="text" placeholder="e.g. fox">
+                            </label>
+                        </div>
+                        <label class="mi-field mi-motif">Character motif
+                            <textarea id="preview-motif" class="prompt-edit" rows="2"
+                                      placeholder="the creature description that drives the prompt"></textarea>
+                        </label>
+
+                        <!-- AI-assisted re-prompting (runs on the top-ranked installed model) -->
+                        <div class="mi-assist">
+                            <div class="mi-assist-head">✨ AI assist</div>
+                            <p class="mi-assist-hint">Describe a change in plain language — the top-ranked model
+                               redrafts the character <strong>and renders a new still</strong> so you approve the
+                               look you see. Save identity keeps it.</p>
+                            <label class="assist-model">Model
+                                <select id="assist-model"></select>
+                            </label>
+                            <textarea id="assist-note" class="prompt-edit" rows="2"
+                                      placeholder="e.g. “drop the broken arch around the head, brighten the circuitry, make the pose more menacing”"></textarea>
+                            <div class="mi-assist-actions">
+                                <button id="assist-go" class="gen-btn">✨ Generate revision</button>
+                                <span id="assist-status" class="assist-status"></span>
+                            </div>
+                        </div>
+
+                        <div class="mi-ctrl">
+                            <span id="identity-status" class="status-pill"></span>
+                            <button id="identity-save" class="mini-btn">Save identity</button>
+                            <button id="identity-reset" class="mini-btn ghost">Reset identity</button>
+                        </div>
+                    </div>
+
+                    <!-- Contextual prompt — the still prompt, or the selected clip's motion prompt -->
+                    <div class="modal-regen">
+                        <div class="mi-head" id="prompt-head">Still prompt</div>
+                        <textarea id="preview-prompt" class="prompt-edit" rows="4"></textarea>
+                        <div class="modal-regen-row">
+                            <button id="preview-save" class="mini-btn">Save prompt</button>
+                            <button id="preview-reset" class="mini-btn ghost">Reset</button>
+                        </div>
+                    </div>
+
+                    <!-- Respin wizard step: approve the new still, then queue the clip set -->
+                    <div class="modal-queue">
+                        <button id="preview-approve-queue" class="gen-btn" disabled>🎬 Respin all clips to match</button>
+                        <span id="approve-hint" class="hint"></span>
+                    </div>
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Activity panel — the single, prominent surface for every asset regeneration
+         (still respins, single clips, and bulk clip-set respins). Auto-opens when
+         work starts; the header chip toggles it. -->
+    <div id="activity-panel" class="activity-panel" hidden>
+        <div class="activity-head">
+            <span class="activity-title">⚡ Activity</span>
+            <span id="activity-summary" class="muted-tag"></span>
+            <span class="activity-actions">
+                <button id="activity-cancel" class="ghost-btn" title="Cancel everything still queued">Cancel queued</button>
+                <button id="activity-hide" class="ghost-btn" title="Hide (work keeps running)">—</button>
+            </span>
+        </div>
+        <div id="activity-bar" class="activity-bar"><span id="activity-bar-fill" class="activity-bar-fill"></span></div>
+        <div id="activity-list" class="activity-list"></div>
     </div>
 
     <div id="concept-stage" class="concept-stage" hidden>
@@ -83,6 +183,7 @@
                 <button data-concept="champion" class="concept-tab is-on">Champion reveal</button>
                 <button data-concept="versus" class="concept-tab">Match result</button>
                 <button data-concept="gameover" class="concept-tab">Game-over card</button>
+                <button data-concept="inplay" class="concept-tab">In-play (idle · thinking)</button>
             </div>
             <div class="concept-pickers">
                 <label>Winner <select id="concept-winner"></select></label>

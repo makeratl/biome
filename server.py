@@ -13,6 +13,7 @@ import subprocess
 import threading
 
 import db
+import traj
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,6 +24,24 @@ MANIFEST_FILE = os.path.join(AVATARS_DIR, 'manifest.json')
 WORKFLOW_FILE = os.path.join(BASE_DIR, 'comfy_avatar_workflow.json')
 _SLUG = re.compile(r'^[a-z0-9-]+$')
 _manifest_lock = threading.Lock()
+
+# --- Training-data capture (Training Lab) ---
+# Per-turn trajectories + per-round reward signals stream here as newline-
+# delimited JSON; match outcomes are stamped by the tournament-result handler.
+# Append-only, one lock so concurrent matches (tournament threads) don't interleave.
+TRAINING_DIR = os.path.join(BASE_DIR, 'training-data')
+_traj_lock = threading.Lock()
+
+def _traj_append(filename, record):
+    try:
+        os.makedirs(TRAINING_DIR, exist_ok=True)
+        line = json.dumps(record, separators=(',', ':')) + '\n'
+        with _traj_lock:
+            with open(os.path.join(TRAINING_DIR, filename), 'a', encoding='utf-8') as f:
+                f.write(line)
+        return True
+    except Exception:
+        return False
 
 def _load_manifest():
     try:
@@ -104,8 +123,8 @@ def _comfy_generate(key, style, prompt, negative, lora, seed):
 VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
 VIDEO_MANIFEST_FILE = os.path.join(VIDEOS_DIR, 'manifest.json')
 OVERRIDES_FILE = os.path.join(AVATARS_DIR, 'lab-overrides.json')
-VIDEO_CATEGORIES = ('victory', 'defeat')
-OVERRIDE_KINDS = ('still', 'victory', 'defeat')
+VIDEO_CATEGORIES = ('intro', 'idle', 'thinking', 'victory', 'defeat', 'champion')
+OVERRIDE_KINDS = ('still',) + VIDEO_CATEGORIES
 VIDEO_WORKFLOWS = {
     'fast':    {'file': os.path.join(BASE_DIR, 'comfy_video_fast.json'),
                 'image': '1', 'positive': '27', 'negative': '28', 'seed': '30', 'save': '34'},
@@ -143,6 +162,29 @@ def _save_override(kind, key, text):
         bucket = data.setdefault(kind, {})
         if text and text.strip():
             bucket[key] = text
+        else:
+            bucket.pop(key, None)
+        with open(OVERRIDES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+    return data
+
+def _save_identity(key, label, archetype, motif):
+    """Persist (or, when all fields are blank, clear) a per-key creature identity
+    override into the `identity` bucket of lab-overrides.json. Stores only the
+    non-empty fields so a partial rename doesn't wipe the others on reload."""
+    with _overrides_lock:
+        data = _load_overrides()
+        bucket = data.setdefault('identity', {})
+        entry = {}
+        if label and label.strip():
+            entry['label'] = label.strip()
+        if archetype and archetype.strip():
+            entry['archetype'] = archetype.strip()
+        if motif and motif.strip():
+            entry['motif'] = motif.strip()
+        if entry:
+            bucket[key] = entry
         else:
             bucket.pop(key, None)
         with open(OVERRIDES_FILE, 'w') as f:
@@ -279,6 +321,53 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             name = q.get('m', [''])[0]
             self._json_response(db.get_model_detail(name))
             return
+        # Training Lab: browse captured turns with their reward labels
+        if self.path.startswith('/trajectory/list'):
+            q = parse_qs(urlparse(self.path).query)
+            limit = int(q.get('limit', ['200'])[0])
+            filters = {}
+            if q.get('model', [''])[0]:
+                filters['model'] = q['model'][0]
+            if q.get('gold', [''])[0] in ('1', 'true'):
+                filters['gold'] = True
+            labels = traj.load_labels()
+            rows = []
+            for t, lbl in traj.labeled_turns(filters):
+                s = traj.summarize(t, lbl)
+                s['decision'] = labels.get(t.get('turn_uid'))
+                rows.append(s)
+            rows.reverse()  # newest first
+            self._json_response({'turns': rows[:limit], 'total': len(rows)})
+            return
+        # Training Lab: full turn record (verbatim prompt/response) + label
+        if self.path.startswith('/trajectory/detail'):
+            q = parse_qs(urlparse(self.path).query)
+            uid = q.get('uid', [''])[0]
+            turns, ri, oi = traj.load()
+            hit = next((t for t in turns if t.get('turn_uid') == uid), None)
+            if not hit:
+                self._json_response({'error': 'not found'}, 404)
+            else:
+                self._json_response({'turn': hit, 'label': traj.score_turn(hit, ri, oi)})
+            return
+        # Training Lab: build the SFT dataset from gold turns (+ manual stars)
+        if self.path.startswith('/trajectory/export'):
+            q = parse_qs(urlparse(self.path).query)
+            filters = {}
+            if q.get('model', [''])[0]:
+                filters['model'] = q['model'][0]
+            self._json_response(traj.write_dataset(filters))
+            return
+        # Training Lab: dashboard metrics (gold count, totals, goal progress)
+        if self.path == '/trajectory/stats':
+            self._json_response(traj.stats())
+            return
+        # Training Lab: who currently teaches (top of the ladder)
+        if self.path == '/trajectory/champion':
+            ranks = db.get_rankings()
+            champ = max(ranks.items(), key=lambda kv: kv[1].get('elo', 0), default=(None, None))
+            self._json_response({'champion': champ[0], 'stats': champ[1]})
+            return
         # Avatar generation: is ComfyUI reachable?
         if self.path == '/comfy/health':
             ok = False
@@ -365,6 +454,26 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament-result':
             self._handle_tournament_result()
             return
+        # Training-data capture: per-turn trajectory + per-round reward signals
+        if self.path == '/trajectory/turn':
+            self._handle_trajectory('turns.jsonl')
+            return
+        if self.path == '/trajectory/round':
+            self._handle_trajectory('rounds.jsonl')
+            return
+        # Training Lab: manual curate override (star/reject) for a turn
+        if self.path == '/trajectory/label':
+            self._handle_trajectory('labels.jsonl')
+            return
+        # Training Lab: compact logs — drop rejects + never-gold turns
+        if self.path == '/trajectory/purge':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length)) if length else {}
+            except (json.JSONDecodeError, ValueError):
+                body = {}
+            self._json_response(traj.purge(body.get('mode', 'curatable')))
+            return
         # Reset rankings (archive then clear the match log)
         if self.path == '/reset-rankings':
             self._handle_reset()
@@ -381,6 +490,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/lab/overrides':
             self._handle_overrides()
             return
+        # Persist a per-key creature identity (rename / retheme)
+        if self.path == '/lab/identity':
+            self._handle_identity()
+            return
         super().do_POST()
 
     def _json_response(self, data, status=200):
@@ -388,6 +501,19 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def _handle_trajectory(self, filename):
+        # Fire-and-forget from the client; we just append and ack. Never 500 into
+        # the game loop — a bad record is dropped, not fatal.
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            record = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        record.setdefault('server_ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        ok = _traj_append(filename, record)
+        self._json_response({'ok': ok})
 
     def _handle_tournament_result(self):
         try:
@@ -417,7 +543,27 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'p1_score': body.get('p1_score', 0),
             'p2_score': body.get('p2_score', 0),
             'winner': body['winner'],
+            'seed': body.get('seed'),
         })
+        # Training-data: stamp the authoritative outcome onto this match's
+        # captured turns/rounds (joined by match_uid). Done here because the
+        # server now holds match_uid + match_id + winner + scores + ELO at once.
+        if body.get('match_uid'):
+            _traj_append('outcomes.jsonl', {
+                'match_uid': body['match_uid'],
+                'match_id': out['match_id'],
+                'winner': body['winner'],
+                'p1': body['p1'], 'p2': body['p2'],
+                'p1_score': body.get('p1_score', 0),
+                'p2_score': body.get('p2_score', 0),
+                'seed': body.get('seed'),
+                'mode': body.get('mode', 'standard'),
+                'map_strategy': body.get('map_strategy'),
+                'map_size': body.get('map_size'),
+                'rounds': body.get('rounds'),
+                'elo': out['result'],
+                'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            })
         self._json_response({
             'ok': True,
             'total_matches': out['total_matches'],
@@ -499,6 +645,20 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             return
         _save_override(kind, key, text)
         self._json_response({'ok': True, 'kind': kind, 'key': key, 'saved': bool(text and text.strip())})
+
+    def _handle_identity(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        key = body.get('key', '')
+        if not _SLUG.match(key):
+            self._json_response({'error': 'key must be a lowercase slug'}, 400)
+            return
+        _save_identity(key, body.get('label', ''), body.get('archetype', ''), body.get('motif', ''))
+        self._json_response({'ok': True, 'key': key})
 
     def _handle_reset(self):
         """Archive the current database to a timestamped backup, then start fresh."""

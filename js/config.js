@@ -162,6 +162,7 @@ export const CONFIG = {
     SIM: {
         STEPS_PER_TURN: 20,
         ANIMATION_STEP_MS: 100,
+        PLANT_CAP: 2,            // max plants per cell (a correctness invariant)
     },
 
     // Scoring — incentivize biodiversity over grass monoculture
@@ -174,7 +175,7 @@ export const CONFIG = {
 
     // Game
     GAME: {
-        TOTAL_ROUNDS: 20,
+        TOTAL_ROUNDS: 10,
         LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
         ROUND_OPTIONS: [5, 10, 15, 20],   // selectable round counts (default = TOTAL_ROUNDS)
@@ -182,6 +183,18 @@ export const CONFIG = {
         // map representation (e.g. the `raw` orientation) isn't SILENTLY
         // front-truncated against Ollama's ~2048 default — but cap it here to
         // bound KV-cache VRAM. mediated/ascii prompts sit well under this.
+        // (Used by the Vision Lab; live matches use MODEL_BUDGETS below.)
         NUM_CTX_MAX: 8192,
+        // Per-tier Ollama token budgets, keyed by model-identity.js size tier.
+        // Larger models earn the headroom for the raw board view + free-placement
+        // reasoning; small models stay lean so a 3B isn't asked to fill a context
+        // it can't use well. numCtx is the CAP — actual ctx is still sized to the
+        // prompt (min 2048). numPredict budgets thinking overhead + JSON output.
+        MODEL_BUDGETS: {
+            small: { numCtx: 8192,  numPredict: 600 },
+            mid:   { numCtx: 8192,  numPredict: 600 },
+            large: { numCtx: 16384, numPredict: 800 },
+            cloud: { numCtx: 32768, numPredict: 1000 },
+        },
     },
 };

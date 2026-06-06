@@ -37,7 +37,9 @@ function playersToShow() {
 }
 
 // One organism on one terrain hex, in one style, at `display` px.
-function renderIcon(style, speciesKey, player, display) {
+// `energyValue` overrides the global energy setting when provided (absolute
+// energy units, not a ratio) — used by the growth strip to walk the life range.
+function renderIcon(style, speciesKey, player, display, energyValue) {
     const wrap = document.createElement('div');
     wrap.className = 'icon';
     wrap.style.width = display + 'px';
@@ -49,7 +51,8 @@ function renderIcon(style, speciesKey, player, display) {
     back.canvas.className = 'layer';
     wrap.appendChild(back.canvas);
 
-    const opts = { species: speciesKey, player, energy: energyFor(speciesKey) };
+    const energy = energyValue != null ? energyValue : energyFor(speciesKey);
+    const opts = { species: speciesKey, player, energy };
 
     if (style.meta.substrate === 'svg') {
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -120,6 +123,52 @@ function buildMatrix() {
     }
 }
 
+// Growth strip — each species walked across its lived energy range in the live
+// game art, so the progression reads as a filmstrip. Plants spread in at ~0.25
+// of max and mature toward 1.0; the same sweep gives herbivores/predators a
+// small→full read too.
+const GROWTH_STYLE = gameart;
+const STAGES = [0.25, 0.45, 0.65, 0.85, 1.0];
+
+function buildGrowth() {
+    const grid = document.getElementById('growth');
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = `var(--rowhead) repeat(${STAGES.length}, 1fr)`;
+
+    // header row: ratio labels
+    grid.appendChild(cell('corner', ''));
+    for (const ratio of STAGES) {
+        const h = document.createElement('div');
+        h.className = 'colhead';
+        h.innerHTML = `<div class="colhead-label">${Math.round(ratio * 100)}%</div>`;
+        grid.appendChild(h);
+    }
+
+    for (const sp of SPECIES) {
+        const head = document.createElement('div');
+        head.className = 'rowhead';
+        head.innerHTML = `<div class="rowhead-name">${sp.name}</div>` +
+            `<div class="rowhead-role">${sp.role} · ${sp.type}</div>`;
+        grid.appendChild(head);
+
+        for (const ratio of STAGES) {
+            const c = document.createElement('div');
+            c.className = 'cell';
+            const group = document.createElement('div');
+            group.className = 'viewgroup';
+            const icons = document.createElement('div');
+            icons.className = 'icons';
+            const energy = sp.maxEnergy * ratio;
+            for (const player of playersToShow()) {
+                icons.appendChild(renderIcon(GROWTH_STYLE, sp.key, player, ZOOM_SIZE, energy));
+            }
+            group.appendChild(icons);
+            c.appendChild(group);
+            grid.appendChild(c);
+        }
+    }
+}
+
 function cell(cls, text) {
     const d = document.createElement('div');
     d.className = cls;
@@ -164,6 +213,7 @@ function buildBoard() {
 
 function renderAll() {
     buildMatrix();
+    buildGrowth();
     buildBoard();
 }
 
