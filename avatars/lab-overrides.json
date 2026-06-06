@@ -1,0 +1,203 @@
+{
+  "still": {
+    "deepseek-mid": "a deep-abyss anglerfish, indigo-black scales, a glowing bioluminescent lure, ancient eyes; a mature adult \u2014 balanced detail, confident bearing; hue 245\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, dark background, centered emblem, game avatar icon, highly detailed, dramatic rim lighting",
+    "cohere-mid": "A wide-eyed wolf pup with oversized metallic ears and a stubby glowing tail; a mature adult \u2014 balanced detail, confident bearing; hue 352\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "deepseek-cloud": "A deep-abyss anglerfish with symmetrical twin bioluminescent lures radiating from a regal, crown-like brow, armored in indigo-black scales and ancient, gleaming eyes.; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 245\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, dark background, centered emblem, game avatar icon, highly detailed, dramatic rim lighting",
+    "exaone-mid": "A sleek lynx with tufted ears, arched in a beguiling, hypnotic pose, exuding a magnetic and seductive allure; a mature adult \u2014 balanced detail, confident bearing; hue 315\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, dark background, centered emblem, game avatar icon, highly detailed, dramatic rim lighting",
+    "falcon-mid": "a cute desert scorpion with oversized eyes and a raised segmented tail tipped with a glowing venom stinger; a mature adult \u2014 balanced detail, confident bearing; hue 45\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "gemma-cloud": "An iridescent dragonfly with faceted gemstone wings and a jewel-bright body hovering over crystal flowers and reflecting towers; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 185\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "generic-cloud": "a vast sea turtle gliding through the stellar deep, its semi-translucent shell swirling with galaxies and bioluminescent currents; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 201\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "generic-mid": "a plump hex-plated rodent with oversized bioluminescent ears and a jittery, inquisitive posture; a mature adult \u2014 balanced detail, confident bearing; hue 348\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "glm-cloud": "A towering long-necked heron crowned with glowing coronas, its vast translucent wings radiating rippling energy; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 278\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "llama-small": "a slender young doe with luminous filament-whisper antlers and liquid silver eyes gazing into a ray of golden sun; a young, lean form \u2014 simple, minimal ornamentation, agile; hue 215\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "gpt-cloud": "a dignified roosting owlet with oversized glowing eyes and delicate metallic spectacles perched upon a metallic-circuitry branch, wings folded at its sides; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 205\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "llama-mid": "a mighty llama with a regal arched neck and heavy metallic filigree crest crowning its head; a mature adult \u2014 balanced detail, confident bearing; hue 215\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "minimax-cloud": "a round, wide-eyed scarab beetle with a polished magenta-and-rose iridescent shell, compact and adorable; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 328\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "qwen-cloud": "a wide-eyed celestial fox with oversized luminous ears and a flowing, multi-layered translucent tail that sheds drifting motes of starlight; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 38\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "qwen-large": "A brash, oversized fox pup strutting in battle-worn amber plating that drags the ground, sharp inquisitive eyes glinting with cocky defiance; an elder, powerful form \u2014 ornate plating, battle-worn, commanding presence; hue 38\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "nemotron-cloud": "A cyber-organic chameleon with a tightly curled segmented tail and independent swiveling optic-sensors, patiently gripping a metallic latticed branch.; an ethereal celestial form \u2014 semi-translucent, crowned, radiating vast glowing energy; hue 96\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "mistral-mid": "a fierce falcon perched on a twisted metallic branch, ember-orange and ash-grey feathers swept by wind, fierce focus; a mature adult \u2014 balanced detail, confident bearing; hue 16\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed",
+    "stablelm-mid": "a strong, steady stallion, cool steel-blue coat, balanced and grounded, flowing mane, calm power; a mature adult \u2014 balanced detail, confident bearing; hue 200\u00b0 colour identity; bio-mechanical hybrid creature, organic forms fused with glowing circuitry and metallic filigree, bioluminescent accents, sleek living machine, highly detailed"
+  },
+  "victory": {
+    "cohere-mid": "jumps playfully upward with joy",
+    "deepseek-cloud": "Symmetrical lures blaze with overwhelming radiance as vast glowing energy erupts from its ethereal frame, dark background, centered.",
+    "exaone-mid": "The lynx sits upright, head tilted with a captivating, triumphant purr, dark background, centered",
+    "falcon-mid": "The scorpion rears up joyfully, its tail curling into a triumphant spiral as its accents pulse brightly, dark background, centered",
+    "gemma-cloud": "The dragonfly ascends radiantly, its gemstone wings fracturing light into a dazzling, triumphant display, dark background, centered.",
+    "generic-cloud": "rearing upward with exultant sweeping flippers, its translucent shell blazing brilliantly with triumphant stellar light, joyous energy erupting from its form in radiant cascading waves, dark background, centered",
+    "generic-mid": "It stands on its hind legs, chest puffed out as radiant filigree flares across its cheeks, dark background, centered.",
+    "glm-cloud": "The celestial heron unfurls its vast wings, flooding the void with a brilliant cascading energy bloom, dark background, centered",
+    "llama-small": "the fawn leaps gracefully, metallic hooves glowing in a ray of golden sun, dark background, centered",
+    "gpt-cloud": "The owlet fluffs its semi-translucent chest proudly, emitting a radiant shockwave of light from its crown while the circuit-branch glows brightly, dark background, centered",
+    "llama-mid": "The llama rears up majestically on its hind legs, its crest radiating brilliant cascading pulses of light, dark background, centered",
+    "qwen-cloud": "the fox leaps upward in a bounding pounce, ears perked high and mouth wide in an exultant grin, its massive tail erupts into a brilliant cascade of radiant starlight, body blazing brighter as joyful energy bursts outward in triumphant waves, dark background, centered",
+    "qwen-large": "The bratty pup erupts in gloating triumph, rearing up on its hind legs with an insolent roar of joy; its amber plating blazes white-hot as explosive golden energy bursts from its ornate armor, the whole body shaking with exultant, cocky elation, dark background, centered",
+    "nemotron-cloud": "The chameleon erupts in triumphant joy, rearing its head high and unfurling its segmented tail to blaze with an exultant burst of radiant energy, its optics wide and blazing brighter as its whole body celebrates the win, dark background, centered",
+    "mistral-mid": "The falcon throws its head back in a triumphant shriek, wings spreading explosively wide as its whole body rears upward in blazing glory, ember-circuitry erupting in a radiant burst of scorching light, dark background, centered"
+  },
+  "defeat": {
+    "generic-mid": "The rodent curls into a tight hexagonal ball with only its drooping ears visible, dark background, centered.",
+    "glm-mid": "the heron staggers and slumps, head lowering, hiding in shame, wisps of ash and smoke drifting upward, energy fading away; dark background, centered, slow mournful motion",
+    "llama-small": "the sun sets in the background, as the llama becomes deeply saddened and weeps.",
+    "olmo-mid": "the otter staggers and slumps, head lowering, deep sadness, energy fading away; dark background, centered, slow mournful motion",
+    "cohere-mid": "Droops ears flat against circuitry-antlers, glowing spots dimming as oversized paws slump, dark background, centered",
+    "deepseek-cloud": "The twin lures dim and fold inward as translucent membranes dissolve into drifting particles, dark background, centered.",
+    "exaone-mid": "The lynx collapses gracefully, its ears drooping as it casts one last haunting look, dark background, centered",
+    "falcon-mid": "The scorpion droops low, tucking its claws inward while its tail and glowing accents dim to a faint flicker, dark background, centered",
+    "gemma-cloud": "The dragonfly's luminescence dims as its crystalline wings fold inward, sinking slowly into the dark background, centered.",
+    "generic-cloud": "sinking heavily with trembling flippers, its ancient head bowing low in profound grief, its inner galaxies draining to cold faint embers as sorrow washes through its fading form, dark background, centered",
+    "glm-cloud": "The translucent heron droops its crowned head as its radiant energy dims into scattered fading sparks, dark background, centered",
+    "gpt-cloud": "The owlet's vast eyes, it becomes immensely sad, form slumping",
+    "llama-mid": "Great sadness hits the llama, they lower their head in sorrow.",
+    "qwen-cloud": "the fox sinks down low with a trembling shiver, its oversized ears drooping heavily against its bowed head as its luminous glow drains away into cold faint embers, its translucent tail pooling flat beneath its trembling body, dark background, centered",
+    "qwen-large": "The bratty pup's cocky posture crumbles into great sorrow; its ears flatten, its head bows low, and its heavy body sinks and trembles as the weight of grief crushes its defiance, its amber glow draining away to cold, aching embers, dark background, centered",
+    "nemotron-cloud": "Overcome with grief, the chameleon's head bows low against the branch, its vibrant circuitry fading to cold faint embers as its body sinks and trembles, the coiled tail drooping in heartbreaking sorrow, dark background, centered",
+    "mistral-mid": "The falcon's wings droop heavily to its sides, its head bowing low as its trembling talons loosen their grip on the perch, the warm ember glow draining away into cold, faint metallic embers, dark background, centered"
+  },
+  "identity": {
+    "cohere-mid": {
+      "label": "Pupfang",
+      "archetype": "wolf pup",
+      "motif": "A wide-eyed wolf pup"
+    },
+    "deepseek-cloud": {
+      "label": "Luminarch",
+      "archetype": "Sovereign Angler",
+      "motif": "A deep-abyss anglerfish with symmetrical twin bioluminescent lures radiating from a regal, crown-like brow, armored in indigo-black scales and ancient, gleaming eyes."
+    },
+    "exaone-mid": {
+      "label": "Eon Lynx",
+      "archetype": "Siren Lynx",
+      "motif": "A sleek lynx with tufted ears, arched in a beguiling, hypnotic pose, exuding a magnetic and seductive allure"
+    },
+    "falcon-mid": {
+      "label": "Dunestrider",
+      "archetype": "scorpion",
+      "motif": "a cute desert scorpion with oversized eyes and a raised segmented tail tipped with a glowing venom stinger"
+    },
+    "gemma-cloud": {
+      "label": "Gemma",
+      "archetype": "dragonfly",
+      "motif": "An iridescent dragonfly with faceted gemstone wings and a jewel-bright body hovering over crystal flowers and reflecting towers"
+    },
+    "generic-cloud": {
+      "label": "Pelagiid",
+      "archetype": "cosmic turtle",
+      "motif": "a vast sea turtle gliding through the stellar deep, its semi-translucent shell swirling with galaxies and bioluminescent currents"
+    },
+    "generic-mid": {
+      "label": "Hex-Vole",
+      "archetype": "rodent",
+      "motif": "a plump hex-plated rodent with oversized bioluminescent ears and a jittery, inquisitive posture"
+    },
+    "glm-cloud": {
+      "label": "Nebulon",
+      "archetype": "Celestial Heron",
+      "motif": "A towering long-necked heron crowned with glowing coronas, its vast translucent wings radiating rippling energy"
+    },
+    "llama-small": {
+      "label": "Fawn",
+      "archetype": "doe",
+      "motif": "a slender young doe with luminous filament-whisper antlers and liquid silver eyes gazing into a ray of golden sun"
+    },
+    "gpt-cloud": {
+      "label": "Strigid",
+      "archetype": "Owling",
+      "motif": "a dignified roosting owlet with oversized glowing eyes and delicate metallic spectacles perched upon a metallic-circuitry branch, wings folded at its sides"
+    },
+    "llama-mid": {
+      "label": "Llama",
+      "archetype": "monarch",
+      "motif": "a mighty llama with a regal arched neck and heavy metallic filigree crest crowning its head"
+    },
+    "qwen-cloud": {
+      "label": "Vulpine",
+      "archetype": "Sky Fox",
+      "motif": "a wide-eyed celestial fox with oversized luminous ears and a flowing, multi-layered translucent tail that sheds drifting motes of starlight"
+    },
+    "qwen-large": {
+      "label": "Qwen",
+      "archetype": "pup",
+      "motif": "A brash, oversized fox pup strutting in battle-worn amber plating that drags the ground, sharp inquisitive eyes glinting with cocky defiance"
+    },
+    "nemotron-cloud": {
+      "label": "Nemotron",
+      "archetype": "chameleon",
+      "motif": "A cyber-organic chameleon with a tightly curled segmented tail and independent swiveling optic-sensors, patiently gripping a metallic latticed branch."
+    },
+    "mistral-mid": {
+      "label": "Mistral",
+      "archetype": "falcon",
+      "motif": "a fierce falcon perched on a twisted metallic branch, ember-orange and ash-grey feathers swept by wind, fierce focus"
+    }
+  },
+  "intro": {
+    "cohere-mid": "Bounces forward with clumsy oversized paws, ears perking up as circuits flicker to life, dark background, centered",
+    "deepseek-cloud": "Translucent fins unfurl while twin lures ignite with radiant energy, dark background, centered.",
+    "exaone-mid": "The lynx steps forward with a slow, mesmerizing sway, its tail curling invitingly, dark background, centered",
+    "falcon-mid": "The scorpion scuttles forward, playfully snapping its mechanical claws and raising its glowing tail, dark background, centered",
+    "gemma-cloud": "The translucent dragonfly coalesces from a swarm of glowing facets above the crystalline landscape, dark background, centered.",
+    "generic-cloud": "ascending from the depths with sweeping flippers, its constellation-shell circuitry powering on in cascading waves, settling into a majestic glide, dark background, centered",
+    "generic-mid": "The rodent scurries into view, its glowing ears twitching rapidly before it plants its paws firmly, dark background, centered.",
+    "glm-cloud": "The translucent heron materializes from swirling stardust, spreading vast glowing wings, dark background, centered",
+    "llama-small": "the fawn steps lightly forward, basking in a ray of golden sun, dark background, centered",
+    "gpt-cloud": "The owlet blinks its vast, luminous eyes and ruffles its translucent feathers while softly glowing circuit-branches sprout beneath it, dark background, centered",
+    "llama-mid": "The llama lifts its crested head with a resonant hum as its bioluminescent circuitry powers up, dark background, centered",
+    "qwen-cloud": "the fox phases upward through a shimmering rift, its oversized ears perking with a twitch as filigree veins illuminate across its cheeks, playfully pawing forward before settling into a bright, eager stance, dark background, centered",
+    "qwen-large": "The large bratty pup bounds forward with an exaggerated swagger, its heavy amber plating clanking, before skidding to a cocky halt; its bioluminescent circuits snap on in a cascade of golden surges as it strikes an insolent ready pose, dark background, centered",
+    "nemotron-cloud": "A metallic latticed branch materializes as the cyber-organic chameleon scales upward, its segmented tail uncurling to grip the perch while vivid circuitry powers on across its scales and its swiveling optics flare to life, settling into a patient, ready stance, dark background, centered",
+    "mistral-mid": "The falcon descends from above, metallic wings folding back as it lands squarely on a twisted cybernetic perch, its ember-circuitry powering on with a bright cascading flash, settling into a poised, commanding stance, dark background, centered"
+  },
+  "idle": {
+    "cohere-mid": "Sits with tail wagging, tiny metallic chest plate pulsing softly while oversized paws shuffle, dark background, centered",
+    "deepseek-cloud": "Vast energy pulses rhythmically through semi-translucent membranes as twin lures sway in unison, dark background, centered.",
+    "exaone-mid": "The lynx stretches languidly, its glowing eyes half-lidded in an alluring gaze while its tail flicks, dark background, centered",
+    "falcon-mid": "The scorpion shifts its weight from claw to claw, its segmented tail swaying rhythmically, dark background, centered",
+    "gemma-cloud": "The dragonfly hovers gracefully with shimmering wings, casting radiant reflections off the crystal flowers and towers below, dark background, centered.",
+    "generic-cloud": "drifting calmly with rippling translucent flippers, its inner galaxies softly pulsing, an occasional slow turn of its ancient head as it watches the currents, dark background, centered",
+    "generic-mid": "The creature sniffs the air while its circuitry pulses gently across its hex-plated back, dark background, centered.",
+    "glm-cloud": "The crowned heron floats ethereally, its semi-translucent plumage gently pulsing with radiating energy, dark background, centered",
+    "llama-small": "the fawn breathes softly, circuits pulsing gently along its flanks beneath a ray of golden sun, dark background, centered",
+    "gpt-cloud": "The owlet breathes steadily, looking intently at the camera.  tapping it's claws on the branch. its metallic spectacles glinting as it shifts its weight on the cyber-organic branch, dark background, centered",
+    "llama-mid": "The llama stands with a confident bearing, its chest slowly pulsing with a soft glow while its metallic filigree crest catches the light, dark background, centered",
+    "qwen-cloud": "the fox sits weightlessly, its massive translucent tail swaying in a gentle seamless loop while soft pulses of amber light breathe across its circuitry, one ear flopping with a curious tilt before it blinks its wide eyes, dark background, centered",
+    "qwen-large": "The plated pup lounges with arrogant casualness, its chest rising in slow, bratty huffs while golden circuitry softly pulses along its scarred armor; it occasionally snaps its jaws or rolls its eyes with dismissive attitude, dark background, centered",
+    "nemotron-cloud": "The chameleon rests calmly on the branch, its biomechanical sides expanding and contracting with soft pulsing light, while one independent optic-sensor slowly rotates and blinks with a subtle mechanical whir, dark background, centered",
+    "mistral-mid": "The falcon stands tall and vigilant, its chest expanding with calm breaths, bioluminescent plumage softly pulsing in a warm rhythmic glow, occasionally tilting its head with a sharp, watchful blink, dark background, centered"
+  },
+  "thinking": {
+    "cohere-mid": "Tilts head curiously, causing stubby circuitry-antlers to spark while glowing spots blink in sequence, dark background, centered",
+    "deepseek-cloud": "Bioluminescent filaments flicker in alternating cascades as the celestial crown pulses with deep thought, dark background, centered.",
+    "exaone-mid": "The lynx circles its target with a hypnotic, fluid stride, eyes locked in a beguiling stare, dark background, centered",
+    "falcon-mid": "The scorpion taps its mechanical claws together while its glowing stinger flickers in thought, dark background, centered",
+    "gemma-cloud": "The dragonfly weaves in complex patterns, refracting light into searching beams that scan the reflective towers, dark background, centered.",
+    "generic-cloud": "paddling with quick intense strokes, its stellar eyes narrowing, circuitry rippling with rapid luminous pulses across its shell as it navigates the cosmic currents, dark background, centered",
+    "generic-mid": "Its oversized ears swivel independently as it gnaws thoughtfully on a metallic seed, dark background, centered.",
+    "glm-cloud": "The heron tilts its long neck, scanning swirling radiant clouds that orbit its glowing crown, dark background, centered",
+    "llama-small": "the fawn tilts its head, ear-swivels catching data as a ray of golden sun shifts across its back, dark background, centered",
+    "gpt-cloud": "The owlet tilts its oversized head, vast eyes darting rapidly as holographic data-circuits swirl and flash around its metallic spectacles, dark background, centered",
+    "llama-mid": "The llama dips its head and strokes a hoof as glowing data-streams cycle rapidly across its cranial plating, dark background, centered",
+    "qwen-cloud": "the fox's ears swivel and twitch with sharp focus, its head tilting left and right as scanning ripples cascade down its glowing metallic whiskers, its translucent tail flickering with restless calculation loops, dark background, centered",
+    "qwen-large": "The pup's inquisitive eyes narrow into a calculating squint, its large scarred ears swiveling sharply; amber circuitry ripples with restless, twitchy pulses across its battle-worn plates as it paces and plots its next insolent move, dark background, centered",
+    "nemotron-cloud": "Both swiveling optics narrow and dart in rapid calculating sweeps, rippling waves of glowing circuitry race along its segmented spine, and its coiled tail tightens with restless, contemplative tension, dark background, centered",
+    "mistral-mid": "The falcon narrows its fierce eyes, head darting with precise calculations as concentrated circuit-rips pulse rapidly down its metallic wing filigree, restless and alert while scanning for unseen prey, dark background, centered"
+  },
+  "champion": {
+    "cohere-mid": "The puppy jumps for joy and great wonder and surprise",
+    "deepseek-cloud": "A resplendent crown of blazing circuitry expands outward, bathing the ethereal form in overwhelming celestial light, dark background, centered.",
+    "exaone-mid": "The lynx arches its back in a dazzling, seductive display of raw power, dark background, centered",
+    "falcon-mid": "The scorpion stands tall with claws raised aggressively, its carapace glowing intensely and tail arched high, dark background, centered",
+    "gemma-cloud": "The dragonfly pulses with overwhelming brilliance, crowned by a halo of refracted light that engulfs the crystal landscape, dark background, centered.",
+    "generic-cloud": "ascending in regal glory without a crown, its constellation-shell swelling with a radiant golden aura of pure light, majestic energy pulsing outward in triumphant waves as it soars, dark background, centered",
+    "generic-mid": "Bioluminescent energy arcs between its ears as it holds a triumphant pose, dark background, centered.",
+    "glm-cloud": "The heron ascends, its glowing crown blazing while vast rings of pure energy spiral outward from its wings, dark background, centered",
+    "llama-small": "the fawn stands radiant, bioluminescent filaments blazing brightly in a ray of golden sun, dark background, centered",
+    "gpt-cloud": "The owlet levitates above the branch, its translucent wings unfurling into a massive radiant halo of energy as holographic rings orbit its crown, dark background, centered",
+    "llama-mid": "The llama stands with its crest flared wide, projecting a towering luminous halo of pulsing rings from its circuitry, dark background, centered",
+    "qwen-cloud": "the fox ascends with regal pride, ears held tall and majestic, a radiant golden aura swelling from its core as pulsing waves of light cascade in grand triumphant crescendos through its floating translucent tail, dark background, centered",
+    "qwen-large": "The pup ascends with regal, bratty pride, its battle-worn plates radiating a swelling, triumphant golden aura; light pulses in majestic waves from its scarred form as it lifts its chin in insolent, glorious triumph, dark background, centered",
+    "nemotron-cloud": "Ascending regal and proud along its branch, the chameleon's scales shimmer with a swelling golden aura, light pulsing in majestic waves from its glowing optics to the tip of its unfurled tail in a grand triumphant crescendo, dark background, centered",
+    "mistral-mid": "The falcon ascends in regal majesty, wings raised high as a swelling golden aura glows from its feather tips, cascading light pulsing through its filigree in majestic, triumphant waves, dark background, centered"
+  }
+}

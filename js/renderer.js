@@ -2,14 +2,15 @@
 
 import { CONFIG } from './config.js';
 import { TERRAIN_TYPES } from './terrain.js';
+import { drawOrganism, BASE_HEX } from './organism-art.js';
 
 export class Renderer {
     constructor(canvas, grid) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.grid = grid;
-        this.offsetX = CONFIG.HEX_SIZE + 4;
-        this.offsetY = CONFIG.HEX_SIZE + 4;
+        this.offsetX = grid.hexSize + 4;
+        this.offsetY = grid.hexSize + 4;
 
         // Fog of war — hide one player's new placements from the other
         this._fogRound = -1;
@@ -18,7 +19,183 @@ export class Renderer {
         // Placement highlights — glow around newly placed organisms
         this._highlightRound = -1;
 
+        // Magnifier loupe — a cursor-following lens that re-renders the board
+        // vector art at zoom (crisp, not an upscaled snapshot) plus a stats strip
+        // for the hovered cell. col/row null means "no current target". `w`/`h`
+        // are the zoom-view size; the stats strip adds its own height below.
+        // See initMagnifier()/_drawMagnifier().
+        this._mag = {
+            enabled: false,
+            zoom: 2.8,
+            w: 248,
+            h: 176,
+            col: null,
+            row: null,
+            clientX: 0,
+            clientY: 0,
+        };
+
         this._resize();
+        this.initMagnifier();
+    }
+
+    // ── Magnifier loupe ──
+
+    // Build the loupe widget once and attach it to <body>: a rounded-rect zoom
+    // canvas with a cell-stats strip beneath it. DPR-scaled for crispness and
+    // pointer-events:none so it never steals hover from the board.
+    initMagnifier() {
+        if (this._magCanvas) return;
+        const dpr = window.devicePixelRatio || 1;
+        // Reuse the existing loupe across matches (Renderer is rebuilt per game)
+        // so we don't leak a new widget into <body> each time.
+        let wrap = document.querySelector('.board-loupe');
+        if (!wrap) {
+            wrap = document.createElement('div');
+            wrap.innerHTML = '<canvas class="bl-view"></canvas><div class="bl-stats"></div>';
+            document.body.appendChild(wrap);
+        }
+        wrap.className = 'board-loupe hidden';
+        this._magWrap = wrap;
+        this._magStats = wrap.querySelector('.bl-stats');
+        const c = wrap.querySelector('.bl-view');
+        c.width = this._mag.w * dpr;
+        c.height = this._mag.h * dpr;
+        c.style.width = this._mag.w + 'px';
+        c.style.height = this._mag.h + 'px';
+        this._magCanvas = c;
+        this._magCtx = c.getContext('2d');
+
+        // Restore persisted enable state — defaults ON (only an explicit '0',
+        // i.e. the user turned it off, disables it).
+        this._mag.enabled = localStorage.getItem('biome.magnifier') !== '0';
+    }
+
+    isMagnifierEnabled() {
+        return this._mag.enabled;
+    }
+
+    setMagnifierEnabled(on) {
+        this._mag.enabled = !!on;
+        localStorage.setItem('biome.magnifier', on ? '1' : '0');
+        if (!on) this.hideMagnifier();
+    }
+
+    // Record the hovered cell + cursor position. The next render() paints it.
+    setMagnifierTarget(cell, clientX, clientY) {
+        if (!this._mag.enabled || !cell) return;
+        this._mag.col = cell.col;
+        this._mag.row = cell.row;
+        this._mag.clientX = clientX;
+        this._mag.clientY = clientY;
+    }
+
+    hideMagnifier() {
+        this._mag.col = null;
+        this._mag.row = null;
+        if (this._magWrap) this._magWrap.classList.add('hidden');
+    }
+
+    _drawMagnifier() {
+        const m = this._mag;
+        const mctx = this._magCtx;
+        const dpr = window.devicePixelRatio || 1;
+        const z = m.zoom * dpr;
+        const cell = this.grid.getCell(m.col, m.row);
+
+        // Source centre in board bitmap coords (matches drawTerrain offsets).
+        const { x, y } = this.grid.hexToPixel(m.col, m.row);
+        const srcX = x + this.offsetX;
+        const srcY = y + this.offsetY;
+
+        // Clear + neutral backdrop (so off-board areas read as intentional).
+        mctx.setTransform(1, 0, 0, 1, 0, 0);
+        mctx.clearRect(0, 0, this._magCanvas.width, this._magCanvas.height);
+        mctx.fillStyle = '#0a0d0c';
+        mctx.fillRect(0, 0, this._magCanvas.width, this._magCanvas.height);
+
+        // Map board space → centred + zoomed + DPR-crisp. The canvas bounds clip
+        // the rectangular view; CSS rounds the corners. No explicit ctx clip.
+        mctx.save();
+        mctx.setTransform(z, 0, 0, z, (m.w * dpr) / 2 - srcX * z, (m.h * dpr) / 2 - srcY * z);
+
+        // Replay the exact board layers — reusing drawOrganisms() keeps the
+        // fog-of-war invariant (isHidden) intact inside the loupe.
+        this.drawTerrain(mctx);
+        this.drawOrganisms(mctx);
+        this.drawPlacementHighlights(mctx);
+        this._drawBursts(mctx);
+
+        // Outline the exact hex under the cursor so "the direct square" is clear.
+        const corners = this.grid.hexCorners(srcX, srcY);
+        mctx.beginPath();
+        mctx.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < 6; i++) mctx.lineTo(corners[i].x, corners[i].y);
+        mctx.closePath();
+        mctx.lineWidth = 1.5 / m.zoom;   // ~constant on-screen weight after zoom
+        mctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        mctx.stroke();
+        mctx.restore();
+
+        // Cell stats strip (fog-respecting).
+        if (this._magStats) this._magStats.innerHTML = this._magStatsHTML(cell);
+
+        // Position the whole widget near the cursor, flipping at viewport edges.
+        // Unhide first so offsetHeight reflects the stats strip for edge math.
+        this._magWrap.classList.remove('hidden');
+        const gap = 22;
+        const ww = this._magWrap.offsetWidth || m.w;
+        const wh = this._magWrap.offsetHeight || m.h;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let left = m.clientX + gap;
+        let top = m.clientY - wh - gap;
+        if (left + ww > vw - 8) left = m.clientX - ww - gap;
+        if (left < 8) left = 8;
+        if (top < 8) top = m.clientY + gap;
+        if (top + wh > vh - 8) top = vh - wh - 8;
+        this._magWrap.style.left = Math.round(left) + 'px';
+        this._magWrap.style.top = Math.round(top) + 'px';
+    }
+
+    // Build the loupe's cell-stats strip. Mirrors the floating tooltip's content
+    // (terrain, soil, organisms, coords) but lives inside the loupe — and honours
+    // the fog invariant via isHidden(), so it never reveals hidden placements.
+    _magStatsHTML(cell) {
+        if (!cell) return '';
+        const TERRAIN = {
+            WATER:     { name: 'Water',     icon: '🌊', cls: 'water' },
+            FERTILE:   { name: 'Fertile',   icon: '🌱', cls: 'fertile' },
+            GRASSLAND: { name: 'Grassland', icon: '🌾', cls: 'grassland' },
+            ROCKY:     { name: 'Rocky',     icon: '⛰', cls: 'rocky' },
+        };
+        const t = TERRAIN[cell.terrain] || { name: cell.terrain, icon: '◇', cls: '' };
+
+        let soil = '';
+        if (cell.terrain !== TERRAIN_TYPES.WATER) {
+            const pct = Math.round((cell.nutrients / CONFIG.TERRAIN.MAX_NUTRIENTS) * 100);
+            soil = `<span class="bl-soil">Soil ${pct}%</span>`;
+        }
+
+        const visible = cell.organisms.filter(o => !this.isHidden(o));
+        const orgs = visible.length
+            ? visible.map(o => {
+                const sp = CONFIG.SPECIES[o.species];
+                return `<div class="bl-org">
+                    <span class="bl-dot p${o.player}"></span>
+                    <span class="bl-org-name">${sp?.name || o.species}</span>
+                    <span class="bl-org-e">${Math.round(o.energy)}E</span>
+                </div>`;
+            }).join('')
+            : '<div class="bl-empty">No organisms</div>';
+
+        return `
+            <div class="bl-head">
+                <span class="bl-terrain ${t.cls}">${t.icon} ${t.name}</span>
+                <span class="bl-pos">(${cell.col}, ${cell.row})</span>
+            </div>
+            <div class="bl-sub">${soil}</div>
+            <div class="bl-orgs">${orgs}</div>`;
     }
 
     setFog(round, hiddenPlayer) {
@@ -47,6 +224,56 @@ export class Renderer {
         const size = this.grid.getCanvasSize();
         this.canvas.width = size.width + this.offsetX * 2;
         this.canvas.height = size.height + this.offsetY * 2;
+        this._fit();
+    }
+
+    // Re-render the board at a new hex size (crisp, not a CSS upscale). The grid
+    // is (col,row)-keyed and organisms reference cells, so this is pure
+    // re-layout — no data changes. Used to grow/shrink the board to fill the
+    // viewport (Game._refitBoard) without blurring. Caller renders after.
+    setHexSize(s) {
+        if (!(s > 0) || s === this.grid.hexSize) return;
+        this.grid.hexSize = s;
+        this.offsetX = s + 4;
+        this.offsetY = s + 4;
+        this._resize();
+    }
+
+    // Scale the canvas (via CSS) to fit inside its container, preserving aspect
+    // ratio. Only ever shrinks (never CSS-upscales — that would blur); use the
+    // hex-zoom setting to make a board intrinsically bigger and crisp. Clicks
+    // are mapped back to bitmap pixels in the hit-test handlers.
+    _fit() {
+        const parent = this.canvas.parentElement;
+        if (!parent) return;
+        // clientWidth/Height include padding; subtract it so the board fits the
+        // content area (the reserved header band lives in the top padding).
+        const cs = getComputedStyle(parent);
+        const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const availW = (parent.clientWidth - padX) || this.canvas.width;
+        const availH = (parent.clientHeight - padY) || this.canvas.height;
+        const scale = Math.min(availW / this.canvas.width, availH / this.canvas.height, 1);
+        this.canvas.style.width = Math.round(this.canvas.width * scale) + 'px';
+        this.canvas.style.height = Math.round(this.canvas.height * scale) + 'px';
+        this._publishBoardRect();
+    }
+
+    // Expose the board's live on-screen rect as CSS vars on :root so overlays
+    // (tournament screens, game-over, AI banter, expanded bracket) can anchor to
+    // the board instead of the viewport — centered ON the world, never a
+    // fullscreen takeover. Updated wherever the board is (re)sized: resize,
+    // hex-zoom, and the animated footer band all funnel through _fit().
+    _publishBoardRect() {
+        const r = this.canvas.getBoundingClientRect();
+        // Set on <body>, where the --board-* defaults live. Setting on <html>
+        // instead would be shadowed: body re-declares the defaults, so its
+        // descendants (console, banter) would inherit the body value, not html's.
+        const root = document.body.style;
+        root.setProperty('--board-l', Math.round(r.left) + 'px');
+        root.setProperty('--board-t', Math.round(r.top) + 'px');
+        root.setProperty('--board-w', Math.round(r.width) + 'px');
+        root.setProperty('--board-h', Math.round(r.height) + 'px');
     }
 
     _terrainColor(cell) {
@@ -67,8 +294,7 @@ export class Renderer {
         return `hsl(${base.h}, ${base.s}%, ${Math.round(l)}%)`;
     }
 
-    _drawHex(cx, cy, fill, stroke) {
-        const ctx = this.ctx;
+    _drawHex(cx, cy, fill, stroke, ctx = this.ctx) {
         const corners = this.grid.hexCorners(cx, cy);
 
         ctx.beginPath();
@@ -88,22 +314,19 @@ export class Renderer {
         }
     }
 
-    drawTerrain() {
-        const ctx = this.ctx;
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    drawTerrain(ctx = this.ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
         this.grid.forEach((cell) => {
             const { x, y } = this.grid.hexToPixel(cell.col, cell.row);
             const cx = x + this.offsetX;
             const cy = y + this.offsetY;
 
-            this._drawHex(cx, cy, this._terrainColor(cell), CONFIG.COLORS.GRID_LINE);
+            this._drawHex(cx, cy, this._terrainColor(cell), CONFIG.COLORS.GRID_LINE, ctx);
         });
     }
 
-    drawOrganisms() {
-        const ctx = this.ctx;
-
+    drawOrganisms(ctx = this.ctx) {
         this.grid.forEach((cell) => {
             if (cell.organisms.length === 0) return;
 
@@ -113,228 +336,29 @@ export class Renderer {
 
             for (const org of cell.organisms) {
                 if (this.isHidden(org)) continue;
-                this._drawOrganism(cx, cy, org);
+                this._drawOrganism(cx, cy, org, ctx);
             }
         });
     }
 
-    _playerHSL(player, hueShift = 0, satShift = 0, lightShift = 0) {
-        const c = (player === 1 ? CONFIG.PLAYER_1 : CONFIG.PLAYER_2).PRIMARY;
-        return `hsl(${c.h + hueShift}, ${Math.max(0, Math.min(100, c.s + satShift))}%, ${Math.max(0, Math.min(100, c.l + lightShift))}%)`;
-    }
-
-    _drawOrganism(cx, cy, org) {
-        const ctx = this.ctx;
-        const spec = CONFIG.SPECIES[org.species];
-        if (!spec) return;
-
-        if (spec.type === 'plant') {
-            this._drawPlant(ctx, cx, cy, org);
-        } else if (spec.type === 'herbivore') {
-            this._drawHerbivore(ctx, cx, cy, org);
-        } else if (spec.type === 'predator') {
-            this._drawPredator(ctx, cx, cy, org);
+    _drawOrganism(cx, cy, org, ctx = this.ctx) {
+        // Per-species procedural art lives in js/organism-art.js so the game
+        // and the icon lab (lab/icons.html) share one source of truth. Art is
+        // authored against BASE_HEX; scale it so creatures track the hex zoom.
+        const k = this.grid.hexSize / BASE_HEX;
+        if (k === 1) {
+            drawOrganism(ctx, cx, cy, org);
+            return;
         }
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(k, k);
+        drawOrganism(ctx, 0, 0, org);
+        ctx.restore();
     }
 
-    _drawPlant(ctx, cx, cy, org) {
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-        const p = org.player;
-
-        if (org.species === 'GRASS') {
-            // Grass: bright, airy blades — lightest plant
-            const h = 4 + energyRatio * 5;
-            const fill = this._playerHSL(p, 20, 10, 18);
-            ctx.strokeStyle = fill;
-            ctx.lineWidth = 2.5;
-            ctx.lineCap = 'round';
-            // center blade
-            ctx.beginPath();
-            ctx.moveTo(cx, cy + 3);
-            ctx.lineTo(cx, cy - h);
-            ctx.stroke();
-            // left blade
-            ctx.beginPath();
-            ctx.moveTo(cx - 1.5, cy + 2);
-            ctx.lineTo(cx - 3.5, cy - h + 1.5);
-            ctx.stroke();
-            // right blade
-            ctx.beginPath();
-            ctx.moveTo(cx + 1.5, cy + 2);
-            ctx.lineTo(cx + 3.5, cy - h + 1.5);
-            ctx.stroke();
-        } else if (org.species === 'SHRUB') {
-            // Shrub: rich saturated bush — mid-tone plant
-            const r = 3.5 + energyRatio * 3;
-            const fill = this._playerHSL(p, -8, 15, -3);
-            const outline = this._playerHSL(p, -12, 5, -18);
-            ctx.fillStyle = fill;
-            // main body
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fill();
-            // two side lobes
-            ctx.beginPath();
-            ctx.arc(cx - r * 0.65, cy + r * 0.25, r * 0.65, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(cx + r * 0.65, cy + r * 0.25, r * 0.65, 0, Math.PI * 2);
-            ctx.fill();
-            // top lobe
-            ctx.beginPath();
-            ctx.arc(cx, cy - r * 0.4, r * 0.55, 0, Math.PI * 2);
-            ctx.fill();
-            // outline
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.stroke();
-        } else if (org.species === 'TREE') {
-            // Tree: dark, commanding canopy — heaviest plant
-            const canopyR = 4.5 + energyRatio * 5;
-            const canopy = this._playerHSL(p, -18, 5, -10);
-            const canopyLight = this._playerHSL(p, -12, 10, 2);
-            const trunk = this._playerHSL(p, -40, -35, -25);
-
-            // trunk
-            ctx.fillStyle = trunk;
-            ctx.fillRect(cx - 1.5, cy, 3, canopyR * 0.7);
-
-            // canopy shadow
-            ctx.fillStyle = canopy;
-            ctx.beginPath();
-            ctx.arc(cx, cy - canopyR * 0.15, canopyR, 0, Math.PI * 2);
-            ctx.fill();
-
-            // canopy highlight
-            ctx.fillStyle = canopyLight;
-            ctx.beginPath();
-            ctx.arc(cx - canopyR * 0.2, cy - canopyR * 0.35, canopyR * 0.55, 0, Math.PI * 2);
-            ctx.fill();
-
-            // outline
-            ctx.strokeStyle = this._playerHSL(p, -22, 0, -22);
-            ctx.lineWidth = 1.0;
-            ctx.beginPath();
-            ctx.arc(cx, cy - canopyR * 0.15, canopyR, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-    }
-
-    _drawHerbivore(ctx, cx, cy, org) {
-        const p = org.player;
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-
-        if (org.species === 'GRAZER') {
-            // Grazer: fast, bright animal — elongated oval with a head
-            const bodyLen = 5.5 + energyRatio * 3;
-            const bodyW = 3;
-            const fill = this._playerHSL(p, 45, 15, 12);
-            const outline = this._playerHSL(p, 40, 5, -12);
-
-            ctx.fillStyle = fill;
-            ctx.beginPath();
-            ctx.ellipse(cx, cy, bodyLen, bodyW, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-
-            // head
-            ctx.fillStyle = outline;
-            ctx.beginPath();
-            ctx.arc(cx + bodyLen - 1.5, cy, 2.2, 0, Math.PI * 2);
-            ctx.fill();
-
-            // eye
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(cx + bodyLen - 0.5, cy - 0.5, 0.8, 0, Math.PI * 2);
-            ctx.fill();
-        } else if (org.species === 'BROWSER') {
-            // Browser: large, sturdy herbivore — rounded body with horns
-            const s = 4 + energyRatio * 3;
-            const fill = this._playerHSL(p, -30, 10, -5);
-            const outline = this._playerHSL(p, -35, 0, -18);
-
-            ctx.fillStyle = fill;
-            // rounded rectangle body
-            const r = s * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(cx - s + r, cy - s * 0.7);
-            ctx.arcTo(cx + s, cy - s * 0.7, cx + s, cy + s * 0.7, r);
-            ctx.arcTo(cx + s, cy + s * 0.7, cx - s, cy + s * 0.7, r);
-            ctx.arcTo(cx - s, cy + s * 0.7, cx - s, cy - s * 0.7, r);
-            ctx.arcTo(cx - s, cy - s * 0.7, cx + s, cy - s * 0.7, r);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-
-            // head bump
-            ctx.fillStyle = fill;
-            ctx.beginPath();
-            ctx.arc(cx + s * 0.85, cy, s * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 0.8;
-            ctx.stroke();
-
-            // small horns
-            ctx.strokeStyle = outline;
-            ctx.lineWidth = 1.2;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(cx + s * 0.7, cy - s * 0.2);
-            ctx.lineTo(cx + s * 0.9, cy - s * 0.6);
-            ctx.stroke();
-        }
-    }
-
-    _drawPredator(ctx, cx, cy, org) {
-        const p = org.player;
-        const energyRatio = org.energy / CONFIG.SPECIES[org.species].maxEnergy;
-        const s = 5 + energyRatio * 4;
-        // Dark menacing body with bright player-colored accents
-        const darkFill = this._playerHSL(p, 0, -30, -30);
-        const brightAccent = this._playerHSL(p, 0, 10, 15);
-
-        // Predator: angular diamond / fang shape — largest, most menacing
-        ctx.fillStyle = darkFill;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - s);              // top point
-        ctx.lineTo(cx + s * 0.5, cy - s * 0.2);
-        ctx.lineTo(cx + s * 0.8, cy + s * 0.3);
-        ctx.lineTo(cx, cy + s * 0.6);        // bottom
-        ctx.lineTo(cx - s * 0.8, cy + s * 0.3);
-        ctx.lineTo(cx - s * 0.5, cy - s * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        // bright player-colored outline
-        ctx.strokeStyle = brightAccent;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // eyes — bright player color
-        ctx.fillStyle = brightAccent;
-        ctx.beginPath();
-        ctx.arc(cx - s * 0.22, cy - s * 0.15, 1.6, 0, Math.PI * 2);
-        ctx.arc(cx + s * 0.22, cy - s * 0.15, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-        // dark pupils
-        ctx.fillStyle = '#111';
-        ctx.beginPath();
-        ctx.arc(cx - s * 0.2, cy - s * 0.15, 0.7, 0, Math.PI * 2);
-        ctx.arc(cx + s * 0.2, cy - s * 0.15, 0.7, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    drawPlacementHighlights() {
+    drawPlacementHighlights(ctx = this.ctx) {
         if (this._highlightRound < 0) return;
-
-        const ctx = this.ctx;
 
         this.grid.forEach((cell) => {
             // Find organisms placed this round in this cell
@@ -376,6 +400,7 @@ export class Renderer {
         this.drawOrganisms();
         this.drawPlacementHighlights();
         this._drawBursts();
+        if (this._mag.enabled && this._mag.col != null) this._drawMagnifier();
     }
 
     // ── Placement burst (animated ring expanding from a cell) ──
@@ -417,11 +442,10 @@ export class Renderer {
         this._burstRafId = requestAnimationFrame(tick);
     }
 
-    _drawBursts() {
+    _drawBursts(ctx = this.ctx) {
         if (!this._bursts || this._bursts.length === 0) return;
-        const ctx = this.ctx;
         const now = performance.now();
-        const baseSize = CONFIG.HEX_SIZE;
+        const baseSize = this.grid.hexSize;
 
         for (const b of this._bursts) {
             const t = Math.min(1, (now - b.startedAt) / b.duration);

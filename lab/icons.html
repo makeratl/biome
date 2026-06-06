@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome · Icon Lab</title>
+    <link rel="stylesheet" href="icons.css">
+</head>
+<body>
+    <header class="lab-header">
+        <div>
+            <h1>Icon Lab</h1>
+            <p class="sub">Evaluate organism art styles side-by-side, at true game scale and zoomed.
+               <a href="/">← back to game</a></p>
+        </div>
+        <div class="controls">
+            <div class="control">
+                <span class="control-label">Player tint</span>
+                <div id="player" class="segmented">
+                    <button data-val="1">P1</button>
+                    <button data-val="2">P2</button>
+                    <button data-val="both" class="on">Both</button>
+                </div>
+            </div>
+            <div class="control">
+                <span class="control-label">Energy</span>
+                <div id="energy" class="segmented">
+                    <button data-val="low">Low</button>
+                    <button data-val="mid">Mid</button>
+                    <button data-val="full" class="on">Full</button>
+                </div>
+            </div>
+            <div class="control">
+                <span class="control-label">Terrain</span>
+                <select id="terrain"></select>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section>
+            <div id="matrix" class="matrix"></div>
+        </section>
+
+        <section class="growth-section">
+            <div class="board-bar">
+                <h2>Growth stages</h2>
+            </div>
+            <p class="hint">Each species across its real energy range — the life a tile actually lives, from freshly-spread sprout to mature. The strip you can't get from the single energy toggle above; this is where growth either reads or doesn't.</p>
+            <div id="growth" class="growth"></div>
+        </section>
+
+        <section class="board-section">
+            <div class="board-bar">
+                <h2>In-context readability</h2>
+                <div id="boardstyle" class="boardstyle"></div>
+            </div>
+            <p class="hint">A patch of mixed species and both players at true game scale — the real test of whether a style reads when the board fills up.</p>
+            <div id="board" class="board"></div>
+        </section>
+    </main>
+
+    <script type="module" src="icons.js"></script>
+</body>
+</html>

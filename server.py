@@ -1,63 +1,282 @@
 #!/usr/bin/env python3
 """HTTP server with Ollama proxy for CORS bypass and tournament logging."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlencode, urlparse, parse_qs
 import urllib.request
 import urllib.error
 import json
 import os
+import re
 import time
 import uuid
+import subprocess
+import threading
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tournament_log.json')
+import db
+import traj
 
-def _load_log():
-    if not os.path.exists(LOG_FILE):
-        return []
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- Avatar generation (ComfyUI bridge) ---
+COMFY_URL = 'http://localhost:8188'
+AVATARS_DIR = os.path.join(BASE_DIR, 'avatars')
+MANIFEST_FILE = os.path.join(AVATARS_DIR, 'manifest.json')
+WORKFLOW_FILE = os.path.join(BASE_DIR, 'comfy_avatar_workflow.json')
+_SLUG = re.compile(r'^[a-z0-9-]+$')
+_manifest_lock = threading.Lock()
+
+# --- Training-data capture (Training Lab) ---
+# Per-turn trajectories + per-round reward signals stream here as newline-
+# delimited JSON; match outcomes are stamped by the tournament-result handler.
+# Append-only, one lock so concurrent matches (tournament threads) don't interleave.
+TRAINING_DIR = os.path.join(BASE_DIR, 'training-data')
+_traj_lock = threading.Lock()
+
+def _traj_append(filename, record):
     try:
-        with open(LOG_FILE, 'r') as f:
+        os.makedirs(TRAINING_DIR, exist_ok=True)
+        line = json.dumps(record, separators=(',', ':')) + '\n'
+        with _traj_lock:
+            with open(os.path.join(TRAINING_DIR, filename), 'a', encoding='utf-8') as f:
+                f.write(line)
+        return True
+    except Exception:
+        return False
+
+def _load_manifest():
+    try:
+        with open(MANIFEST_FILE) as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
-        return []
+        return {}
 
-def _save_log(data):
-    with open(LOG_FILE, 'w') as f:
+def _save_manifest(data):
+    with open(MANIFEST_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+        f.write('\n')
 
-DEFAULT_ELO = 1000
+def _comfy_generate(key, style, prompt, negative, lora, seed):
+    """Submit one avatar job to ComfyUI, wait for it, resize + save into
+    avatars/<style>/<key>.png, and record it in the manifest. Mirrors the exact
+    graph the MCP used (comfy_avatar_workflow.json); we only inject per-request
+    fields: positive (6), negative (7), style LoRA (14), seed (3), filename (9)."""
+    with open(WORKFLOW_FILE) as f:
+        graph = json.load(f)
+    graph['6']['inputs']['text'] = prompt
+    graph['7']['inputs']['text'] = negative
+    graph['14']['inputs']['lora_name'] = lora
+    graph['3']['inputs']['seed'] = int(seed)
+    graph['9']['inputs']['filename_prefix'] = f'biome-avatar-{style}-{key}'
 
-def _expected(r_a, r_b):
-    """Expected score (win probability) for player A vs player B under ELO."""
-    return 1 / (1 + 10 ** ((r_b - r_a) / 400))
+    payload = json.dumps({'prompt': graph}).encode()
+    req = urllib.request.Request(f'{COMFY_URL}/prompt', data=payload,
+                                 headers={'Content-Type': 'application/json'}, method='POST')
+    with urllib.request.urlopen(req, timeout=30) as r:
+        pid = json.load(r)['prompt_id']
 
-def _rank_of(rankings, name):
-    """Return {'elo', 'rank'} (1-based) for a name in an ordered rankings dict, or None."""
-    for i, (n, stats) in enumerate(rankings.items()):
-        if n == name:
-            return {'elo': stats['elo'], 'rank': i + 1}
-    return None
+    img, t0 = None, time.time()
+    while time.time() - t0 < 180:
+        time.sleep(1)
+        try:
+            with urllib.request.urlopen(f'{COMFY_URL}/history/{pid}', timeout=10) as r:
+                hist = json.load(r)
+        except Exception:
+            continue
+        if pid in hist:
+            if hist[pid].get('status', {}).get('status_str') == 'error':
+                raise RuntimeError('ComfyUI reported a generation error')
+            imgs = hist[pid].get('outputs', {}).get('9', {}).get('images', [])
+            if imgs:
+                img = imgs[0]
+                break
+    if not img:
+        raise RuntimeError('generation timed out')
 
-def _compute_rankings(log):
-    K = 32
-    models = {}
-    for entry in log:
-        p1 = entry['p1']
-        p2 = entry['p2']
-        for m in (p1, p2):
-            if m not in models:
-                models[m] = {'elo': DEFAULT_ELO, 'wins': 0, 'losses': 0, 'matches': 0}
-        r1 = models[p1]['elo']
-        r2 = models[p2]['elo']
-        e1 = _expected(r1, r2)
-        e2 = 1 - e1
-        s1 = 1 if entry['winner'] == p1 else 0
-        s2 = 1 - s1
-        models[p1]['elo'] = round(r1 + K * (s1 - e1))
-        models[p2]['elo'] = round(r2 + K * (s2 - e2))
-        models[p1]['wins' if s1 else 'losses'] += 1
-        models[p2]['wins' if s2 else 'losses'] += 1
-        models[p1]['matches'] += 1
-        models[p2]['matches'] += 1
-    return dict(sorted(models.items(), key=lambda x: x[1]['elo'], reverse=True))
+    q = urlencode({'filename': img['filename'], 'subfolder': img.get('subfolder', ''),
+                   'type': img.get('type', 'output')})
+    with urllib.request.urlopen(f'{COMFY_URL}/view?{q}', timeout=30) as r:
+        raw = r.read()
+
+    out_dir = os.path.join(AVATARS_DIR, style)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f'{key}.png')
+    try:
+        subprocess.run(['convert', 'png:-', '-resize', '512x512', '-strip', out_path],
+                       input=raw, capture_output=True, check=True)
+    except Exception:
+        with open(out_path, 'wb') as f:  # fallback: full-size if imagemagick is missing
+            f.write(raw)
+
+    rel = f'avatars/{style}/{key}.png'
+    with _manifest_lock:
+        manifest = _load_manifest()
+        manifest.setdefault(style, {})[key] = rel
+        _save_manifest(manifest)
+    return {'ok': True, 'key': key, 'style': style, 'path': rel,
+            'prompt_id': pid, 'seconds': round(time.time() - t0, 1)}
+
+# --- Avatar animation (ComfyUI WAN 2.2 image-to-video bridge) ---
+# A baked still (avatars/cyber-organic/<key>.png) is the I2V start frame; a motion
+# prompt drives a short victory/defeat clip. Same submit→poll→save shape as the
+# avatar bridge, but the WAN graphs differ, so each carries a node-id map for the
+# injectable fields. Output is already h264 mp4, so we save the bytes verbatim.
+VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
+VIDEO_MANIFEST_FILE = os.path.join(VIDEOS_DIR, 'manifest.json')
+OVERRIDES_FILE = os.path.join(AVATARS_DIR, 'lab-overrides.json')
+VIDEO_CATEGORIES = ('intro', 'idle', 'thinking', 'victory', 'defeat', 'champion')
+OVERRIDE_KINDS = ('still',) + VIDEO_CATEGORIES
+VIDEO_WORKFLOWS = {
+    'fast':    {'file': os.path.join(BASE_DIR, 'comfy_video_fast.json'),
+                'image': '1', 'positive': '27', 'negative': '28', 'seed': '30', 'save': '34'},
+    'quality': {'file': os.path.join(BASE_DIR, 'comfy_video_quality.json'),
+                'image': '1', 'positive': '25', 'negative': '26', 'seed': '28', 'save': '32'},
+}
+_video_manifest_lock = threading.Lock()
+_overrides_lock = threading.Lock()
+
+def _load_video_manifest():
+    try:
+        with open(VIDEO_MANIFEST_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+def _save_video_manifest(data):
+    os.makedirs(VIDEOS_DIR, exist_ok=True)
+    with open(VIDEO_MANIFEST_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+
+def _load_overrides():
+    try:
+        with open(OVERRIDES_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+def _save_override(kind, key, text):
+    """Persist (or, on empty text, clear) one per-key prompt override so the lab
+    reloads the edit next session. Returns the full overrides map."""
+    with _overrides_lock:
+        data = _load_overrides()
+        bucket = data.setdefault(kind, {})
+        if text and text.strip():
+            bucket[key] = text
+        else:
+            bucket.pop(key, None)
+        with open(OVERRIDES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+    return data
+
+def _save_identity(key, label, archetype, motif):
+    """Persist (or, when all fields are blank, clear) a per-key creature identity
+    override into the `identity` bucket of lab-overrides.json. Stores only the
+    non-empty fields so a partial rename doesn't wipe the others on reload."""
+    with _overrides_lock:
+        data = _load_overrides()
+        bucket = data.setdefault('identity', {})
+        entry = {}
+        if label and label.strip():
+            entry['label'] = label.strip()
+        if archetype and archetype.strip():
+            entry['archetype'] = archetype.strip()
+        if motif and motif.strip():
+            entry['motif'] = motif.strip()
+        if entry:
+            bucket[key] = entry
+        else:
+            bucket.pop(key, None)
+        with open(OVERRIDES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+    return data
+
+def _comfy_upload_image(path):
+    """Upload a local PNG into ComfyUI's input dir so a LoadImage node can read it.
+    Returns the stored name (subfolder-prefixed if any)."""
+    with open(path, 'rb') as f:
+        data = f.read()
+    boundary = uuid.uuid4().hex
+    fname = os.path.basename(path)
+    body = b''.join([
+        f'--{boundary}\r\n'.encode(),
+        f'Content-Disposition: form-data; name="image"; filename="{fname}"\r\n'.encode(),
+        b'Content-Type: image/png\r\n\r\n', data, b'\r\n',
+        f'--{boundary}\r\n'.encode(),
+        b'Content-Disposition: form-data; name="overwrite"\r\n\r\n', b'true\r\n',
+        f'--{boundary}--\r\n'.encode(),
+    ])
+    req = urllib.request.Request(f'{COMFY_URL}/upload/image', data=body,
+                                 headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+                                 method='POST')
+    with urllib.request.urlopen(req, timeout=30) as r:
+        res = json.load(r)
+    name = res['name']
+    return f"{res['subfolder']}/{name}" if res.get('subfolder') else name
+
+def _comfy_animate(key, category, prompt, negative, workflow, seed):
+    """Animate the baked still for <key> into videos/<category>/<key>.mp4 via WAN
+    i2v, and record it in the video manifest. Injects per-request fields into the
+    chosen graph using its node-id map; the still is uploaded to ComfyUI first."""
+    wf = VIDEO_WORKFLOWS[workflow]
+    still = os.path.join(AVATARS_DIR, 'cyber-organic', f'{key}.png')
+    if not os.path.exists(still):
+        raise FileNotFoundError(f'no baked still for "{key}" — generate the avatar first')
+
+    img_name = _comfy_upload_image(still)
+    with open(wf['file']) as f:
+        graph = json.load(f)
+    graph[wf['image']]['inputs']['image'] = img_name
+    graph[wf['positive']]['inputs']['text'] = prompt
+    if negative:                                   # else keep the graph's WAN default
+        graph[wf['negative']]['inputs']['text'] = negative
+    graph[wf['seed']]['inputs']['noise_seed'] = int(seed)
+    graph[wf['save']]['inputs']['filename_prefix'] = f'biome-clip-{category}-{key}'
+
+    payload = json.dumps({'prompt': graph}).encode()
+    req = urllib.request.Request(f'{COMFY_URL}/prompt', data=payload,
+                                 headers={'Content-Type': 'application/json'}, method='POST')
+    with urllib.request.urlopen(req, timeout=30) as r:
+        pid = json.load(r)['prompt_id']
+
+    vid, t0 = None, time.time()
+    while time.time() - t0 < 600:                  # video is slow (quality is 20-step)
+        time.sleep(2)
+        try:
+            with urllib.request.urlopen(f'{COMFY_URL}/history/{pid}', timeout=10) as r:
+                hist = json.load(r)
+        except Exception:
+            continue
+        if pid in hist:
+            if hist[pid].get('status', {}).get('status_str') == 'error':
+                raise RuntimeError('ComfyUI reported a generation error')
+            outs = hist[pid].get('outputs', {}).get(wf['save'], {})
+            clips = outs.get('images') or outs.get('gifs') or []
+            if clips:
+                vid = clips[0]
+                break
+    if not vid:
+        raise RuntimeError('animation timed out')
+
+    q = urlencode({'filename': vid['filename'], 'subfolder': vid.get('subfolder', ''),
+                   'type': vid.get('type', 'output')})
+    with urllib.request.urlopen(f'{COMFY_URL}/view?{q}', timeout=60) as r:
+        raw = r.read()
+
+    out_dir = os.path.join(VIDEOS_DIR, category)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f'{key}.mp4')
+    with open(out_path, 'wb') as f:
+        f.write(raw)
+
+    rel = f'videos/{category}/{key}.mp4'
+    with _video_manifest_lock:
+        manifest = _load_video_manifest()
+        manifest.setdefault(category, {})[key] = rel
+        _save_video_manifest(manifest)
+    return {'ok': True, 'key': key, 'category': category, 'path': rel,
+            'prompt_id': pid, 'seconds': round(time.time() - t0, 1)}
 
 class NoCacheHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -80,15 +299,147 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             return
         # Tournament rankings
         if self.path == '/rankings':
-            log = _load_log()
-            rankings = _compute_rankings(log)
-            self._json_response(rankings)
+            self._json_response(db.get_rankings())
             return
         # Tournament match history
         if self.path == '/history':
-            self._json_response(_load_log())
+            self._json_response(db.get_history())
+            return
+        # Live dashboard payload (standings, ELO timelines, head-to-head, factors)
+        if self.path == '/stats/dashboard':
+            self._json_response(db.get_dashboard())
+            return
+        # Full match log (drives the expandable match-log detail view)
+        if self.path.startswith('/stats/matches'):
+            q = parse_qs(urlparse(self.path).query)
+            limit = int(q.get('limit', ['2000'])[0])
+            self._json_response(db.get_matches(limit))
+            return
+        # Single-model drill-in: full ELO timeline, match log, H2H + factor splits
+        if self.path.startswith('/stats/model'):
+            q = parse_qs(urlparse(self.path).query)
+            name = q.get('m', [''])[0]
+            self._json_response(db.get_model_detail(name))
+            return
+        # Training Lab: browse captured turns with their reward labels
+        if self.path.startswith('/trajectory/list'):
+            q = parse_qs(urlparse(self.path).query)
+            limit = int(q.get('limit', ['200'])[0])
+            filters = {}
+            if q.get('model', [''])[0]:
+                filters['model'] = q['model'][0]
+            if q.get('gold', [''])[0] in ('1', 'true'):
+                filters['gold'] = True
+            labels = traj.load_labels()
+            rows = []
+            for t, lbl in traj.labeled_turns(filters):
+                s = traj.summarize(t, lbl)
+                s['decision'] = labels.get(t.get('turn_uid'))
+                rows.append(s)
+            rows.reverse()  # newest first
+            self._json_response({'turns': rows[:limit], 'total': len(rows)})
+            return
+        # Training Lab: full turn record (verbatim prompt/response) + label
+        if self.path.startswith('/trajectory/detail'):
+            q = parse_qs(urlparse(self.path).query)
+            uid = q.get('uid', [''])[0]
+            turns, ri, oi = traj.load()
+            hit = next((t for t in turns if t.get('turn_uid') == uid), None)
+            if not hit:
+                self._json_response({'error': 'not found'}, 404)
+            else:
+                self._json_response({'turn': hit, 'label': traj.score_turn(hit, ri, oi)})
+            return
+        # Training Lab: build the SFT dataset from gold turns (+ manual stars)
+        if self.path.startswith('/trajectory/export'):
+            q = parse_qs(urlparse(self.path).query)
+            filters = {}
+            if q.get('model', [''])[0]:
+                filters['model'] = q['model'][0]
+            self._json_response(traj.write_dataset(filters))
+            return
+        # Training Lab: dashboard metrics (gold count, totals, goal progress)
+        if self.path == '/trajectory/stats':
+            self._json_response(traj.stats())
+            return
+        # Training Lab: who currently teaches (top of the ladder)
+        if self.path == '/trajectory/champion':
+            ranks = db.get_rankings()
+            champ = max(ranks.items(), key=lambda kv: kv[1].get('elo', 0), default=(None, None))
+            self._json_response({'champion': champ[0], 'stats': champ[1]})
+            return
+        # Avatar generation: is ComfyUI reachable?
+        if self.path == '/comfy/health':
+            ok = False
+            try:
+                with urllib.request.urlopen(f'{COMFY_URL}/system_stats', timeout=3) as r:
+                    ok = r.status == 200
+            except Exception:
+                ok = False
+            self._json_response({'comfy': ok})
+            return
+        # Honor HTTP Range requests for static files. Python's stock handler
+        # ignores Range and replies 200 + whole file, which Chrome's media
+        # stack rejects for <video> streaming (the victory clips silently
+        # stall on the win screen). Serve 206 ourselves when a Range is asked.
+        if self.headers.get('Range') and self._serve_range_request():
             return
         super().do_GET()
+
+    # Stream a byte range of a static file as 206 Partial Content. Returns True
+    # if it fully handled the response, False to fall back to the normal handler
+    # (non-file paths, unparseable/whole-file ranges).
+    def _serve_range_request(self):
+        path = self.translate_path(self.path.split('?', 1)[0])
+        if not os.path.isfile(path):
+            return False
+        m = re.match(r'bytes=(\d*)-(\d*)\s*$', self.headers.get('Range', '').strip())
+        if not m:
+            return False
+        try:
+            f = open(path, 'rb')
+        except OSError:
+            return False
+        with f:
+            size = os.fstat(f.fileno()).st_size
+            start_s, end_s = m.group(1), m.group(2)
+            if start_s == '':
+                if end_s == '':
+                    return False
+                length = min(int(end_s), size)
+                start, end = size - length, size - 1
+            else:
+                start = int(start_s)
+                end = int(end_s) if end_s else size - 1
+                if end >= size:
+                    end = size - 1
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Type', self.guess_type(path))
+                self.end_headers()
+                return True
+            length = end - start + 1
+            self.send_response(206)
+            self.send_header('Content-Type', self.guess_type(path))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.send_header('Content-Length', str(length))
+            self.end_headers()
+            if self.command == 'HEAD':
+                return True
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+                remaining -= len(chunk)
+        return True
 
     def do_POST(self):
         # Proxy Ollama API calls (including /api/pull for model installation)
@@ -103,9 +454,45 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament-result':
             self._handle_tournament_result()
             return
+        # Training-data capture: per-turn trajectory + per-round reward signals
+        if self.path == '/trajectory/turn':
+            self._handle_trajectory('turns.jsonl')
+            return
+        if self.path == '/trajectory/round':
+            self._handle_trajectory('rounds.jsonl')
+            return
+        # Training Lab: manual curate override (star/reject) for a turn
+        if self.path == '/trajectory/label':
+            self._handle_trajectory('labels.jsonl')
+            return
+        # Training Lab: compact logs — drop rejects + never-gold turns
+        if self.path == '/trajectory/purge':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length)) if length else {}
+            except (json.JSONDecodeError, ValueError):
+                body = {}
+            self._json_response(traj.purge(body.get('mode', 'curatable')))
+            return
         # Reset rankings (archive then clear the match log)
         if self.path == '/reset-rankings':
             self._handle_reset()
+            return
+        # Avatar generation via ComfyUI
+        if self.path == '/comfy/generate':
+            self._handle_comfy_generate()
+            return
+        # Avatar animation (WAN i2v) — victory/defeat clips
+        if self.path == '/comfy/animate':
+            self._handle_comfy_animate()
+            return
+        # Persist an edited still/motion prompt as a per-key override
+        if self.path == '/lab/overrides':
+            self._handle_overrides()
+            return
+        # Persist a per-key creature identity (rename / retheme)
+        if self.path == '/lab/identity':
+            self._handle_identity()
             return
         super().do_POST()
 
@@ -114,6 +501,19 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def _handle_trajectory(self, filename):
+        # Fire-and-forget from the client; we just append and ack. Never 500 into
+        # the game loop — a bad record is dropped, not fatal.
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            record = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        record.setdefault('server_ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        ok = _traj_append(filename, record)
+        self._json_response({'ok': ok})
 
     def _handle_tournament_result(self):
         try:
@@ -127,71 +527,142 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             if field not in body:
                 self._json_response({'error': f'Missing field: {field}'}, 400)
                 return
-        entry = {
-            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        # db.record_match inserts the match, applies incremental ELO, writes the
+        # rating_events timeline, and returns the same delta/result payload the
+        # client already knows how to celebrate — plus the match id.
+        out = db.record_match({
             'tournament_id': body['tournament_id'],
             'round': body['round'],
+            'mode': body.get('mode', 'standard'),
+            'format': body.get('format'),
+            'map_size': body.get('map_size'),
+            'map_strategy': body.get('map_strategy'),
+            'rounds': body.get('rounds'),
             'p1': body['p1'],
             'p2': body['p2'],
             'p1_score': body.get('p1_score', 0),
             'p2_score': body.get('p2_score', 0),
             'winner': body['winner'],
-            'mode': body.get('mode', 'standard'),
-        }
-        log = _load_log()
-        before = _compute_rankings(log)   # rankings as they stood BEFORE this match
-        log.append(entry)
-        _save_log(log)
-        after = _compute_rankings(log)    # rankings AFTER this match resolves
-        total_after = len(after)
-
-        def _delta(name):
-            b = _rank_of(before, name)
-            a = _rank_of(after, name)
-            return {
-                'name': name,
-                'eloBefore': b['elo'] if b else DEFAULT_ELO,
-                'eloAfter': a['elo'] if a else DEFAULT_ELO,
-                'rankBefore': b['rank'] if b else None,   # null = wasn't ranked yet
-                'rankAfter': a['rank'] if a else total_after,
-                'total': total_after,
-            }
-
-        winner = entry['winner']
-        loser = entry['p2'] if winner == entry['p1'] else entry['p1']
-        wb = _rank_of(before, winner)
-        lb = _rank_of(before, loser)
-        winner_win_prob = _expected(
-            wb['elo'] if wb else DEFAULT_ELO,
-            lb['elo'] if lb else DEFAULT_ELO,
-        )
-
-        result = {
-            'p1': _delta(entry['p1']),
-            'p2': _delta(entry['p2']),
-            'winner': winner,
-            'winnerWinProb': winner_win_prob,
-        }
+            'seed': body.get('seed'),
+        })
+        # Training-data: stamp the authoritative outcome onto this match's
+        # captured turns/rounds (joined by match_uid). Done here because the
+        # server now holds match_uid + match_id + winner + scores + ELO at once.
+        if body.get('match_uid'):
+            _traj_append('outcomes.jsonl', {
+                'match_uid': body['match_uid'],
+                'match_id': out['match_id'],
+                'winner': body['winner'],
+                'p1': body['p1'], 'p2': body['p2'],
+                'p1_score': body.get('p1_score', 0),
+                'p2_score': body.get('p2_score', 0),
+                'seed': body.get('seed'),
+                'mode': body.get('mode', 'standard'),
+                'map_strategy': body.get('map_strategy'),
+                'map_size': body.get('map_size'),
+                'rounds': body.get('rounds'),
+                'elo': out['result'],
+                'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            })
         self._json_response({
             'ok': True,
-            'total_matches': len(log),
-            'result': result,
-            'rankings': after,
+            'total_matches': out['total_matches'],
+            'result': out['result'],
+            'rankings': out['rankings'],
         })
 
+    def _handle_comfy_generate(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        key = body.get('key', '')
+        style = body.get('style', 'cyber-organic')
+        prompt = body.get('prompt', '')
+        negative = body.get('negative', '')
+        lora = body.get('lora', '')
+        seed = body.get('seed', 0)
+        if not (key and prompt and lora):
+            self._json_response({'error': 'key, prompt, and lora are required'}, 400)
+            return
+        if not (_SLUG.match(key) and _SLUG.match(style)):  # guard the filesystem path
+            self._json_response({'error': 'key/style must be lowercase slugs'}, 400)
+            return
+        try:
+            self._json_response(_comfy_generate(key, style, prompt, negative, lora, seed))
+        except Exception as e:
+            self._json_response({'error': str(e)}, 502)
+
+    def _handle_comfy_animate(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        key = body.get('key', '')
+        category = body.get('category', '')
+        prompt = body.get('prompt', '')
+        negative = body.get('negative', '')
+        workflow = body.get('workflow', 'fast')
+        seed = body.get('seed', 0)
+        if not (key and prompt):
+            self._json_response({'error': 'key and prompt are required'}, 400)
+            return
+        if not _SLUG.match(key):                       # guard the filesystem path
+            self._json_response({'error': 'key must be a lowercase slug'}, 400)
+            return
+        if category not in VIDEO_CATEGORIES:
+            self._json_response({'error': f'category must be one of {VIDEO_CATEGORIES}'}, 400)
+            return
+        if workflow not in VIDEO_WORKFLOWS:
+            self._json_response({'error': f'workflow must be one of {tuple(VIDEO_WORKFLOWS)}'}, 400)
+            return
+        try:
+            self._json_response(_comfy_animate(key, category, prompt, negative, workflow, seed))
+        except FileNotFoundError as e:
+            self._json_response({'error': str(e)}, 404)
+        except Exception as e:
+            self._json_response({'error': str(e)}, 502)
+
+    def _handle_overrides(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        kind = body.get('kind', '')
+        key = body.get('key', '')
+        text = body.get('text', '')
+        if kind not in OVERRIDE_KINDS:
+            self._json_response({'error': f'kind must be one of {OVERRIDE_KINDS}'}, 400)
+            return
+        if not _SLUG.match(key):
+            self._json_response({'error': 'key must be a lowercase slug'}, 400)
+            return
+        _save_override(kind, key, text)
+        self._json_response({'ok': True, 'kind': kind, 'key': key, 'saved': bool(text and text.strip())})
+
+    def _handle_identity(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        key = body.get('key', '')
+        if not _SLUG.match(key):
+            self._json_response({'error': 'key must be a lowercase slug'}, 400)
+            return
+        _save_identity(key, body.get('label', ''), body.get('archetype', ''), body.get('motif', ''))
+        self._json_response({'ok': True, 'key': key})
+
     def _handle_reset(self):
-        """Archive the current match log to a timestamped backup, then start fresh."""
-        archived = None
-        if os.path.exists(LOG_FILE):
-            ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
-            backup = os.path.join(os.path.dirname(LOG_FILE), f'tournament_log.{ts}.bak')
-            try:
-                os.rename(LOG_FILE, backup)
-                archived = os.path.basename(backup)
-            except OSError:
-                pass
-        _save_log([])
-        self._json_response({'ok': True, 'archived': archived})
+        """Archive the current database to a timestamped backup, then start fresh."""
+        self._json_response(db.reset())
 
     def _proxy_ollama_stream(self, path, is_post=False):
         """Stream proxy for pull requests — sends NDJSON lines as they arrive."""
@@ -248,6 +719,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         pass  # suppress request logs
 
 if __name__ == '__main__':
+    db.init_db()
     server = ThreadingHTTPServer(('', 8765), NoCacheHandler)
     print('Serving on http://localhost:8765')
     server.serve_forever()

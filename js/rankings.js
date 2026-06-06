@@ -1,4 +1,6 @@
-// ELO Rankings — fetches from server, renders leaderboard UI
+// ELO Rankings data layer — fetches standings/history from the server and exposes
+// win-odds helpers. The full-screen "Hall of Champions" view (js/leaderboard.js)
+// and the live-match odds badges render from these; this module owns no markup.
 
 const API = '';
 
@@ -62,56 +64,4 @@ function oddsBadge(prob, tag) {
     if (prob == null) return `<span class="odds-pct">— odds —</span>`;
     const label = tag === 'fav' ? 'FAVORITE' : tag === 'dog' ? 'UNDERDOG' : 'EVEN';
     return `<span class="odds-pct">${Math.round(prob * 100)}%</span><span class="odds-tag odds-${tag}">${label}</span>`;
-}
-
-export function renderRankingsPanel(container, rankings, opts = {}) {
-    if (!rankings || !Object.keys(rankings).length) {
-        container.innerHTML = '<div class="rk-empty">No matches played yet</div>';
-        return;
-    }
-    const humanHandle = opts.humanHandle || null;
-
-    let html = '<div class="rk-section-title">ELO Leaderboard</div>';
-    html += '<table class="rk-table"><thead><tr><th>#</th><th>Model</th><th>ELO</th><th>W</th><th>L</th></tr></thead><tbody>';
-
-    let rank = 1;
-    for (const [name, stats] of Object.entries(rankings)) {
-        const medal = rank === 1 ? ' 🥇' : rank === 2 ? ' 🥈' : rank === 3 ? ' 🥉' : '';
-        const isYou = humanHandle && name === humanHandle;
-        html += `<tr class="rk-row${rank <= 3 ? ' rk-top' : ''}${isYou ? ' rk-you' : ''}">
-            <td class="rk-rank">${rank}</td>
-            <td class="rk-name">${isYou ? '👤 ' : ''}${shorten(name)}${medal}</td>
-            <td class="rk-elo">${stats.elo}</td>
-            <td class="rk-w">${stats.wins}</td>
-            <td class="rk-l">${stats.losses}</td>
-        </tr>`;
-        rank++;
-    }
-
-    html += '</tbody></table>';
-    container.innerHTML = html;
-}
-
-export function renderHistoryPanel(container, history) {
-    if (!history?.length) {
-        container.innerHTML = '';
-        return;
-    }
-
-    let html = '<div class="rk-section-title">Recent Matches</div>';
-    const recent = history.slice(-20).reverse();
-    for (const m of recent) {
-        html += `<div class="rk-match">
-            <span class="rk-m-winner">${shorten(m.winner)}</span>
-            <span class="rk-m-beat">def.</span>
-            <span class="rk-m-loser">${shorten(m.winner === m.p1 ? m.p2 : m.p1)}</span>
-            <span class="rk-m-scores">${m.p1_score}–${m.p2_score}</span>
-        </div>`;
-    }
-    container.innerHTML = html;
-}
-
-function shorten(model) {
-    if (!model) return '—';
-    return model.replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
 }

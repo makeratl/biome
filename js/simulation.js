@@ -7,6 +7,35 @@ import { TERRAIN_TYPES } from './terrain.js';
 export class Simulation {
     constructor(grid) {
         this.grid = grid;
+        this.resetEvents();
+    }
+
+    // ── Causal event tally ──────────────────────────────────────
+    // The census/snapshot only report net state. These per-player
+    // counters record *what happened* during a simulation run so the
+    // recap and demo can narrate cause, not just change. Reset before
+    // each run (Game._runSimulation), read after via getEvents().
+    resetEvents() {
+        const blank = () => ({
+            plantsSpread: 0,    // this player's plants spread to a new cell
+            plantsEaten: 0,     // plants this player's herbivores grazed to death
+            herbBorn: 0,        // herbivore reproductions
+            herbStarved: 0,     // herbivores that starved
+            preyKilled: 0,      // herbivores this player's predators killed
+            herbKilledByPred: 0,// this player's herbivores killed by a predator
+            predBorn: 0,        // predator reproductions
+            predStarved: 0,     // predators that starved
+        });
+        this._events = { 1: blank(), 2: blank() };
+    }
+
+    getEvents() {
+        return this._events;
+    }
+
+    _tally(player, key) {
+        const p = this._events?.[player];
+        if (p) p[key]++;
     }
 
     // Run N simulation steps
@@ -61,7 +90,7 @@ export class Simulation {
                     const viable = neighbors.filter(n =>
                         n.terrain !== TERRAIN_TYPES.WATER &&
                         n.nutrients > 0.05 &&
-                        n.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length < 2
+                        n.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length < CONFIG.SIM.PLANT_CAP
                     );
 
                     if (viable.length > 0) {
@@ -72,6 +101,7 @@ export class Simulation {
                         const offspring = createOrganism(plant.species, plant.player, target.col, target.row);
                         offspring.energy = template.energy * 0.5;
                         newOrganisms.push({ cell: target, org: offspring });
+                        this._tally(plant.player, 'plantsSpread');
                     }
                 }
             }
@@ -101,6 +131,7 @@ export class Simulation {
 
                 if (herb.energy <= 0) {
                     herb.dead = true;
+                    this._tally(herb.player, 'herbStarved');
                     continue;
                 }
 
@@ -122,7 +153,10 @@ export class Simulation {
                         target.plant.energy -= eaten;
                         herb.energy += eaten;
                         herb.energy = Math.min(herb.energy, template.maxEnergy);
-                        if (target.plant.energy <= 0) target.plant.dead = true;
+                        if (target.plant.energy <= 0) {
+                            target.plant.dead = true;
+                            this._tally(herb.player, 'plantsEaten');
+                        }
                     }
                 } else {
                     // Wander randomly
@@ -144,6 +178,7 @@ export class Simulation {
                         const offspring = createOrganism(herb.species, herb.player, birthCell.col, birthCell.row);
                         offspring.energy = template.reproduceCost * 0.6;
                         birthCell.organisms.push(offspring);
+                        this._tally(herb.player, 'herbBorn');
                     }
                 }
             }
@@ -178,6 +213,7 @@ export class Simulation {
 
                 if (pred.energy <= 0) {
                     pred.dead = true;
+                    this._tally(pred.player, 'predStarved');
                     continue;
                 }
 
@@ -202,6 +238,8 @@ export class Simulation {
                             target.prey.dead = true;
                             pred.energy += eaten;
                             pred.energy = Math.min(pred.energy, template.maxEnergy);
+                            this._tally(pred.player, 'preyKilled');
+                            this._tally(target.prey.player, 'herbKilledByPred');
                         }
                     }
                 } else {
@@ -224,6 +262,7 @@ export class Simulation {
                         const offspring = createOrganism(pred.species, pred.player, birthCell.col, birthCell.row);
                         offspring.energy = template.reproduceCost * 0.5;
                         birthCell.organisms.push(offspring);
+                        this._tally(pred.player, 'predBorn');
                     }
                 }
             }

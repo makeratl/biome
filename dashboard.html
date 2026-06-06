@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome · Analytics</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="db-aurora" aria-hidden="true"></div>
+
+    <header class="db-topbar">
+        <div class="db-brand">
+            <span class="db-glyph">⬡</span>
+            <div class="db-brand-text">
+                <div class="db-title">BIOME<span>ANALYTICS</span></div>
+                <div class="db-sub">Model performance · live</div>
+            </div>
+        </div>
+        <div class="db-topstats">
+            <div class="db-tstat"><b id="t-matches">—</b><span>Matches</span></div>
+            <div class="db-tstat"><b id="t-models">—</b><span>Models</span></div>
+            <div class="db-live" id="db-live">
+                <span class="db-live-dot"></span>
+                <span class="db-live-text" id="db-live-text">connecting…</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="db-grid">
+        <!-- Highlight cards -->
+        <section class="db-highlights" id="db-highlights"></section>
+
+        <!-- ELO over time — the centerpiece -->
+        <section class="db-card db-elochart">
+            <div class="db-card-head">
+                <h2>ELO Over Time</h2>
+                <div class="db-chart-controls">
+                    <span class="db-seg-mini" id="db-elo-vision" title="Re-rank under one map vision (derived ladder)"></span>
+                    <span class="db-hint">Click a model to isolate · click again to restore</span>
+                    <button class="db-expand" data-panel="elo" title="Expand">⤢</button>
+                </div>
+            </div>
+            <div class="db-chart-wrap">
+                <svg id="db-elo-svg" class="db-svg" preserveAspectRatio="xMidYMid meet"></svg>
+                <div class="db-tooltip" id="db-tooltip" hidden></div>
+            </div>
+            <div class="db-legend" id="db-legend"></div>
+        </section>
+
+        <!-- Leaderboard -->
+        <section class="db-card db-leaderboard">
+            <div class="db-card-head"><h2>Standings</h2><button class="db-expand" data-panel="standings" title="Expand">⤢</button></div>
+            <div class="db-lb-scroll"><table class="db-lb" id="db-lb"></table></div>
+        </section>
+
+        <!-- Particle-field wall — responsive tiles, each a focused visual -->
+        <section class="db-fields">
+            <!-- Performance field — win rate × ELO (the hero, spans wide) -->
+            <section class="db-card db-field db-perf">
+                <div class="db-card-head">
+                    <h2>Performance&nbsp;Field</h2>
+                    <span class="db-hint">win rate × ELO · cluster = games · hue = family</span>
+                    <button class="db-expand" data-panel="cloud" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-cloud"></div>
+            </section>
+
+            <!-- Biome scores — best ecosystem score × ELO -->
+            <section class="db-card db-field db-third">
+                <div class="db-card-head">
+                    <h2>Biome&nbsp;Scores</h2>
+                    <span class="db-hint">best score × ELO · records →</span>
+                    <button class="db-expand" data-panel="biome" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-biome"></div>
+            </section>
+
+            <!-- Match conditions — grouped by map size / rounds -->
+            <section class="db-card db-field db-third">
+                <div class="db-card-head">
+                    <h2>Match&nbsp;Conditions</h2>
+                    <span class="db-seg-mini" id="db-cond-seg">
+                        <button class="db-seg-mini-b on" data-group="map_size">Map size</button>
+                        <button class="db-seg-mini-b" data-group="rounds">Rounds</button>
+                        <button class="db-seg-mini-b" data-group="map_strategy">Vision</button>
+                    </span>
+                    <button class="db-expand" data-panel="conditions" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-conditions"></div>
+            </section>
+
+            <!-- Decisiveness — margin × total biomass -->
+            <section class="db-card db-field db-third">
+                <div class="db-card-head">
+                    <h2>Decisiveness</h2>
+                    <span class="db-hint">margin × total biomass</span>
+                    <button class="db-expand" data-panel="decisive" title="Expand">⤢</button>
+                </div>
+                <div class="db-cloud-host" id="db-decisive"></div>
+            </section>
+
+            <!-- Head to head — locked square heatmap -->
+            <section class="db-card db-field db-h2h">
+                <div class="db-card-head"><h2>Head&nbsp;to&nbsp;Head</h2><button class="db-expand" data-panel="h2h" title="Expand">⤢</button></div>
+                <div class="db-h2h-wrap" id="db-h2h"></div>
+            </section>
+
+            <!-- Factor breakdowns -->
+            <section class="db-card db-field db-factors">
+                <div class="db-card-head"><h2>By the Numbers</h2><button class="db-expand" data-panel="factors" title="Expand">⤢</button></div>
+                <div class="db-factor-cols" id="db-factors"></div>
+            </section>
+        </section>
+
+        <!-- Recent feed -->
+        <section class="db-card db-recent">
+            <div class="db-card-head"><h2>Live Feed</h2><button class="db-expand" data-panel="feed" title="Expand">⤢</button></div>
+            <div class="db-feed" id="db-feed"></div>
+        </section>
+    </main>
+
+    <!-- Expandable detail modal — filled by js/dashboard-detail.js -->
+    <div class="db-modal" id="db-modal" hidden>
+        <div class="db-modal-backdrop" data-close></div>
+        <div class="db-modal-panel" role="dialog" aria-modal="true" aria-labelledby="db-modal-title">
+            <div class="db-modal-head">
+                <button class="db-modal-back" id="db-modal-back" hidden>← Back</button>
+                <h2 class="db-modal-title" id="db-modal-title">Detail</h2>
+                <div class="db-modal-tools" id="db-modal-tools"></div>
+                <button class="db-modal-fresh" id="db-modal-fresh" hidden>↻ New results</button>
+                <button class="db-modal-close" id="db-modal-close" data-close aria-label="Close">✕</button>
+            </div>
+            <div class="db-modal-body" id="db-modal-body"></div>
+        </div>
+    </div>
+
+    <script type="module" src="js/dashboard.js"></script>
+</body>
+</html>

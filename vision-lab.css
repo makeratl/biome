@@ -1,0 +1,220 @@
+/* Biome AI Vision Lab — standalone, echoes the game's dark aurora palette
+   (mirrors dashboard.css) without pulling in the whole game stylesheet. */
+
+:root {
+    --bg-0: #070814;
+    --bg-1: #0c0f20;
+    --panel: rgba(20, 28, 52, 0.62);
+    --panel-2: rgba(14, 19, 38, 0.8);
+    --panel-edge: rgba(255, 255, 255, 0.08);
+    --ink: #e7ebf5;
+    --ink-dim: rgba(231, 235, 245, 0.55);
+    --ink-faint: rgba(231, 235, 245, 0.3);
+    --elo: hsl(180, 62%, 64%);
+    --gold: hsl(45, 95%, 62%);
+    --p1: hsl(190, 80%, 58%);
+    --p2: hsl(25, 85%, 60%);
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-0);
+    color: var(--ink);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.vl-aurora {
+    position: fixed; inset: 0; z-index: -1; overflow: hidden;
+    background:
+        radial-gradient(ellipse 70% 50% at 15% 0%, hsla(200, 80%, 40%, 0.16), transparent 60%),
+        radial-gradient(ellipse 60% 50% at 90% 20%, hsla(270, 70%, 45%, 0.14), transparent 60%),
+        radial-gradient(ellipse 80% 60% at 50% 110%, hsla(42, 80%, 45%, 0.08), transparent 60%),
+        linear-gradient(170deg, var(--bg-1), var(--bg-0) 70%);
+}
+
+/* ── Top bar ── */
+.vl-topbar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 22px;
+    background: linear-gradient(180deg, rgba(8, 10, 22, 0.92), rgba(8, 10, 22, 0.5));
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--panel-edge);
+}
+.vl-brand { display: flex; align-items: center; gap: 13px; }
+.vl-glyph { font-size: 26px; filter: drop-shadow(0 0 12px hsla(190, 90%, 55%, 0.6)); }
+.vl-title { font-size: 20px; font-weight: 900; letter-spacing: 0.13em; line-height: 1; }
+.vl-title span { margin-left: 8px; font-weight: 700; letter-spacing: 0.2em; color: var(--elo); font-size: 12px; }
+.vl-sub { font-size: 10px; color: var(--ink-faint); letter-spacing: 0.09em; margin-top: 3px; text-transform: uppercase; }
+
+.vl-toprow { display: flex; align-items: center; gap: 14px; }
+.vl-back {
+    color: var(--ink-dim); text-decoration: none; font-size: 13px;
+    padding: 6px 10px; border: 1px solid var(--panel-edge); border-radius: 7px;
+}
+.vl-back:hover { color: var(--ink); border-color: var(--elo); }
+
+/* ── Fields / buttons ── */
+.vl-field {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint);
+}
+.vl-field.sm { font-size: 9px; }
+.vl-field select, .vl-field input {
+    font-size: 13px; text-transform: none; letter-spacing: 0;
+    background: var(--panel-2); color: var(--ink);
+    border: 1px solid var(--panel-edge); border-radius: 7px; padding: 6px 9px;
+}
+.vl-field.sm input { width: 78px; }
+
+.vl-btn {
+    background: var(--panel-2); color: var(--ink);
+    border: 1px solid var(--panel-edge); border-radius: 8px;
+    padding: 7px 13px; font-size: 13px; cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+.vl-btn:hover { border-color: var(--elo); }
+.vl-btn:disabled { opacity: .5; cursor: default; }
+.vl-btn.ghost { background: transparent; color: var(--ink-dim); }
+.vl-btn.primary {
+    background: linear-gradient(180deg, hsla(190, 80%, 45%, 0.9), hsla(200, 80%, 38%, 0.9));
+    border-color: transparent; font-weight: 700;
+}
+
+.vl-seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--panel-edge); border-radius: 9px; overflow: hidden; }
+.vl-seg button {
+    background: transparent; border: none; color: var(--ink-dim);
+    padding: 7px 13px; font-size: 13px; cursor: pointer;
+}
+.vl-seg.sm button { padding: 6px 11px; font-size: 12px; }
+.vl-seg button.on { background: hsla(190, 70%, 45%, 0.28); color: var(--ink); }
+#vl-owner button.on[data-owner="1"] { background: hsla(190, 80%, 50%, 0.32); color: var(--p1); }
+#vl-owner button.on[data-owner="2"] { background: hsla(25, 85%, 52%, 0.32); color: var(--p2); }
+
+/* ── Main two-column layout ── */
+.vl-main { flex: 1 1 auto; display: flex; gap: 16px; padding: 16px 22px; min-height: 0; }
+.vl-board-col { flex: 1 1 60%; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.vl-chat-col { flex: 1 1 40%; max-width: 480px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+.vl-controls { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+
+.vl-board-wrap {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 14px;
+    padding: 14px; overflow: hidden;
+}
+#vl-canvas { max-width: 100%; max-height: 100%; border-radius: 6px; }
+
+/* ── Legend ── */
+.vl-legend {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    min-height: 26px; font-size: 12px;
+}
+.vl-legend-empty { color: var(--ink-faint); }
+.vl-legend-row { display: inline-flex; align-items: center; gap: 7px; }
+.vl-swatch { width: 13px; height: 13px; border-radius: 3px; box-shadow: 0 0 8px currentColor; }
+.vl-legend-label { color: var(--ink); }
+.vl-legend-count { color: var(--ink-faint); font-size: 11px; }
+
+/* ── Place / brush ── */
+.vl-place {
+    display: flex; flex-direction: column; gap: 9px;
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 12px; padding: 11px 13px;
+}
+.vl-place-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.vl-place-label { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.vl-brush { display: flex; gap: 6px; flex-wrap: wrap; }
+.vl-brush-btn {
+    background: var(--panel-2); color: var(--ink-dim);
+    border: 1px solid var(--panel-edge); border-radius: 7px;
+    padding: 5px 10px; font-size: 12px; cursor: pointer;
+}
+.vl-brush-btn:hover { color: var(--ink); }
+.vl-brush-btn.on { border-color: var(--elo); color: var(--ink); background: hsla(190, 60%, 40%, 0.22); }
+.vl-kind-plant.on { border-color: var(--win, hsl(140,55%,60%)); }
+.vl-kind-herbivore.on { border-color: var(--gold); }
+.vl-kind-predator.on { border-color: var(--p2); }
+.vl-cell-info {
+    font-size: 12px; color: var(--ink-dim); font-family: ui-monospace, 'Cascadia Code', monospace;
+    padding-top: 2px;
+}
+
+/* ── Chat ── */
+.vl-chat {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 14px;
+    padding: 14px;
+}
+.vl-msg { display: flex; flex-direction: column; gap: 3px; }
+.vl-msg-role { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
+.vl-msg-body { font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.vl-msg-user { align-items: flex-end; }
+.vl-msg-user .vl-msg-body {
+    background: hsla(190, 60%, 40%, 0.22); border: 1px solid hsla(190, 60%, 50%, 0.3);
+    padding: 8px 12px; border-radius: 12px 12px 4px 12px; max-width: 88%;
+}
+.vl-msg-assistant .vl-msg-body, .vl-msg-system .vl-msg-body {
+    background: var(--panel-2); border: 1px solid var(--panel-edge);
+    padding: 8px 12px; border-radius: 12px 12px 12px 4px; max-width: 92%;
+}
+.vl-msg.vl-pending .vl-msg-body { color: var(--ink-faint); animation: vl-pulse 1.1s ease-in-out infinite; }
+.vl-msg.vl-error .vl-msg-body { color: var(--p2); border-color: hsla(25, 80%, 50%, 0.4); }
+@keyframes vl-pulse { 50% { opacity: .45; } }
+
+.vl-apply { font-size: 12px; color: var(--ink-dim); display: flex; align-items: center; gap: 7px; }
+
+.vl-compose { display: flex; gap: 9px; align-items: stretch; }
+#vl-input {
+    flex: 1 1 auto; resize: none; height: 58px;
+    background: var(--panel-2); color: var(--ink);
+    border: 1px solid var(--panel-edge); border-radius: 11px; padding: 10px 12px;
+    font-family: inherit; font-size: 14px;
+}
+#vl-input:focus { outline: none; border-color: var(--elo); }
+.vl-compose .vl-btn { align-self: stretch; padding: 0 18px; }
+
+/* ── Inspector ── */
+.vl-inspector { border: 1px solid var(--panel-edge); border-radius: 11px; background: var(--panel); overflow: hidden; }
+.vl-inspect-toggle {
+    width: 100%; text-align: left; background: transparent; border: none; cursor: pointer;
+    color: var(--ink-dim); font-size: 12px; letter-spacing: 0.06em; padding: 10px 13px;
+}
+.vl-inspect-toggle:hover { color: var(--ink); }
+.vl-inspect-body { display: none; padding: 0 13px 13px; }
+.vl-inspector.open .vl-inspect-body { display: block; }
+.vl-inspector.open .vl-inspect-toggle { color: var(--ink); }
+.vl-inspect-body h4 { margin: 12px 0 5px; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
+.vl-pre {
+    margin: 0; max-height: 200px; overflow: auto;
+    background: var(--bg-0); border: 1px solid var(--panel-edge); border-radius: 8px;
+    padding: 9px 11px; font-family: ui-monospace, 'Cascadia Code', monospace;
+    font-size: 11px; line-height: 1.45; color: var(--ink-dim); white-space: pre-wrap; word-break: break-word;
+}
+
+/* ── Turn Prompt panel ── */
+.vl-gp-note {
+    margin: 6px 0 12px; font-size: 11.5px; line-height: 1.5; color: var(--ink-dim);
+}
+.vl-gp-note code { font-size: 11px; color: var(--elo); background: var(--bg-0); padding: 1px 4px; border-radius: 4px; }
+.vl-gp-note strong { color: var(--ink); }
+.vl-gp-controls {
+    display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
+}
+.vl-gp-controls .vl-field.sm input { width: 64px; }
+.vl-gp-controls .vl-btn { margin-left: auto; }
+
+@media (max-width: 940px) {
+    body { overflow: auto; height: auto; }
+    .vl-main { flex-direction: column; }
+    .vl-chat-col { max-width: none; }
+    .vl-chat { min-height: 280px; }
+}

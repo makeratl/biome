@@ -1,10 +1,27 @@
 // Biome — All tunable constants
 
 export const CONFIG = {
-    // Grid
+    // Grid — these are the Medium defaults / fallback. Per-match world settings
+    // (size, hex zoom, rounds) are chosen in the UI and passed through to the
+    // grid; see MAPS / HEX_ZOOM / GAME.ROUND_OPTIONS below.
     HEX_SIZE: 11,
     GRID_COLS: 72,
     GRID_ROWS: 38,
+
+    // Selectable grid-size presets (cols × rows). Hex size is independent.
+    MAPS: {
+        small:  { cols: 48, rows: 26, label: 'Small' },
+        medium: { cols: 72, rows: 38, label: 'Medium' },
+        large:  { cols: 100, rows: 52, label: 'Large' },
+    },
+    // Hex-zoom slider range (px radius). Default mirrors HEX_SIZE.
+    HEX_ZOOM: { min: 9, max: 22, default: 11 },
+    // Auto/"Fit screen" bounds: rows (battlefield height) stays fixed; hex size
+    // fills the viewport height; columns fill the width, clamped here. See
+    // Game._resolveWorld / _containHex. AUTO_MAX_HEX lets presets grow past the
+    // slider's 22px cap to fill large screens crisply.
+    FIT: { rows: 38, minCols: 44, maxCols: 150 },
+    AUTO_MAX_HEX: 40,
 
     // Terrain generation
     TERRAIN: {
@@ -53,6 +70,7 @@ export const CONFIG = {
         GRASS: {
             name: 'Sedgeweave',
             role: 'Grass',
+            blurb: 'Fast-spreading groundcover — the foundation every food chain grows from.',
             type: 'plant',
             energy: 20,
             maxEnergy: 40,
@@ -65,6 +83,7 @@ export const CONFIG = {
         SHRUB: {
             name: 'Thornbloom',
             role: 'Shrub',
+            blurb: 'Hardy bushes that spread slowly but bank far more energy than grass.',
             type: 'plant',
             energy: 30,
             maxEnergy: 70,
@@ -77,6 +96,7 @@ export const CONFIG = {
         TREE: {
             name: 'Spirewood',
             role: 'Tree',
+            blurb: 'Towering and slow. Stores the most energy and shrugs off grazers.',
             type: 'plant',
             energy: 50,
             maxEnergy: 120,
@@ -89,6 +109,7 @@ export const CONFIG = {
         GRAZER: {
             name: 'Hopgrazer',
             role: 'Grazer',
+            blurb: 'Nimble grazer that eats grass and shrubs — and prefers the enemy’s.',
             type: 'herbivore',
             energy: 40,
             maxEnergy: 100,
@@ -105,6 +126,7 @@ export const CONFIG = {
         BROWSER: {
             name: 'Bramblemaw',
             role: 'Browser',
+            blurb: 'Heavy browser that strips shrubs and trees bare, bite by bite.',
             type: 'herbivore',
             energy: 55,
             maxEnergy: 100,
@@ -121,6 +143,7 @@ export const CONFIG = {
         PREDATOR: {
             name: 'Shadestalker',
             role: 'Predator',
+            blurb: 'Swift hunter that culls herbivores to crown the food chain.',
             type: 'predator',
             energy: 60,
             maxEnergy: 120,
@@ -139,6 +162,7 @@ export const CONFIG = {
     SIM: {
         STEPS_PER_TURN: 20,
         ANIMATION_STEP_MS: 100,
+        PLANT_CAP: 2,            // max plants per cell (a correctness invariant)
     },
 
     // Scoring — incentivize biodiversity over grass monoculture
@@ -151,8 +175,26 @@ export const CONFIG = {
 
     // Game
     GAME: {
-        TOTAL_ROUNDS: 20,
+        TOTAL_ROUNDS: 10,
         LIGHTNING_ROUNDS: 10,
         AP_PER_TURN: 4,
+        ROUND_OPTIONS: [5, 10, 15, 20],   // selectable round counts (default = TOTAL_ROUNDS)
+        // Ollama context window cap. We size num_ctx to the prompt so a large
+        // map representation (e.g. the `raw` orientation) isn't SILENTLY
+        // front-truncated against Ollama's ~2048 default — but cap it here to
+        // bound KV-cache VRAM. mediated/ascii prompts sit well under this.
+        // (Used by the Vision Lab; live matches use MODEL_BUDGETS below.)
+        NUM_CTX_MAX: 8192,
+        // Per-tier Ollama token budgets, keyed by model-identity.js size tier.
+        // Larger models earn the headroom for the raw board view + free-placement
+        // reasoning; small models stay lean so a 3B isn't asked to fill a context
+        // it can't use well. numCtx is the CAP — actual ctx is still sized to the
+        // prompt (min 2048). numPredict budgets thinking overhead + JSON output.
+        MODEL_BUDGETS: {
+            small: { numCtx: 8192,  numPredict: 600 },
+            mid:   { numCtx: 8192,  numPredict: 600 },
+            large: { numCtx: 16384, numPredict: 800 },
+            cloud: { numCtx: 32768, numPredict: 1000 },
+        },
     },
 };

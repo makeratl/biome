@@ -2,6 +2,25 @@
 
 import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
+import { extractJSON } from './util.js';
+import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
+import { getStrategy } from './map-strategies.js';
+import { parseTier } from './model-identity.js';
+import { trophicRead } from './trophic.js';
+import { captureTurn, isCaptureEnabled } from './capture.js';
+
+// How long a warmed/active model is asked to stay resident in Ollama. Long
+// enough to outlast a full match (and the short gap to its next match in a
+// bracket) but bounded so an idle model still releases on its own — the
+// just-in-time unload in prepareResidentSet is the primary release; this TTL
+// is only the backstop if that unload is skipped (abort, crash). NOT -1.
+const MATCH_KEEP_ALIVE = '30m';
+
+// Shared cloud test — :cloud models are Ollama Cloud (remote, always warm,
+// zero local RAM), so they're skipped by all warm/unload logic.
+export function isCloudModel(name) {
+    return /cloud/i.test(name || '');
+}
 
 export class AIPlayer {
     constructor(game, playerNumber, options = {}) {
@@ -11,6 +30,37 @@ export class AIPlayer {
         // Use local proxy endpoint for CORS bypass
         this.ollamaUrl = options.ollamaUrl || '/ollama';
         this._mapSummary = null;
+        // Fighter intel — populated by the game (Game._syncFighterContext) so the
+        // prompt can name the opponent and reference both records/rankings. Each is
+        // { isHuman, name, vendor, archetype, tier, elo, rank, wins, losses } or null.
+        this.opponent = null;
+        this.selfContext = null;
+        // Per-turn memory — what this fighter did/said last time it acted, plus a
+        // start-of-turn census snapshot, so the next prompt can show "here's what
+        // changed while you were away" and feed back its own stated plan/banter.
+        // Stateless model calls otherwise have zero continuity between turns.
+        // Reset per match: setAI() builds a fresh AIPlayer, so this stays null.
+        this.lastTurn = null;
+    }
+
+    // One-line "who is this fighter" string for the matchup intel block.
+    _describeFighter(f) {
+        if (!f) return null;
+        if (f.isHuman) return `${f.name} (a human challenger)`;
+        let s = f.name;
+        const tags = [];
+        if (f.vendor) tags.push(`by ${f.vendor}`);
+        if (f.archetype) tags.push(f.archetype);
+        if (f.tier) tags.push(f.tier);
+        if (tags.length) s += ` (${tags.join(', ')})`;
+        if (f.elo != null) {
+            const rankStr = f.rank ? `ranked #${f.rank}, ` : '';
+            const rec = (f.wins != null) ? `, ${f.wins}W–${f.losses}L` : '';
+            s += ` — ${rankStr}${f.elo} ELO${rec}`;
+        } else {
+            s += ' — unranked, no record yet';
+        }
+        return s;
     }
 
     // ── Map summary (generated once per game) ──────────────────
@@ -19,8 +69,8 @@ export class AIPlayer {
         if (this._mapSummary) return this._mapSummary;
 
         const grid = this.game.grid;
-        const cols = CONFIG.GRID_COLS;
-        const rows = CONFIG.GRID_ROWS;
+        const cols = grid.cols;
+        const rows = grid.rows;
         const regions = {};
         const names = [['NW','N','NE'],['W','C','E'],['SW','S','SE']];
 
@@ -53,8 +103,9 @@ export class AIPlayer {
     }
 
     _regionOf(col, row) {
-        const cx = col < CONFIG.GRID_COLS/3 ? 0 : col < CONFIG.GRID_COLS*2/3 ? 1 : 2;
-        const ry = row < CONFIG.GRID_ROWS/3 ? 0 : row < CONFIG.GRID_ROWS*2/3 ? 1 : 2;
+        const cols = this.game.grid.cols, rows = this.game.grid.rows;
+        const cx = col < cols/3 ? 0 : col < cols*2/3 ? 1 : 2;
+        const ry = row < rows/3 ? 0 : row < rows*2/3 ? 1 : 2;
         return [['NW','N','NE'],['W','C','E'],['SW','S','SE']][ry][cx];
     }
 
@@ -128,6 +179,18 @@ export class AIPlayer {
             return n;
         };
 
+        // Tiny per-cell deterministic perturbation (≈[0, 0.001)) added to every
+        // score. Early game most cells tie on raw nutrients; without this the
+        // sort falls back to grid iteration order (top-left→bottom-right), so
+        // pickDiverse always grabbed the northern regions first and the AI's
+        // whole opening clustered at the top of the map. Far smaller than any
+        // real score gap, so it only breaks ties — it never reorders genuinely
+        // better spots. Deterministic (no Math.random) for stable replays.
+        const tieJitter = (cell) => {
+            const h = Math.sin(cell.col * 12.9898 + cell.row * 78.233) * 43758.5453;
+            return (h - Math.floor(h)) * 1e-3;
+        };
+
         const plantSpots = [], herbSpots = [], predSpots = [];
 
         grid.forEach(cell => {
@@ -135,11 +198,12 @@ export class AIPlayer {
 
             const plantsHere = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
 
-            // Plant candidates: skip cells at plant cap (2)
-            if (plantsHere < 2) {
+            // Plant candidates: skip cells at plant cap
+            if (plantsHere < CONFIG.SIM.PLANT_CAP) {
                 let ps = cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1);
                 ps += nearby(cell, ownPlants, 3) * 0.08;
                 ps -= nearby(cell, enemyHerbs, 4) * 0.15;
+                ps += tieJitter(cell);
                 plantSpots.push({ cell, score: ps });
             }
 
@@ -149,12 +213,12 @@ export class AIPlayer {
                 const op = nearby(cell, ownPlants, 5);
                 const anyPlants = ep + op;
                 const danger = nearby(cell, enemyPreds, 4);
-                const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0);
+                const herbScore = ep * 0.4 + op * 0.15 - danger * 0.3 + (cell.terrain === 'FERTILE' ? 0.2 : 0) + tieJitter(cell);
                 herbSpots.push({ cell, score: herbScore, nearEnemyPlants: ep, nearOwnPlants: op, nearPreds: danger });
 
                 const eh = nearby(cell, enemyHerbs, 5);
                 const oh = nearby(cell, ownHerbs, 5);
-                const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0);
+                const predScore = eh * 0.5 + oh * 0.2 + (anyPlants > 3 ? 0.1 : 0) + tieJitter(cell);
                 predSpots.push({ cell, score: predScore, nearEnemyHerbs: eh, nearOwnHerbs: oh });
             }
         });
@@ -203,7 +267,7 @@ export class AIPlayer {
             }
         };
 
-        addSpots(plantSpots, 'plant', ['GRASS','SHRUB','TREE'], '1 AP grass/shrub, 2 AP tree', 3, (s) => {
+        addSpots(plantSpots, 'plant', ['GRASS','SHRUB','TREE'], '1 AP grass/shrub, 2 AP tree', 5, (s) => {
             const c = s.cell;
             const r = this._regionOf(c.col, c.row);
             const herbs = nearby(c, enemyHerbs, 4);
@@ -214,22 +278,27 @@ export class AIPlayer {
 
         addSpots(herbSpots, 'herbivore', ['GRAZER','BROWSER'], '2 AP (energy counts ×2!)', 3, (s) => {
             const r = this._regionOf(s.cell.col, s.cell.row);
+            const hasFood = s.nearEnemyPlants > 0 || s.nearOwnPlants > 0;
             let d = `${r}`;
             if (s.nearEnemyPlants > 0) d += `, ${s.nearEnemyPlants} enemy plants nearby (raid!)`;
             else if (s.nearOwnPlants > 0) d += `, near ${s.nearOwnPlants} of your plants (builds ×2 biomass)`;
-            else d += `, open territory`;
+            else d += `, no plants in reach (will starve here)`;
             d += s.nearPreds > 0 ? `, ${s.nearPreds} predators (dangerous)` : '';
-            d += ` — adds species diversity +10%`;
+            // Only dangle the diversity payoff where the creature can actually
+            // live to claim it — the bonus counts only for species alive at game
+            // end, so a starving placement earns nothing.
+            d += hasFood ? ` — survives to add species diversity +10%` : '';
             return d;
         });
 
         addSpots(predSpots, 'predator', ['PREDATOR'], '2 AP (energy counts ×3!)', 2, (s) => {
             const r = this._regionOf(s.cell.col, s.cell.row);
+            const hasPrey = s.nearEnemyHerbs > 0 || s.nearOwnHerbs > 0;
             let d = `${r}`;
             if (s.nearEnemyHerbs > 0) d += `, ${s.nearEnemyHerbs} enemy herbivores to hunt`;
             else if (s.nearOwnHerbs > 0) d += `, ${s.nearOwnHerbs} of your herbivores nearby`;
-            else d += `, patrolling territory`;
-            d += ` — adds species diversity +10%, enables trophic chain ×1.25!`;
+            else d += `, no prey in reach (will starve here)`;
+            d += hasPrey ? ` — survives to add species diversity +10% and complete the trophic chain ×1.25!` : '';
             return d;
         });
 
@@ -254,29 +323,94 @@ export class AIPlayer {
         return { plants, herbs, preds, biomass: Math.round(biomass) };
     }
 
+    // ── Turn-to-turn continuity ────────────────────────────────
+
+    // Stash what this fighter did/said this turn + a start-of-turn census, so the
+    // NEXT turn can diff against it. Called from both the normal and fallback paths.
+    // `startCensus` is { mine, enemy } captured before this turn's placements.
+    _recordTurn(startCensus, reasoning, banter, results) {
+        const placed = results
+            .filter(r => r.ok && r.cell)
+            .map(r => ({ species: r.species, region: this._regionOf(r.cell.col, r.cell.row) }));
+        const tidy = (s, n) => {
+            const clean = (s || '').replace(/\s+/g, ' ').trim();
+            return clean.length > n ? clean.slice(0, n - 1).trimEnd() + '…' : clean;
+        };
+        this.lastTurn = {
+            round: this.game.turns.round,
+            plan: tidy(reasoning, 280),
+            banter: tidy(banter, 160),
+            placed,
+            census: startCensus,
+        };
+    }
+
+    // "Since your last turn…" block — the only thread of continuity across the
+    // model's stateless calls. Diffs current census against last turn's snapshot,
+    // replays what it deployed, and feeds back its own stated plan/banter. Empty
+    // on the first turn (no prior). `myCensus`/`enemyCensus` are this turn's.
+    _recentHistoryBlock(myCensus, enemyCensus) {
+        const lt = this.lastTurn;
+        if (!lt) return '';
+
+        const lines = [`SINCE YOUR LAST TURN (round ${lt.round}):`];
+
+        if (lt.placed.length) {
+            const counts = {};
+            for (const p of lt.placed) {
+                const name = CONFIG.SPECIES[p.species]?.name || p.species;
+                const key = `${name}|${p.region}`;
+                counts[key] = (counts[key] || 0) + 1;
+            }
+            const parts = Object.entries(counts).map(([key, n]) => {
+                const [name, region] = key.split('|');
+                return `${n}× ${name} (${region})`;
+            });
+            lines.push(`  You deployed: ${parts.join(', ')}`);
+        }
+
+        if (lt.plan) lines.push(`  Your stated plan: "${lt.plan}"`);
+
+        const sign = n => (n >= 0 ? `+${n}` : `${n}`);
+        const dMine = myCensus.biomass - lt.census.mine.biomass;
+        const dEnemy = enemyCensus.biomass - lt.census.enemy.biomass;
+        lines.push(`  Board moved since then — your biomass ${lt.census.mine.biomass}→${myCensus.biomass} (${sign(dMine)}), enemy ${lt.census.enemy.biomass}→${enemyCensus.biomass} (${sign(dEnemy)}).`);
+
+        if (lt.banter) lines.push(`  You declared: "${lt.banter}"`);
+
+        return lines.join('\n') + '\n\n';
+    }
+
     // ── Prompt builder ─────────────────────────────────────────
 
+    // Build the turn prompt. This method now only ASSEMBLES the normalized
+    // context (it owns all game-state + fog reads); js/prompt.js composes the
+    // string from ordered, config-derived blocks. Signature is unchanged, so
+    // takeTurn() and the Vision Lab keep calling it as before.
     _buildPrompt(candidates) {
+        return buildTurnPrompt(this._promptContext(candidates));
+    }
+
+    // Gather everything the prompt blocks need into one plain object. Fog logic
+    // stays HERE (in _getCensus / _summarizePlayer), never in the formatter.
+    _promptContext(candidates) {
         const tm = this.game.turns;
-        const ap = tm.players[this.player].ap;
-        const enemy = this.player === 1 ? 2 : 1;
+        const player = this.player;
+        const enemy = player === 1 ? 2 : 1;
         const round = tm.round;
         const total = tm.totalRounds;
+        const ap = tm.players[player].ap;
 
-        // Dynamic strategy guidance based on game state
-        const myCensus = this._getCensus(this.player);
+        const myCensus = this._getCensus(player);
         const enemyCensus = this._getCensus(enemy);
-        const ahead = myCensus.biomass > enemyCensus.biomass * 1.2;
-        const behind = enemyCensus.biomass > myCensus.biomass * 1.2;
-        const enemyHasPlants = enemyCensus.plants > 20;
-        const enemyHasHerbs = enemyCensus.herbs > 5;
 
-        // Score projection — what their current diversity would yield
+        // Score projection — what my current diversity would yield. Own board, so
+        // no fog concern. Multiplier derives from CONFIG so it tracks any tuning.
         const mySpecies = new Set();
         let myHasPlant = false, myHasHerb = false, myHasPred = false;
         this.game.grid.forEach(cell => {
             for (const org of cell.organisms) {
-                if (org.player !== this.player) continue;
+                if (org.player !== player) continue;
                 mySpecies.add(org.species);
                 const t = CONFIG.SPECIES[org.species]?.type;
                 if (t === 'plant') myHasPlant = true;
@@ -284,118 +418,112 @@ export class AIPlayer {
                 else if (t === 'predator') myHasPred = true;
             }
         });
-        const currentMult = (1 + mySpecies.size * 0.10) * (myHasPlant && myHasHerb && myHasPred ? 1.25 : 1);
+        const trophic = myHasPlant && myHasHerb && myHasPred;
+        const currentMult = (1 + mySpecies.size * CONFIG.SCORING.SPECIES_DIVERSITY_BONUS)
+            * (trophic ? 1 + CONFIG.SCORING.TROPHIC_BONUS : 1);
 
-        let phaseAdvice;
-        if (round <= 4) {
-            phaseAdvice = `PHASE: EARLY (round ${round}/${total}). You have ${ap} AP.
-PRIORITY: Plant grass in DIFFERENT regions (spread seeds wide). Use 3 AP on grass in 3 separate regions. Use your 4th AP on a shrub for early diversity (+10% species bonus). Remember: each unique species = +10% to your final score!`;
-        } else if (round <= 13) {
-            let advice = `PHASE: MID GAME (round ${round}/${total}). You have ${ap} AP.\n`;
-            advice += `Your scoring multiplier: ×${currentMult.toFixed(2)} (${mySpecies.size} species${myHasPlant && myHasHerb && myHasPred ? ' + trophic chain' : ''}).\n`;
-            if (!myHasHerb) {
-                advice += `You have NO HERBIVORES — adding one gives +10% species bonus and moves toward trophic chain (×1.25). Herbivore energy also counts ×2! Deploy a grazer (2 AP) into enemy territory + 2 grass.\n`;
-            } else if (!myHasPred && enemyHasHerbs) {
-                advice += `You have no predators. Enemy has ${enemyCensus.herbs} herbivores. A PREDATOR gives +10% species bonus AND trophic chain ×1.25 AND its energy counts ×3. Deploy one! (2 AP) + 2 grass.\n`;
-            } else if (behind && enemyHasPlants) {
-                advice += `You are BEHIND. Send GRAZERS into enemy plant territory to destroy biomass. Mix: 1 grazer (2 AP) + 2 grass (2 AP).`;
-            } else {
-                advice += `Diversify! Add species you don't have yet. Each new species = +10%. Also plant grass in unclaimed regions.`;
-            }
-            phaseAdvice = advice;
-        } else {
-            let advice = `PHASE: LATE GAME (round ${round}/${total}). ${total - round} rounds left. You have ${ap} AP.\n`;
-            advice += `Your scoring multiplier: ×${currentMult.toFixed(2)} (${mySpecies.size} species${myHasPlant && myHasHerb && myHasPred ? ' + trophic chain' : ''}).\n`;
-            if (!myHasPred && myHasHerb) {
-                advice += `CRITICAL: Add a PREDATOR for trophic chain bonus (×1.25) + species bonus (+10%). This could swing the entire game!`;
-            } else if (!myHasHerb) {
-                advice += `Add a GRAZER + PREDATOR if possible to unlock trophic chain (×1.25). Huge scoring opportunity.`;
-            } else if (behind) {
-                advice += `BEHIND — aggressive grazer raids on enemy plants + ensure your diversity bonuses are maximized.`;
-            } else {
-                advice += `Protect your lead. Plant grass, ensure all trophic levels survive. Every species alive = +10%.`;
-            }
-            phaseAdvice = advice;
-        }
+        // Phase thresholds scale with match length so a 5- or 20-round game each
+        // gets a sensible early/mid/late split.
+        const earlyEnd = Math.max(1, Math.round(total * 0.25));
+        const midEnd = Math.max(earlyEnd + 1, Math.round(total * 0.65));
 
-        const system = `You are an AI playing Biome, a competitive ecosystem strategy game on a hex grid. You are Player ${this.player}. You have a personality — be competitive, witty, and opinionated about your strategy.
+        const grid = this.game.grid;
+        const mc = this.game.matchContext || {};
 
-GOAL: Maximize your FINAL SCORE after ${total} rounds.
+        // The map block is produced by the active orientation strategy (shared
+        // with the Vision Lab); only PRESENTATION changes, candidates/placement
+        // stay constant. An explicit match-context override wins (the lab A/B
+        // tests strategies); otherwise we pick by the model's size tier.
+        const strategy = getStrategy(mc.mapStrategy || this._tierStrategy());
+        const mapBlock = strategy.buildMapBlock({
+            grid,
+            candidates,
+            regionSummary: this._generateMapSummary().replace(/\n+$/, ''),
+        });
 
-SCORING (this is critical!):
-- Weighted biomass: plant energy ×1, herbivore energy ×2, predator energy ×3
-- Species diversity: +10% bonus per unique species alive at game end
-- Trophic chain bonus: +25% if you have plants AND herbivores AND predators alive
-- Example: 5000 weighted biomass × 1.5 (5 species) × 1.25 (trophic) = 9375 final score
-- A diverse ecosystem CRUSHES a grass monoculture in scoring!
-
-SPECIES (in-world name → role, cost, behavior):
-- Sedgeweave (Grass, 1 AP): Spreads fast. Foundation of any ecosystem. Essential early.
-- Thornbloom (Shrub, 1 AP): Moderate spread, tougher. Adds species diversity bonus.
-- Spirewood (Tree, 2 AP): Slow spread, high energy (120 max). Immune to grazers. Great late-game anchor.
-- Hopgrazer (Grazer, 2 AP): Eats grass & shrubs, prefers enemy plants. Raider + herbivore energy counts ×2.
-- Bramblemaw (Browser, 2 AP): Eats shrubs & trees. Slower but energy counts ×2.
-- Shadestalker (Predator, 2 AP): Hunts herbivores. Energy counts ×3! Deploy when enemy has herbivores.
-
-VOICE: In your reasoning and banter, prefer the in-world names (Sedgeweave, Thornbloom, Spirewood, Hopgrazer, Bramblemaw, Shadestalker) — they give your trash-talk personality. Roles (Grass/Shrub/Tree/Grazer/Browser/Predator) are fine too. The action JSON below must still use the technical UPPERCASE keys.
-
-STRATEGY: Early rounds plant Sedgeweave for foundation. Mid-game diversify — add Thornbloom, Hopgrazers. Late-game ensure you have all 3 trophic levels for the ×1.25 bonus.
-
-Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
-
-        let moveText = '';
-        for (const c of candidates) {
-            moveText += `  ${c.label}) [${c.type}] ${c.description} (${c.ap})\n`;
-        }
-        if (!moveText) moveText = '  No strong candidates — place grass in the best available fertile spot.\n';
-
-        const user = `Round ${round}/${total}. You are Player ${this.player}. AP: ${ap}.
-
-${phaseAdvice}
-
-MAP REGIONS:
-${this._generateMapSummary()}
-YOUR ECOSYSTEM: ${this._summarizePlayer(this.player)}
-ENEMY ECOSYSTEM: ${this._summarizePlayer(enemy)}
-
-CANDIDATE MOVES:
-${moveText}
-Spend ALL ${ap} AP. Pick a spot letter and a species for each action.
-
-VALID SPECIES NAMES (use EXACTLY one of these, ALL CAPS):
-  Plants: GRASS, SHRUB, TREE
-  Herbivores: GRAZER, BROWSER
-  Predator: PREDATOR
-
-IMPORTANT: Write ORIGINAL reasoning and banter. Reference the CURRENT game state (round ${round}, your species, the score).
-
-JSON format:
-{"reasoning":"<strategic analysis>","actions":[{"spot":"A","species":"GRASS"},{"spot":"B","species":"GRAZER"}],"banter":"<competitive comment>"}`;
-
-        return { system, user };
+        return {
+            player, enemy, round, total, ap,
+            match: { mode: mc.mode || null, modeLabel: mc.modeLabel || null, stakes: mc.stakes || null },
+            board: {
+                cols: grid.cols, rows: grid.rows,
+                sizeLabel: matchSizeLabel(grid.cols, grid.rows),
+                mapBlock,
+                myEcosystem: this._summarizePlayer(player),
+                enemyEcosystem: this._summarizePlayer(enemy),
+                candidates,
+            },
+            census: { mine: myCensus, enemy: enemyCensus },
+            // Trophic balance read — same helper that drives the human health
+            // orb. Derived from the FOGGED censuses above (enemy current-round
+            // placements already hidden), so it only synthesizes numbers the
+            // model is already shown — no fog leak.
+            trophic: {
+                mine: trophicRead(myCensus.plants, myCensus.herbs, myCensus.preds),
+                enemy: trophicRead(enemyCensus.plants, enemyCensus.herbs, enemyCensus.preds),
+            },
+            strategy: {
+                ahead: myCensus.biomass > enemyCensus.biomass * 1.2,
+                behind: enemyCensus.biomass > myCensus.biomass * 1.2,
+                enemyHasPlants: enemyCensus.plants > 20,
+                enemyHasHerbs: enemyCensus.herbs > 5,
+                myHasPlant, myHasHerb, myHasPred,
+                speciesCount: mySpecies.size, currentMult, earlyEnd, midEnd,
+            },
+            fighters: {
+                selfDesc: this._describeFighter(this.selfContext),
+                oppDesc: this._describeFighter(this.opponent),
+            },
+            memory: this.lastTurn ? this._recentHistoryBlock(myCensus, enemyCensus).trim() : '',
+            persona: this.persona || null,
+        };
     }
 
     // ── Ollama API call ────────────────────────────────────────
 
     _isCloudModel() {
-        return /cloud/i.test(this.model);
+        return isCloudModel(this.model);
     }
 
-    _isThinkingModel() {
-        // Cloud models route through Ollama's cloud API which tends to use
-        // thinking/chain-of-thought; local thinking models include qwen3, glm, kimi
-        return this._isCloudModel() || /qwen3|glm|kimi|minimax/i.test(this.model);
+    // Pick the board-orientation strategy from the model's size tier. Small/mid
+    // models reason better from the compact, coordinate-anchored ascii grid
+    // (≈constant tokens, whole board visible); large/cloud models can take the
+    // full raw cell dump that pairs with free-coordinate placement.
+    _tierStrategy() {
+        const tier = parseTier(this.model);
+        return (tier === 'large' || tier === 'cloud') ? 'raw' : 'ascii';
     }
 
-    async _callOllama(system, user) {
+    // How long a single model call is allowed before we abandon it. Now that the
+    // match warms models BEFORE the clock starts (prepareResidentSet), cold-load
+    // no longer eats this budget — and in practice both local (2–6s) and cloud
+    // (up to ~30s worst case) settle well inside a flat 30s ceiling. One number
+    // for everyone keeps the field level. Exposed so the game-level turn watchdog
+    // can derive its own (larger) ceiling.
+    timeoutMs() {
+        return 30_000;
+    }
+
+    async _callOllama(system, user, signal) {
         const url = `${this.ollamaUrl}/api/chat`;
-        // Some models ignore think:false and still use thinking tokens,
-        // so budget enough for thinking overhead + JSON content
-        const numPredict = this._isCloudModel() ? 1000 : 600;
+        // Token budget scales with the model's size tier (config.MODEL_BUDGETS):
+        // big/cloud models get headroom for the raw board view + free-placement
+        // reasoning, small models stay lean. numPredict covers thinking overhead
+        // (some models ignore think:false) + JSON content.
+        const budget = CONFIG.GAME.MODEL_BUDGETS[parseTier(this.model)] || CONFIG.GAME.MODEL_BUDGETS.mid;
+        const numPredict = budget.numPredict;
+        // Size the context window to the prompt so a large map representation
+        // isn't silently front-truncated against Ollama's ~2048 default. Capped
+        // by tier to bound VRAM; ~3 chars/token is conservative for coord-heavy text.
+        const numCtx = Math.min(budget.numCtx,
+            Math.max(2048, Math.ceil((system.length + user.length) / 3)));
 
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            // Aborted by takeTurn when the timeout wins, so a hung/slow request is
+            // torn down cleanly instead of lingering (which left the proxy writing
+            // to a dead socket → BrokenPipeError).
+            signal,
             body: JSON.stringify({
                 model: this.model,
                 messages: [
@@ -405,7 +533,12 @@ JSON format:
                 format: 'json',
                 stream: false,
                 think: false,
-                options: { temperature: 0.7, num_predict: numPredict },
+                // Keep the active model resident between this model's own turns —
+                // without this Ollama's 5-min default can unload it mid-match
+                // (P1 → P2 → back to P1 can exceed 5 min with two large models),
+                // forcing a cold reload on the next turn. Cloud models ignore it.
+                keep_alive: MATCH_KEEP_ALIVE,
+                options: { temperature: 0.7, num_predict: numPredict, num_ctx: numCtx },
             }),
         });
 
@@ -417,57 +550,51 @@ JSON format:
         const content = data.message.content?.trim() || '';
         const thinking = data.message.thinking?.trim() || '';
 
-        // Try to extract valid JSON from a string. Approaches, in order:
-        // 1. Direct parse (model obeyed "respond ONLY with JSON")
-        // 2. Strip markdown code fences (```json ... ``` or ``` ... ```)
-        // 3. Brace-matching scan right-to-left (for models that wrap JSON in prose)
-        const extractJSON = (str) => {
-            // Try direct parse first
-            try { return JSON.parse(str); } catch {}
-
-            // Strip markdown code fences
-            const fenced = str.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-            if (fenced) {
-                try { return JSON.parse(fenced[1].trim()); } catch {}
-            }
-
-            // Right-to-left brace scan — get the model's final JSON output
-            const opens = [...str.matchAll(/\{/g)].map(m => m.index).reverse();
-            for (const start of opens) {
-                // Find the matching closing brace by tracking depth
-                let depth = 0;
-                for (let i = start; i < str.length; i++) {
-                    if (str[i] === '{') depth++;
-                    else if (str[i] === '}') depth--;
-                    if (depth === 0) {
-                        try { return JSON.parse(str.slice(start, i + 1)); } catch { break; }
-                    }
-                }
-            }
-            return null;
-        };
-
         // Prefer content field; fall back to thinking field for models that
-        // exhaust their token budget on chain-of-thought
+        // exhaust their token budget on chain-of-thought. extractJSON is the
+        // shared 3-tier parser (direct → strip fences → right-to-left brace scan).
         const result = extractJSON(content) || extractJSON(thinking);
         if (!result) {
             throw new Error(`No valid JSON found in response (content:${content.length}b, thinking:${thinking.length}b)`);
         }
-        return result;
+        // Return the parsed action AND the verbatim raw response — capture keeps
+        // the raw so training data preserves exactly what the model emitted.
+        return {
+            parsed: result,
+            raw: { content, thinking, model: this.model,
+                   options: { temperature: 0.7, num_predict: numPredict, num_ctx: numCtx } },
+        };
     }
 
     // ── Execute actions ────────────────────────────────────────
 
     _executeActions(actions, candidates) {
         const tm = this.game.turns;
+        const grid = this.game.grid;
         const lookup = {};
         for (const c of candidates) lookup[c.label] = c;
 
         const results = [];
 
         for (const action of actions) {
-            const cand = lookup[action.spot?.toUpperCase()];
-            if (!cand) { results.push({ ok: false, msg: `Bad spot: ${action.spot}` }); continue; }
+            // Resolve the target cell from EITHER a curated candidate letter
+            // ({spot:"A"}) OR free coordinates ({col,row}). Free placement gives
+            // capable models real spatial agency over the whole board; the
+            // lettered menu stays as the always-legal floor for smaller models.
+            // Both paths land in the same validation below (water/cap/AP).
+            let cell;
+            const col = Number(action.col), row = Number(action.row);
+            const hasCoords = action.col != null && action.row != null
+                && Number.isInteger(col) && Number.isInteger(row);
+            if (hasCoords) {
+                cell = grid.getCell(col, row);
+                if (!cell) { results.push({ ok: false, msg: `Off-board: (${action.col},${action.row})` }); continue; }
+                if (cell.terrain === 'WATER') { results.push({ ok: false, msg: `Water cell: (${col},${row})` }); continue; }
+            } else {
+                const cand = lookup[action.spot?.toUpperCase()];
+                if (!cand) { results.push({ ok: false, msg: `Bad spot: ${action.spot}` }); continue; }
+                cell = cand.cell;
+            }
 
             const species = action.species?.toUpperCase();
             const template = CONFIG.SPECIES[species];
@@ -478,10 +605,9 @@ JSON format:
                 continue;
             }
 
-            const cell = cand.cell;
             if (template.type === 'plant') {
                 const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-                if (existingPlants >= 2) {
+                if (existingPlants >= CONFIG.SIM.PLANT_CAP) {
                     results.push({ ok: false, msg: `Cell (${cell.col},${cell.row}) already has max plants` });
                     continue;
                 }
@@ -502,31 +628,49 @@ JSON format:
 
     async takeTurn() {
         const candidates = this._findCandidates();
+        const enemy = this.player === 1 ? 2 : 1;
+        // Snapshot the board as this turn begins — next turn diffs against it for
+        // the "since your last turn" recap. Captured before any placements land.
+        const startCensus = { mine: this._getCensus(this.player), enemy: this._getCensus(enemy) };
         const { system, user } = this._buildPrompt(candidates);
         const ap = this.game.turns.players[this.player].ap;
 
         console.log(`[AI] Round ${this.game.turns.round}, P${this.player}, ${ap} AP, ${candidates.length} candidates`);
         console.log('[AI] Prompt:', user);
 
-        let response;
+        let response, raw = null;
+        const controller = new AbortController();
+        let timer;
         try {
-            // Cloud models need longer for network roundtrip;
-            // thinking models (qwen3, glm) need longer for chain-of-thought
-            const timeoutMs = this._isCloudModel() ? 90_000
-                            : this._isThinkingModel() ? 75_000
-                            : 30_000;
-            const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error(`AI timeout (${timeoutMs/1000}s)`)), timeoutMs)
-            );
-            response = await Promise.race([this._callOllama(system, user), timeout]);
+            const timeoutMs = this.timeoutMs();
+            const timeout = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    controller.abort();   // tear the fetch down, don't just abandon it
+                    reject(new Error(`AI timeout (${timeoutMs / 1000}s)`));
+                }, timeoutMs);
+            });
+            const out = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
+            response = out.parsed;
+            raw = out.raw;
         } catch (err) {
             console.error('[AI] Ollama error:', err.message);
-            return this._fallback(candidates);
+            // Classify so the card can speak to *what* went wrong, not just go mute.
+            const msg = err.message || '';
+            const reason = /timeout/i.test(msg) ? 'timeout'
+                : /no valid json/i.test(msg) ? 'badjson'
+                : 'offline';
+            const fb = this._fallback(candidates, reason, startCensus);
+            this._captureTurn({ system, user, raw: null, parsed: null, results: fb.actions, startCensus, ap, fallbackReason: reason });
+            return fb;
+        } finally {
+            clearTimeout(timer);
         }
 
         if (!response?.actions) {
             console.error('[AI] Bad response (no actions):', JSON.stringify(response));
-            return this._fallback(candidates);
+            const fb = this._fallback(candidates, 'badjson', startCensus);
+            this._captureTurn({ system, user, raw, parsed: response, results: fb.actions, startCensus, ap, fallbackReason: 'badjson' });
+            return fb;
         }
 
         console.log('[AI] Response:', JSON.stringify(response));
@@ -549,12 +693,53 @@ JSON format:
 
         this.game.renderer.render();
 
+        this._recordTurn(startCensus, response.reasoning, response.banter, results);
+        this._captureTurn({ system, user, raw, parsed: response, results, startCensus, ap, fallbackReason: null });
+
         return {
             reasoning: response.reasoning || '',
             banter: response.banter || '',
             actions: results,
             model: this.model,
         };
+    }
+
+    // Emit one training trajectory record for this turn (fire-and-forget; no-op
+    // unless capture is enabled). The training INPUT is the verbatim fog-honest
+    // prompt; full-board reward signals live in the separate round/outcome records.
+    _captureTurn({ system, user, raw, parsed, results, startCensus, ap, fallbackReason }) {
+        if (!isCaptureEnabled()) return;
+        try {
+            const g = this.game, tm = g.turns;
+            const enemy = this.player === 1 ? 2 : 1;
+            const turnUid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID() : `t_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
+            captureTurn({
+                schema: 1,
+                match_uid: g.matchUid || null,
+                turn_uid: turnUid,
+                seed: g.seed,
+                model: this.model,
+                player: this.player,
+                opponent_model: g.aiPlayers?.[enemy]?.model || null,
+                round: tm.round,
+                total_rounds: tm.totalRounds,
+                ap,
+                map_strategy: g.matchContext?.mapStrategy || null,
+                map_size: g.grid ? `${g.grid.cols}x${g.grid.rows}` : null,
+                prompt: { system, user },
+                response_raw: raw,
+                response_parsed: parsed
+                    ? { reasoning: parsed.reasoning ?? '', actions: parsed.actions ?? [], banter: parsed.banter ?? '' }
+                    : null,
+                exec: (results || []).map(r => ({
+                    ok: !!r.ok, species: r.species ?? null,
+                    col: r.cell?.col ?? null, row: r.cell?.row ?? null, msg: r.msg ?? '',
+                })),
+                start_census: startCensus,
+                fallback_reason: fallbackReason || null,
+            });
+        } catch (_) { /* capture must never break a turn */ }
     }
 
     // Spend remaining AP on grass spread across different regions
@@ -571,7 +756,7 @@ JSON format:
         grid.forEach(cell => {
             if (cell.terrain === 'WATER') return;
             const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) return;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) return;
             if (usedCells.has(`${cell.col},${cell.row}`)) return;
             spots.push({ cell, score: cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1) });
         });
@@ -606,7 +791,7 @@ JSON format:
     }
 
     // Fallback if LLM is unavailable
-    _fallback(candidates) {
+    _fallback(candidates, reason = 'offline', startCensus = null) {
         const tm = this.game.turns;
         const plants = candidates.filter(c => c.type === 'plant');
         const results = [];
@@ -614,7 +799,7 @@ JSON format:
         for (const c of plants) {
             if (tm.players[this.player].ap < 1) break;
             const existingPlants = c.cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) continue;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) continue;
             tm.spendAP(1);
             const org = createOrganism('GRASS', this.player, c.cell.col, c.cell.row);
             org._placedRound = tm.round;
@@ -624,16 +809,26 @@ JSON format:
         }
 
         this.game.renderer.render();
-        return { reasoning: 'LLM unavailable — fallback to grass', actions: results, model: this.model };
+        if (startCensus) this._recordTurn(startCensus, 'LLM unavailable — fell back to grass.', '', results);
+        return {
+            reasoning: 'LLM unavailable — fallback to grass',
+            actions: results,
+            model: this.model,
+            degraded: true,
+            failReason: reason,
+        };
     }
 
     // Post-game final statement
     async getFinalStatement(myScore, enemyScore, won) {
         const result = won ? 'WON' : (myScore.finalScore === enemyScore.finalScore ? 'TIED' : 'LOST');
 
-        const system = `You are an AI who just finished playing Biome, a competitive ecosystem strategy game. You are Player ${this.player}. Give a brief, memorable post-game statement. Be a gracious winner or a defiant loser. Reference specific details from the game. Respond ONLY with valid JSON.`;
+        const oppName = this.opponent && !this.opponent.isHuman ? this.opponent.name
+            : this.opponent?.isHuman ? this.opponent.name : 'your opponent';
 
-        const user = `Game over! You ${result}.
+        const system = `You are an AI who just finished playing Biome, a competitive ecosystem strategy game. You are Player ${this.player}. You were up against ${oppName}. Give a brief, memorable post-game statement — name your opponent. Be a gracious winner or a defiant loser. Reference specific details from the game. Respond ONLY with valid JSON.`;
+
+        const user = `Game over! You ${result} against ${oppName}.
 
 Your final score: ${myScore.finalScore.toLocaleString()} (${myScore.speciesCount} species, multiplier ×${myScore.totalMult.toFixed(2)})
 Species: ${myScore.species.join(', ') || 'none'}
@@ -644,8 +839,8 @@ Opponent score: ${enemyScore.finalScore.toLocaleString()} (${enemyScore.speciesC
 JSON: {"statement":"<your 1-2 sentence post-game comment, be original and reference the actual scores/species>"}`;
 
         try {
-            const response = await this._callOllama(system, user);
-            return response.statement || '';
+            const out = await this._callOllama(system, user);
+            return out.parsed.statement || '';
         } catch {
             return won ? 'A well-played game.' : 'Next time will be different.';
         }
@@ -712,6 +907,106 @@ export async function pullModel(modelName, onProgress) {
     } catch (e) {
         return { success: false, error: e.message };
     }
+}
+
+// ── Model residency lifecycle (warming / unloading / inspection) ──────────────
+// All of these resolve and never throw — warming must never block or fail a
+// match. Cloud (:cloud) models have no local footprint, so they're skipped.
+
+// Preload a model into memory WITHOUT generating, and ask Ollama to keep it
+// resident. An empty-prompt /api/generate returns once the model is loaded
+// (done_reason "load"), so awaiting this moves cold-load time out of the
+// per-turn budget. Accepts an AbortSignal so a restart can cancel an in-flight warm.
+export async function warmModel(model, { keepAlive = MATCH_KEEP_ALIVE, signal } = {}) {
+    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    try {
+        const resp = await fetch('/ollama/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal,
+            body: JSON.stringify({ model, keep_alive: keepAlive, prompt: '', stream: false }),
+        });
+        if (!resp.ok) return { ok: false, error: `warm ${resp.status}: ${await resp.text()}` };
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+    }
+}
+
+// Evict a model from memory immediately (keep_alive:0). Best-effort.
+export async function unloadModel(model) {
+    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    try {
+        await fetch('/ollama/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, keep_alive: 0, prompt: '', stream: false }),
+        });
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+    }
+}
+
+// Models currently resident in Ollama. Each: { name, size, size_vram, expires_at }.
+export async function listResidentModels() {
+    try {
+        const resp = await fetch('/ollama/api/ps');
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return Array.isArray(data.models) ? data.models : [];
+    } catch {
+        return [];
+    }
+}
+
+// Normalize a model name for residency comparison — /api/ps may report a
+// `:latest` tag the caller's bare name omits (mirrors tournament.js norm).
+function _normModel(name) {
+    return String(name || '').replace(/:latest$/, '');
+}
+
+// Is this model currently loaded in Ollama? Cloud models are always "ready"
+// (no local VRAM load), so they report resident. Drives the per-turn "loading
+// model…" indicator: an empty /api/ps (cold, or unreachable) reads as not
+// resident, which the watcher self-corrects once the model finishes loading.
+export async function isModelResident(model) {
+    if (!model || isCloudModel(model)) return true;
+    const target = _normModel(model);
+    const resident = await listResidentModels();
+    return resident.some(m => _normModel(m.name) === target);
+}
+
+// "Warm the next match only" lifecycle. Given the local models the upcoming
+// match needs, evicts every OTHER resident local model and warms the needed
+// ones that aren't already resident — keeping peak residency at the match's
+// model count. ps-driven so it self-heals partial prior state (e.g. an aborted
+// warm). A winner advancing is in `neededModels`, so it's never unloaded/reloaded.
+// Returns { warmed:[], unloaded:[], failures:[] }. Never throws.
+export async function prepareResidentSet(neededModels, { signal } = {}) {
+    const needed = [...new Set((neededModels || []).filter(m => m && !isCloudModel(m)))];
+    const neededNorm = new Set(needed.map(_normModel));
+
+    const resident = await listResidentModels();
+    const residentNorm = new Set(resident.map(m => _normModel(m.name)));
+
+    const toUnload = resident
+        .map(m => m.name)
+        .filter(name => !neededNorm.has(_normModel(name)));
+    const toWarm = needed.filter(m => !residentNorm.has(_normModel(m)));
+
+    const [unloadRes, warmRes] = await Promise.all([
+        Promise.all(toUnload.map(m => unloadModel(m))),
+        Promise.all(toWarm.map(m => warmModel(m, { signal }))),
+    ]);
+
+    const failures = warmRes
+        .map((r, i) => (r && !r.ok && !r.skipped) ? { model: toWarm[i], error: r.error } : null)
+        .filter(Boolean);
+    if (failures.length) {
+        console.warn('[warm] some models failed to preload (match continues):', failures);
+    }
+    return { warmed: toWarm, unloaded: toUnload, failures };
 }
 
 // Human-readable model sizes
