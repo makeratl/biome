@@ -10,8 +10,10 @@
 //   infant  — low population, just building: few faint sprites, slow.
 //   zen     — near the 9:3:1 ideal: a calm radial trophic mandala (plants outer
 //             ring → herbivores middle → predators centre), green glow.
-//   alert   — imbalanced, esp. top-heavy: rings dissolve into a jittery crowd,
-//             red/orange churn, faster pulse — collapse is near.
+//   alert   — imbalanced: rings dissolve into a jittery crowd, amber→red churn,
+//             faster pulse. The CAPTION grades the alert further (STRAINED →
+//             named imbalance → COLLAPSING) by SEVERITY, weighting problems at the
+//             base (plants being eaten) graver than at the apex (predators glut).
 //
 // Data arrives every simulation step via update(census, events). The rAF loop
 // animates between updates and bails cheaply when the console is collapsed.
@@ -47,8 +49,27 @@ const MOODS = {
     primordial: { word: 'PRIMORDIAL', icon: '🌿', state: 'primordial' },
     infant:     { word: 'BUILDING',   icon: '🌱', state: 'infant'     },
     zen:        { word: 'BALANCED',   icon: '✦', state: 'zen'        },
-    alert:      { word: 'AT RISK',    icon: '⚠', state: 'alert'      },
 };
+
+// Grade an alerting biome into a named, severity-coloured caption. `driver` is the
+// worst-off player's trophicRead; `severity` is the tier-weighted collapse risk.
+//   strained — amber: tilting off balance, recoverable.
+//   alert    — orange: a named imbalance (apex glut/starve, base creeping).
+//   collapse — red: the base itself is failing (herbivores starving, or eating a
+//              shrinking plant base). Reserved for genuine collapse.
+function alertMood(driver, severity) {
+    if (driver.baseStarved)
+        return { word: 'HERBIVORES STARVING', icon: '☠', state: 'collapse' };
+    if (severity >= 0.8)
+        return { word: 'COLLAPSING', icon: '☠', state: 'collapse' };
+    if (severity < 0.55)
+        return { word: 'STRAINED', icon: '⚠', state: 'strained' };
+    if (driver.apexStarved)
+        return { word: 'PREDATORS STARVING', icon: '⚠', state: 'alert' };
+    if (driver.overTier === 'herb')
+        return { word: 'OVERGRAZED', icon: '⚠', state: 'alert' };
+    return { word: 'TOP-HEAVY', icon: '⚠', state: 'alert' };
+}
 
 export class Biosphere {
     constructor(canvas) {
@@ -68,6 +89,8 @@ export class Biosphere {
         this.raf = null;
         this.running = false;
         this._mood = 'dormant';
+        this._capWord = null; // last caption word — alert family grades by word
+        this._prevP = null;   // last combined plant count — trend for collapse reads
 
         // Eased visual state and its target.
         this.cur = { hue: 210, intensity: 0.15, density: 0, motion: 0.25, ringiness: 0.6 };
@@ -134,10 +157,27 @@ export class Biosphere {
         const starveNorm = clamp(starve / Math.max(8, total * 0.25), 0, 1);
         const collapseRisk = clamp(Math.max(read1.risk, read2.risk, starveNorm), 0, 1);
 
-        // Classify the mood. ALERT is genuine collapse risk only — a flipped
+        // Is the plant base shrinking? (<0 = losing plants step over step.) The
+        // worst-off biome drives the alert read — collapse lives in one biome.
+        const plantTrend = this._prevP > 0 ? (P - this._prevP) / this._prevP : 0;
+        this._prevP = P;
+        const driver = read1.risk >= read2.risk ? read1 : read2;
+
+        // Tier-weighted severity. A problem at the BASE (herbivores eating the
+        // plant base, esp. while it shrinks) is graver than one at the APEX
+        // (predators glutting/starving) — the latter can't alone turn the orb red.
+        let severity = collapseRisk;
+        const baseProblem = driver.overTier === 'herb' || driver.baseStarved;
+        const apexOnly = !baseProblem && (driver.apexStarved || driver.overTier === 'pred');
+        if (baseProblem && plantTrend < -0.08)
+            severity = clamp(severity + (-plantTrend) * 2, 0.8, 1);
+        if (apexOnly) severity = Math.min(severity, 0.78);
+
+        // Classify the mood family. ALERT is genuine collapse risk only — a flipped
         // pyramid (a tier exceeding what feeds it) or starvation. A missing
         // UPPER tier isn't risk, just an unfinished web (primordial/building);
-        // plants alone are a self-sustaining green base.
+        // plants alone are a self-sustaining green base. The alert caption is then
+        // graded by severity (STRAINED → named imbalance → COLLAPSING).
         let mood;
         if (total === 0) mood = 'dormant';
         else if (collapseRisk > 0.4) mood = 'alert';
@@ -156,19 +196,21 @@ export class Biosphere {
             this.tgt = { hue: lerp(170, 150, popFactor), intensity: 0.4, density: clamp(0.3 + popFactor * 0.5, 0.15, 0.8), motion: 0.4, ringiness: 0.8 };
         } else if (mood === 'zen') {
             this.tgt = { hue: 135, intensity: 0.55 + health * 0.35, density: 0.7 + popFactor * 0.3, motion: 0.3, ringiness: 1.0 };
-        } else { // alert
-            this.tgt = { hue: lerp(34, 4, collapseRisk), intensity: 0.7 + collapseRisk * 0.3, density: 0.8 + popFactor * 0.2, motion: 0.7 + collapseRisk * 0.5, ringiness: clamp(1 - collapseRisk, 0.1, 0.7) };
+        } else { // alert — amber (strained) → red (collapsing), tracking severity
+            this.tgt = { hue: lerp(48, 4, severity), intensity: 0.55 + severity * 0.45, density: 0.8 + popFactor * 0.2, motion: 0.45 + severity * 0.75, ringiness: clamp(1 - severity, 0.1, 0.8) };
         }
 
-        // Caption (flips instantly; the orb's easing carries the smoothness).
-        if (mood !== this._mood) {
-            this._mood = mood;
-            const m = MOODS[mood];
-            if (this.elWord) this.elWord.textContent = m.word;
-            if (this.elIcon) this.elIcon.textContent = m.icon;
-            if (this.elCaption) this.elCaption.dataset.state = m.state;
-            if (this.elRim) this.elRim.dataset.state = m.state;
+        // Caption (flips instantly; the orb's easing carries the smoothness). The
+        // alert family is graded further, so gate on the WORD, not just the family.
+        const cap = mood === 'alert' ? alertMood(driver, severity) : MOODS[mood];
+        if (cap.word !== this._capWord) {
+            this._capWord = cap.word;
+            if (this.elWord) this.elWord.textContent = cap.word;
+            if (this.elIcon) this.elIcon.textContent = cap.icon;
+            if (this.elCaption) this.elCaption.dataset.state = cap.state;
+            if (this.elRim) this.elRim.dataset.state = cap.state;
         }
+        this._mood = mood;
 
         this._reconcile(this._buildDesired(census, health));
     }

@@ -90,7 +90,7 @@ export class Simulation {
                     const viable = neighbors.filter(n =>
                         n.terrain !== TERRAIN_TYPES.WATER &&
                         n.nutrients > 0.05 &&
-                        n.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length < 2
+                        n.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length < CONFIG.SIM.PLANT_CAP
                     );
 
                     if (viable.length > 0) {

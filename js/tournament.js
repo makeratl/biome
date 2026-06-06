@@ -359,6 +359,12 @@ export class TournamentManager {
         document.getElementById('t-result-next').textContent =
             isFinal ? 'Revealing the Champion...' : 'Bracket updating...';
 
+        // Gold won: the winner's potential gold (banked this match) is earned by the
+        // win; the loser's potential is forfeited.
+        const gm = this.game._milestones?.goldMoves || {};
+        this.game._renderGoldsWon?.(document.getElementById('t-result-golds'),
+            gm[winnerSlot], gm[loserSlot]);
+
         const resultScreen = document.getElementById('t-match-result');
         resultScreen.classList.remove('t-tier-win', 't-tier-promote', 't-tier-throne', 't-tier-upset', 't-tier-massive');
         resultScreen.classList.add(`t-tier-${resultDrama.tier}`);
@@ -1265,29 +1271,137 @@ export class TournamentManager {
         return { html: this._flankNextHtml(next), paint: (root) => { this._paintFlankVideos(root, false); this._paintFlankRanks(root); } };
     }
 
-    // Tournament Details — the bracket at a glance: current stage, field size,
-    // where we are in the round, and overall completion. Opens a fresh match (when
-    // there's no last bout yet) and anchors the right flank's third slide.
+    // ── Tournament-narrative helpers — bracket-level storylines the per-fighter
+    // panels don't cover. All null-safe: degrade quietly before seeds/scores land.
+
+    // Every competitor in the opening round.
+    _fieldModels() {
+        const out = [];
+        for (const m of (this.rounds?.[0] || [])) { out.push(m.p1, m.p2); }
+        return out.filter(Boolean);
+    }
+
+    // Models knocked out — the loser of each completed bout.
+    _tEliminated() {
+        const out = new Set();
+        for (const m of this.bracket) {
+            if (m.winner) out.add(m.winner === m.p1 ? m.p2 : m.p1);
+        }
+        return out;
+    }
+
+    // Highest-ELO model still alive (optionally restricted to a pool, e.g. the two
+    // finalists). Pre-tournament this is the top seed; it re-points as seeds fall.
+    _tFavorite(pool = null) {
+        const elim = this._tEliminated();
+        let best = null;
+        for (const model of (pool || this._fieldModels())) {
+            if (!model || elim.has(model)) continue;
+            const st = this._statOf(model);
+            if (st?.elo == null) continue;
+            if (!best || st.elo > best.elo) best = { model, elo: st.elo };
+        }
+        return best;
+    }
+
+    // Chalk vs chaos — completed bouts where the higher seed (lower seed-number)
+    // held, vs where the underdog sprung an upset.
+    _tMomentum() {
+        let chalk = 0, chaos = 0;
+        for (const m of this.bracket) {
+            if (!m.winner) continue;
+            const ws = this._statOf(m.winner)?.seed;
+            const ls = this._statOf(m.winner === m.p1 ? m.p2 : m.p1)?.seed;
+            if (ws == null || ls == null) continue;
+            if (ws < ls) chalk++; else chaos++;
+        }
+        return { chalk, chaos };
+    }
+
+    // The standout bout of THIS tournament: the biggest upset (lowest winner
+    // win-prob) if there's been one, else the closest margin. Returns markup/null.
+    _tBestBout() {
+        let upset = null, closest = null;
+        for (const m of this.bracket) {
+            if (!m.winner || !m.scores) continue;
+            const loser = m.winner === m.p1 ? m.p2 : m.p1;
+            const wScore = (m.winner === m.p1 ? m.scores[1] : m.scores[2])?.finalScore;
+            const lScore = (m.winner === m.p1 ? m.scores[2] : m.scores[1])?.finalScore;
+            if (wScore == null || lScore == null) continue;
+            const margin = Math.abs(wScore - lScore);
+            if (!closest || margin < closest.margin) closest = { margin, winner: m.winner, loser };
+            const wStat = this._statOf(m.winner), lStat = this._statOf(loser);
+            if (wStat?.elo != null && lStat?.elo != null) {
+                const wp = expectedScore(wStat.elo, lStat.elo);
+                if (wp < 0.5 && (!upset || wp < upset.wp)) upset = { wp, winner: m.winner, loser };
+            }
+        }
+        if (upset) return `<b>${this._short(upset.winner)}</b> stunned ${this._short(upset.loser)} · ${Math.round((1 - upset.wp) * 100)}%`;
+        if (closest) return `<b>${this._short(closest.winner)}</b> edged ${this._short(closest.loser)} by ${Math.round(closest.margin)}`;
+        return null;
+    }
+
+    // Tournament Details — the bracket's story at a glance. Anchors the right
+    // flank's third slide and opens a fresh match (when there's no last bout yet).
+    // Beyond the raw bracket status it carries tournament-level narrative the
+    // per-fighter panels don't: who's projected to lift the cup, chalk-vs-chaos
+    // momentum, and the standout bout so far. Progress-aware — the headline and
+    // foot swap as the bracket fills, so it never sits on an empty 0% state.
     _bcTournamentDetails(liveMatch) {
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
         const field = (this.rounds?.[0]?.length || 0) * 2;
         const roundMatches = this.rounds?.[liveMatch?.round] || [];
-        const roundTitle = this._roundTitle(roundMatches.length * 2 || field);
+        const roundParticipants = roundMatches.length * 2 || field;
+        const roundTitle = this._roundTitle(roundParticipants);
         const inRound = roundMatches.findIndex(m => m.id === liveMatch?.id) + 1;
         const done = this.bracket.filter(m => m.winner).length;
         const total = this.bracket.length;
         const pct = total ? Math.round((done / total) * 100) : 0;
+        const isFinal = roundParticipants <= 2;
+
+        // Projected cup-holder. At the final it's the favoured finalist; otherwise
+        // the highest-ELO model still standing.
+        const fav = isFinal && liveMatch?.p1 && liveMatch?.p2
+            ? this._tFavorite([liveMatch.p1, liveMatch.p2])
+            : this._tFavorite();
+        let favCard = '';
+        if (fav) {
+            const label = isFinal ? '🏁 PROJECTED CHAMPION' : (done === 0 ? '👑 FAVORITE' : '👑 FAVORITE REMAINING');
+            const sub = isFinal ? 'favoured to take the crown'
+                : done === 0 ? 'projected to lift the cup' : 'still favoured to win it all';
+            favCard = `<div class="bct-fav" style="--bh:${this._modelHue(fav.model)}">
+                <span class="bct-fav-k">${label}</span>
+                <span class="bct-fav-v">${this._short(fav.model)}<span class="bct-fav-elo">${Math.round(fav.elo)}</span></span>
+                <span class="bct-fav-sub">${sub}</span>
+            </div>`;
+        }
+
+        // Foot narrative: momentum + standout bout. Pre-tournament we coach the
+        // reader rather than show an empty result.
+        let footZone;
+        if (done === 0) {
+            footZone = `<div class="bct-best">⚡ Best bout — none played yet</div>`;
+        } else {
+            const mom = this._tMomentum();
+            const best = this._tBestBout();
+            const momLine = (mom.chalk || mom.chaos)
+                ? `<div class="bct-mom">⚖ Chalk ${mom.chalk} · Chaos ${mom.chaos}</div>` : '';
+            const bestLine = best ? `<div class="bct-best">⚡ ${best}</div>` : '';
+            footZone = momLine + bestLine;
+        }
+
         const html = `
             <div class="mf-head"><span class="mf-tag mf-tag-tourney">🏟 TOURNAMENT</span><span class="mf-sub">${modeLabel} Bracket</span></div>
             <div class="bct-stage">${roundTitle}</div>
-            <div class="bcd-grid">
+            ${favCard}
+            <div class="bcd-grid bcd-grid-3">
                 <div class="bcd-cell"><span class="bcd-k">FIELD</span><span class="bcd-v">${field || '—'}</span></div>
                 <div class="bcd-cell"><span class="bcd-k">MATCH</span><span class="bcd-v">${inRound > 0 ? inRound : '—'}/${roundMatches.length || '—'}</span></div>
-                <div class="bcd-cell"><span class="bcd-k">ROUNDS</span><span class="bcd-v">${this.totalRounds}</span></div>
                 <div class="bcd-cell"><span class="bcd-k">BOUTS</span><span class="bcd-v">${done}/${total}</span></div>
             </div>
             <div class="bct-prog"><span style="width:${pct}%"></span></div>
-            <div class="bct-foot">${pct}% of the bracket decided</div>`;
+            <div class="bct-foot">${pct}% of the bracket decided</div>
+            ${footZone}`;
         return { html };
     }
 

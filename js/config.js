@@ -162,6 +162,7 @@ export const CONFIG = {
     SIM: {
         STEPS_PER_TURN: 20,
         ANIMATION_STEP_MS: 100,
+        PLANT_CAP: 2,            // max plants per cell (a correctness invariant)
     },
 
     // Scoring — incentivize biodiversity over grass monoculture

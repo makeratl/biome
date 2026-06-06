@@ -60,6 +60,9 @@
                     <button class="gm-item" data-gm="manage-models" role="menuitem">
                         <span class="gm-icon">⚙</span><span>Manage Models</span>
                     </button>
+                    <button class="gm-item" data-gm="settings" role="menuitem">
+                        <span class="gm-icon">🎛</span><span>Settings</span>
+                    </button>
                 </div>
             </div>
 
@@ -244,6 +247,9 @@
                         <span class="aic-tierline" id="aic-tier-p1"></span>
                         <span class="aic-role" id="aic-role-p1"></span>
                     </div>
+                    <!-- Gold-move tray: one ★ per training-gold move banked this
+                         match (js/game.js:_renderGoldStars). Hidden until the first. -->
+                    <div class="aic-golds" id="aic-golds-p1" aria-label="Gold moves this match" hidden></div>
                 </div>
                 <div class="aic-body">
                 <div class="aic-banter-wrap">
@@ -281,6 +287,7 @@
                         <span class="aic-tierline" id="aic-tier-p2"></span>
                         <span class="aic-role" id="aic-role-p2"></span>
                     </div>
+                    <div class="aic-golds" id="aic-golds-p2" aria-label="Gold moves this match" hidden></div>
                 </div>
                 <div class="aic-body">
                 <div class="aic-banter-wrap">
@@ -376,6 +383,34 @@
         </div>
     </div>
 
+    <!-- Global Settings (tabbed) — opened from gear menu. Game Dynamics tab
+         lets players tune balance multipliers; persists globally. -->
+    <div id="settings-modal" class="model-config-modal" style="display:none;">
+        <div class="mcm-backdrop"></div>
+        <div id="settings-panel" class="model-config-panel settings-panel">
+            <div class="mcp-header">
+                <span>Settings</span>
+                <button id="btn-settings-close" class="mcp-close">×</button>
+            </div>
+            <div class="hc-tabs settings-tabs" role="tablist">
+                <button class="hc-tab active" data-settings-tab="dynamics" role="tab" aria-selected="true">
+                    <span class="hc-tab-icon">🎛</span><span>GAME DYNAMICS</span>
+                </button>
+            </div>
+            <div class="hc-view settings-view" data-settings-view="dynamics">
+                <div class="settings-presets">
+                    <div class="hc-section-label">Presets</div>
+                    <div id="settings-preset-row" class="settings-preset-row"></div>
+                </div>
+                <div id="settings-dynamics-body" class="settings-dyn-body"></div>
+                <div class="settings-foot">
+                    <button id="btn-settings-reset" class="settings-reset">↺ Reset to baseline</button>
+                    <span class="settings-foot-note">Baseline is the shipped balance. Changes save automatically and apply to every match.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Model picker grid — opened from a player card's "change" button.
          Lists every installed model as a ranked, metric-rich card. -->
     <div id="model-grid-modal" class="model-grid-modal" style="display:none;">
@@ -403,6 +438,7 @@
             <h2>Game Over</h2>
             <div id="go-winner-avatar" class="go-winner-avatar"></div>
             <div class="winner"></div>
+            <div class="golds-won" id="go-golds" hidden></div>
             <div class="final-score"></div>
             <button id="btn-play-again" class="btn btn-primary" style="margin-top:16px;">Play Again</button>
         </div>
@@ -634,6 +670,7 @@
             <div class="t-result-winner-label">WINNER</div>
             <div class="t-result-winner" id="t-result-winner">—</div>
             <div class="t-result-rank" id="t-result-rank"></div>
+            <div class="golds-won" id="t-result-golds" hidden></div>
             <div class="t-result-scores" id="t-result-scores"></div>
             <div class="t-result-next" id="t-result-next"></div>
         </div>

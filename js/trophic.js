@@ -38,6 +38,12 @@ export function trophicRead(plants, herbs, preds) {
     const health = (tiers / 3) * 0.4 + ((hScore + rScore) / 2) * 0.6;
 
     const noBase = (herbs > 0 && plants === 0) || (preds > 0 && herbs === 0);
+    // Which end of the pyramid is in trouble — base (herbivores eating the plant
+    // base) vs apex (predators outrunning herbivores). baseStarved is the grave
+    // one: nothing left under the herbivores. apexStarved is recoverable.
+    const baseStarved = herbs > 0 && plants === 0;
+    const apexStarved = preds > 0 && herbs === 0;
+    const overTier = herbExcess >= predExcess ? 'herb' : 'pred';
 
     let state;
     if (total === 0) state = 'empty';
@@ -50,7 +56,7 @@ export function trophicRead(plants, herbs, preds) {
     return {
         plants, herbs, preds, total, tiers,
         idealHerb, idealPred, herbRatio, predRatio,
-        risk, health, state, noBase,
+        risk, health, state, noBase, baseStarved, apexStarved, overTier,
         // Headroom under the ideal ratio — "room for ~N more".
         roomHerb: Math.max(0, Math.floor(idealHerb) - herbs),
         roomPred: Math.max(0, Math.floor(idealPred) - preds),

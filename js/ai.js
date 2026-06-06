@@ -198,8 +198,8 @@ export class AIPlayer {
 
             const plantsHere = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
 
-            // Plant candidates: skip cells at plant cap (2)
-            if (plantsHere < 2) {
+            // Plant candidates: skip cells at plant cap
+            if (plantsHere < CONFIG.SIM.PLANT_CAP) {
                 let ps = cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1);
                 ps += nearby(cell, ownPlants, 3) * 0.08;
                 ps -= nearby(cell, enemyHerbs, 4) * 0.15;
@@ -607,7 +607,7 @@ export class AIPlayer {
 
             if (template.type === 'plant') {
                 const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-                if (existingPlants >= 2) {
+                if (existingPlants >= CONFIG.SIM.PLANT_CAP) {
                     results.push({ ok: false, msg: `Cell (${cell.col},${cell.row}) already has max plants` });
                     continue;
                 }
@@ -756,7 +756,7 @@ export class AIPlayer {
         grid.forEach(cell => {
             if (cell.terrain === 'WATER') return;
             const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) return;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) return;
             if (usedCells.has(`${cell.col},${cell.row}`)) return;
             spots.push({ cell, score: cell.nutrients * (cell.terrain === 'FERTILE' ? 1.5 : 1) });
         });
@@ -799,7 +799,7 @@ export class AIPlayer {
         for (const c of plants) {
             if (tm.players[this.player].ap < 1) break;
             const existingPlants = c.cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
-            if (existingPlants >= 2) continue;
+            if (existingPlants >= CONFIG.SIM.PLANT_CAP) continue;
             tm.spendAP(1);
             const org = createOrganism('GRASS', this.player, c.cell.col, c.cell.row);
             org._placedRound = tm.round;

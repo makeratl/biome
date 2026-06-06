@@ -17,6 +17,7 @@ import { buildBiomeRosters, repaintBiomeRosterIcons, updateBiomeRosters } from '
 import { Biosphere } from './biosphere.js';
 import { trophicRead } from './trophic.js';
 import { setCaptureEnabled, isCaptureEnabled, newMatchUid, captureRound } from './capture.js';
+import { DYNAMICS_SCHEMA, PRESETS, applyDynamics, loadDynamics, saveDynamics, resetDynamics, settingValue, activePreset } from './game-dynamics.js';
 
 // Models excluded from tournaments: embeddings, vision / vision-language, and
 // code specialists. They can't follow the game's JSON action protocol or aren't
@@ -44,6 +45,10 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('game-canvas');
         this.seed = Math.floor(Math.random() * 100000);
+        // Apply the player's persisted Game Dynamics overrides onto CONFIG before
+        // any board/species is read. Baseline-clean if nothing was saved.
+        this._dynamics = loadDynamics();
+        applyDynamics(this._dynamics);
         this.grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS, CONFIG.HEX_SIZE);
         this.renderer = new Renderer(this.canvas, this.grid);
         this.simulation = new Simulation(this.grid);
@@ -72,6 +77,7 @@ class Game {
         buildBiomeRosters();
         this._bindEvents();
         this._initModelConfig();
+        this._initSettingsPanel();
         this._initMatchSection();
         this._initLauncher();
         this._initMuteToggle();
@@ -293,6 +299,8 @@ class Game {
                     this._openLauncherWelcome();
                 } else if (action === 'manage-models') {
                     this._openModelConfigModal();
+                } else if (action === 'settings') {
+                    this._openSettingsModal();
                 } else if (action === 'rankings') {
                     // Full-screen Hall of Champions. Opened in-game, so Back drops
                     // the overlay back to the board rather than the launcher welcome.
@@ -508,6 +516,158 @@ class Game {
     _closeModelConfigModal() {
         const modal = document.getElementById('model-config-modal');
         if (modal) modal.style.display = 'none';
+    }
+
+    // ── Settings panel (global, tabbed) — Game Dynamics tab ──────
+    _initSettingsPanel() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        document.getElementById('btn-settings-close')?.addEventListener('click', () => this._closeSettingsModal());
+        modal.querySelector('.mcm-backdrop')?.addEventListener('click', () => this._closeSettingsModal());
+        document.getElementById('btn-settings-reset')?.addEventListener('click', () => {
+            this._dynamics = resetDynamics();
+            this._renderSettingsValues();
+            this._afterDynamicsChange();
+        });
+        for (const tab of modal.querySelectorAll('.hc-tab[data-settings-tab]')) {
+            tab.addEventListener('click', () => this._switchSettingsTab(tab.dataset.settingsTab));
+        }
+        this._buildSettingsDynamics();
+        this._renderSettingsValues();
+    }
+
+    _openSettingsModal() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        this._renderSettingsValues();   // reflect any external/default state
+        modal.style.display = 'flex';
+    }
+
+    _closeSettingsModal() {
+        const modal = document.getElementById('settings-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    _switchSettingsTab(name) {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        for (const tab of modal.querySelectorAll('.hc-tab[data-settings-tab]')) {
+            const on = tab.dataset.settingsTab === name;
+            tab.classList.toggle('active', on);
+            tab.setAttribute('aria-selected', String(on));
+        }
+        for (const view of modal.querySelectorAll('.settings-view[data-settings-view]')) {
+            view.classList.toggle('hc-view-hidden', view.dataset.settingsView !== name);
+        }
+    }
+
+    // Build the slider DOM once from DYNAMICS_SCHEMA (single source of truth).
+    _buildSettingsDynamics() {
+        const presetRow = document.getElementById('settings-preset-row');
+        if (presetRow) {
+            presetRow.innerHTML = '';
+            for (const name of Object.keys(PRESETS)) {
+                const btn = document.createElement('button');
+                btn.className = 'settings-preset';
+                btn.dataset.preset = name;
+                btn.textContent = name;
+                btn.addEventListener('click', () => {
+                    this._dynamics = { ...PRESETS[name] };
+                    saveDynamics(this._dynamics);
+                    applyDynamics(this._dynamics);
+                    this._renderSettingsValues();
+                    this._afterDynamicsChange();
+                });
+                presetRow.appendChild(btn);
+            }
+        }
+
+        const body = document.getElementById('settings-dynamics-body');
+        if (!body) return;
+        body.innerHTML = '';
+
+        // Group sliders in declaration order; Per-Species lives in an expander.
+        const groups = [];
+        const byName = {};
+        for (const s of DYNAMICS_SCHEMA) {
+            if (!byName[s.group]) { byName[s.group] = []; groups.push(s.group); }
+            byName[s.group].push(s);
+        }
+
+        const rowHTML = (s) => `
+            <div class="settings-row" data-row="${s.id}">
+                <label class="settings-row-label" title="${s.hint || ''}">${s.label}</label>
+                <input type="range" class="world-range settings-range" data-slider="${s.id}"
+                       min="${s.min}" max="${s.max}" step="${s.step}">
+                <span class="mw-readout settings-readout" data-readout="${s.id}"></span>
+            </div>`;
+
+        for (const group of groups) {
+            const rows = byName[group].map(rowHTML).join('');
+            if (group === 'Per-Species') {
+                const det = document.createElement('details');
+                det.className = 'settings-advanced';
+                det.innerHTML = `<summary>Per-Species (advanced)</summary>${rows}`;
+                body.appendChild(det);
+            } else {
+                const sec = document.createElement('div');
+                sec.className = 'settings-group';
+                sec.innerHTML = `<div class="hc-section-label">${group}</div>${rows}`;
+                body.appendChild(sec);
+            }
+        }
+
+        // Wire slider input — live readout + persist + apply.
+        for (const input of body.querySelectorAll('.settings-range')) {
+            input.addEventListener('input', () => {
+                const slider = DYNAMICS_SCHEMA.find(s => s.id === input.dataset.slider);
+                if (!slider) return;
+                const v = parseFloat(input.value);
+                this._dynamics = { ...this._dynamics, [slider.id]: v };
+                this._updateSettingsReadout(slider, v);
+                saveDynamics(this._dynamics);
+                applyDynamics(this._dynamics);
+                this._highlightActivePreset();
+                this._afterDynamicsChange();
+            });
+        }
+    }
+
+    _fmtDynamic(slider, v) {
+        if (slider.kind === 'int') return `${Math.round(v)}${slider.unit || ''}`;
+        return `${v.toFixed(2)}×`;
+    }
+
+    _updateSettingsReadout(slider, v) {
+        const out = document.querySelector(`.settings-readout[data-readout="${slider.id}"]`);
+        if (out) {
+            out.textContent = this._fmtDynamic(slider, v);
+            out.classList.toggle('settings-readout-off', v !== slider.default);
+        }
+    }
+
+    // Push this._dynamics into every slider + readout, and highlight presets.
+    _renderSettingsValues() {
+        for (const slider of DYNAMICS_SCHEMA) {
+            const v = settingValue(this._dynamics, slider);
+            const input = document.querySelector(`.settings-range[data-slider="${slider.id}"]`);
+            if (input) input.value = String(v);
+            this._updateSettingsReadout(slider, v);
+        }
+        this._highlightActivePreset();
+    }
+
+    _highlightActivePreset() {
+        const active = activePreset(this._dynamics);
+        for (const btn of document.querySelectorAll('.settings-preset')) {
+            btn.classList.toggle('on', btn.dataset.preset === active);
+        }
+    }
+
+    // Re-render the board when idle so terrain/nutrient-tint changes show; live
+    // gameplay values take effect on the next simulation read regardless.
+    _afterDynamicsChange() {
+        if (!this.simulating) this.renderer?.render();
     }
 
     _playSound(key) {
@@ -1059,7 +1219,7 @@ class Game {
         // Check plant cap per cell
         if (template.type === 'plant') {
             const existingPlants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant');
-            if (existingPlants.length >= 2) {
+            if (existingPlants.length >= CONFIG.SIM.PLANT_CAP) {
                 this._log('Cell already has maximum plants');
                 return;
             }
@@ -1408,6 +1568,56 @@ class Game {
         };
         this._calloutQueue = [];
         this._calloutBusy = false;
+        // Clear both cards' gold-move trays for the new match.
+        this._renderGoldStars(1);
+        this._renderGoldStars(2);
+    }
+
+    // Paint a player's on-board card with one HOLLOW ☆ per training-gold move this
+    // match (this._milestones.goldMoves[p]) — these are POTENTIAL gold: a move only
+    // becomes earned training gold if its side wins (the dataset gold-gate). Appends
+    // only the missing stars so existing ones don't re-animate; `pop` pops the
+    // newest, then yields back to the idle shimmer. Hidden at zero.
+    _renderGoldStars(playerNum, pop = false) {
+        const el = document.getElementById(`aic-golds-p${playerNum}`);
+        if (!el) return;
+        const n = (this._milestones?.goldMoves?.[playerNum]) || 0;
+        if (n <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        el.hidden = false;
+        el.setAttribute('aria-label', `${n} potential gold move${n > 1 ? 's' : ''} this match`);
+        while (el.children.length > n) el.removeChild(el.lastChild);
+        for (let i = el.children.length; i < n; i++) {
+            const s = document.createElement('span');
+            s.className = 'aic-gold-star';
+            s.textContent = '☆';
+            if (pop && i === n - 1) {
+                s.classList.add('pop');
+                s.addEventListener('animationend', () => s.classList.remove('pop'), { once: true });
+            }
+            el.appendChild(s);
+        }
+    }
+
+    // Win-screen highlight: the winner's potential gold is EARNED by the win (the
+    // dataset gold-gate IS winning), so its hollow ☆s become solid ★s and cascade
+    // in. The loser's potential is forfeited — noted, muted. `el` is a screen's
+    // gold slot (#go-golds / #t-result-golds). Hidden when nothing to show.
+    _renderGoldsWon(el, won, forfeited = 0) {
+        if (!el) return;
+        won = won || 0; forfeited = forfeited || 0;
+        if (won <= 0 && forfeited <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        el.hidden = false;
+        let html = '';
+        if (won > 0) {
+            const stars = Array.from({ length: won }, (_, i) =>
+                `<span class="gw-star" style="animation-delay:${i * 90}ms">★</span>`).join('');
+            html += `<div class="gw-stars">${stars}</div>
+                <div class="gw-label">${won} gold move${won > 1 ? 's' : ''} banked for training</div>`;
+        }
+        if (forfeited > 0) {
+            html += `<div class="gw-forfeit">${forfeited} potential gold forfeited — no win</div>`;
+        }
+        el.innerHTML = html;
     }
 
     _dispatchCallout({ text, subtitle = '', tone = 'neutral', sound = 'callout' }) {
@@ -1533,6 +1743,7 @@ class Game {
                 const improved = tr.health > ms.goldHealth[p] && tr.risk <= ms.goldRisk[p] && tr.state !== 'collapsing';
                 if (real && grew && improved && pop > 0) {
                     ms.goldMoves[p] += 1;
+                    this._renderGoldStars(p, true);
                     this._dispatchCallout({
                         text: 'GOLD MOVE',
                         subtitle: `${this._playerTag(p)} · banked for training${ms.goldMoves[p] > 1 ? ` (×${ms.goldMoves[p]})` : ''}`,
@@ -2076,20 +2287,17 @@ class Game {
     }
 
     _ecosystemHealth(c) {
-        const total = (c.plants || 0) + (c.herbivores || 0) + (c.predators || 0);
-        if (total === 0) return { state: 'empty', icon: '–' };
-
-        const tiers = ['plants', 'herbivores', 'predators'].filter(t => (c[t] || 0) > 0).length;
-        if (tiers === 0) return { state: 'collapse', icon: '💀' };
-        if (tiers === 1) return { state: 'collapse', icon: '✕' };
-
-        // Check skew — >80% of biomass in one tier is unbalanced
-        const sharePlant = (c.plants || 0) / total;
-        const shareHerb  = (c.herbivores || 0) / total;
-        const sharePred  = (c.predators || 0) / total;
-        const maxShare = Math.max(sharePlant, shareHerb, sharePred);
-        if (tiers < 3 || maxShare > 0.8) return { state: 'warn', icon: '⚠' };
-
+        // Read the SAME trophic model the info orb uses, so the per-player badge
+        // and the central orb tell one coherent story. Base failing (herbivores
+        // with nothing to eat) is grave (collapse); a tilt or apex glut is a warn.
+        const r = trophicRead(c.plants, c.herbivores, c.predators);
+        if (r.state === 'empty') return { state: 'empty', icon: '–' };
+        // Only a failing BASE (herbivores with nothing to eat) is grave. Predators
+        // starving for lack of herbivores is an apex hiccup — a warn, matching the
+        // orb's "PREDATORS STARVING". A primordial/building web is simply ok.
+        if (r.baseStarved) return { state: 'collapse', icon: '✕' };
+        if (r.apexStarved || r.state === 'overgrazed' || r.state === 'top-heavy')
+            return { state: 'warn', icon: '⚠' };
         return { state: 'ok', icon: '✓' };
     }
 
@@ -2149,6 +2357,14 @@ class Game {
             if (winnerModel) { applyAvatarVideo(goAva, winnerModel, { category: 'victory' }); goAva.classList.add('show'); }
             else { clearAvatar(goAva); goAva.classList.remove('show'); }
         }
+
+        // Gold won: the winner's potential gold (banked this match) is earned by the
+        // win; the loser's is forfeited. Ties claim none.
+        const winSlot = s1.finalScore > s2.finalScore ? 1 : s2.finalScore > s1.finalScore ? 2 : 0;
+        const gm = this._milestones?.goldMoves || {};
+        this._renderGoldsWon(document.getElementById('go-golds'),
+            winSlot ? gm[winSlot] : 0, winSlot ? gm[winSlot === 1 ? 2 : 1] : 0);
+
         this._playSound('victory');
 
         const card = overlay.querySelector('.game-over-card');
@@ -4405,6 +4621,10 @@ class Game {
         // Clear AI cards
         this._resetAICard(1);
         this._resetAICard(2);
+        // Reset per-match milestones too — zeroes goldMoves and clears both gold-star
+        // trays. _startMatch (solo/watch) does this separately; the tournament path
+        // goes through resetForMatch, so without this the stars carried across matches.
+        this._resetMilestones();
         const log = document.getElementById('action-log');
         if (log) log.innerHTML = '';
 

@@ -20,7 +20,8 @@ code { background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 4px;
 
 .lab-header {
     display: flex; justify-content: space-between; align-items: flex-end; gap: 24px;
-    padding: 24px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 22px; flex-wrap: wrap;
+    padding: 24px 0 16px; border-bottom: 1px solid var(--line); margin: 0 auto 22px; flex-wrap: wrap;
+    max-width: 1100px;
 }
 .lab-header h1 { margin: 0; font-size: 22px; letter-spacing: 0.02em; }
 .lab-header .sub { margin: 4px 0 0; color: var(--muted); max-width: 640px; }
@@ -32,7 +33,7 @@ code { background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 4px;
 }
 .tabs button.on { color: var(--ink); border-color: var(--accent); background: hsla(190,80%,55%,0.12); }
 
-.view { display: flex; flex-direction: column; gap: 18px; max-width: 1100px; }
+.view { display: flex; flex-direction: column; gap: 18px; max-width: 1100px; margin: 0 auto; width: 100%; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
 .card h2 { margin: 0 0 8px; font-size: 15px; }
 
@@ -57,33 +58,90 @@ button.primary {
     padding: 10px 18px; border-radius: 8px; cursor: pointer;
 }
 
-/* dashboard */
-.hero { display: flex; align-items: center; justify-content: space-between; gap: 20px;
-    background: linear-gradient(135deg, hsla(45,90%,55%,0.14), rgba(15,20,38,0.92));
-    border: 1px solid hsla(45,90%,55%,0.35); border-radius: 14px; padding: 22px 26px; }
-.hero-num { font-size: 56px; font-weight: 900; line-height: 1; color: var(--gold);
-    text-shadow: 0 0 24px hsla(45,95%,55%,0.45); font-variant-numeric: tabular-nums; }
-.hero-label { font-size: 11px; font-weight: 800; letter-spacing: 0.14em; color: var(--gold); margin-top: 6px; }
+/* dashboard — centered showpiece with live "win moments" */
+.hero { position: relative; overflow: hidden; text-align: center;
+    background: radial-gradient(130% 150% at 50% -25%, hsla(45,90%,55%,0.20), rgba(15,20,38,0.94) 62%);
+    border: 1px solid hsla(45,90%,55%,0.35); border-radius: 16px; padding: 32px 26px 28px; }
+.hero.pop { animation: hero-pop 0.7s cubic-bezier(0.22,1.2,0.4,1); }
+@keyframes hero-pop { 0% { transform: scale(1); } 35% { transform: scale(1.045); } 100% { transform: scale(1); } }
+.hero-main { position: relative; z-index: 1; }
+.hero-num { font-size: 64px; font-weight: 900; line-height: 1; color: var(--gold);
+    text-shadow: 0 0 28px hsla(45,95%,55%,0.5); font-variant-numeric: tabular-nums; }
+.hero-label { font-size: 11px; font-weight: 800; letter-spacing: 0.16em; color: var(--gold); margin-top: 8px; opacity: 0.92; }
+.hero-side { position: absolute; top: 14px; right: 16px; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 5px; z-index: 1; }
 .hero-refresh { text-align: right; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 800;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+.live.on { color: var(--good); }
+.live.on .live-dot { background: var(--good); box-shadow: 0 0 9px var(--good); animation: live-blink 1.6s ease-in-out infinite; }
+@keyframes live-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* floating delta tag (+N GOLD) rising out of an anchor */
+.ping { position: absolute; left: 50%; top: 28%; transform: translateX(-50%); pointer-events: none;
+    font-size: 22px; font-weight: 900; color: var(--gold); z-index: 5;
+    text-shadow: 0 0 16px hsla(45,95%,55%,0.7); animation: ping-rise 1.5s ease-out forwards; }
+.ping.small { font-size: 13px; top: 2px; color: var(--accent); text-shadow: none; }
+@keyframes ping-rise {
+    0% { opacity: 0; transform: translate(-50%, 10px) scale(0.8); }
+    18% { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
+    100% { opacity: 0; transform: translate(-50%, -44px) scale(1); } }
 
 .goals { display: flex; flex-direction: column; gap: 12px; }
-.goal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.goal { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
 .goal.done { border-color: var(--good); }
+.goal.next { border-color: hsla(45,90%,55%,0.45); box-shadow: 0 0 0 1px hsla(45,90%,55%,0.12) inset; }
+.goal.just-done { animation: goal-flash 1.3s ease-out; }
+@keyframes goal-flash { 0%,100% { background: var(--panel); } 30% { background: hsla(140,62%,45%,0.28); } }
 .goal-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 7px; }
+.goal.next .goal-head { color: var(--gold); }
 .goal.done .goal-head { color: var(--good); }
-.goal-bar { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.08); overflow: hidden; }
-.goal-bar > i { display: block; height: 100%; border-radius: 5px;
+.goal-bar { position: relative; height: 9px; border-radius: 5px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.goal-bar > i { display: block; position: relative; height: 100%; border-radius: 5px;
     background: linear-gradient(90deg, hsl(45,90%,55%), hsl(38,95%,52%)); transition: width 0.6s cubic-bezier(0.25,1,0.5,1); }
 .goal.done .goal-bar > i { background: linear-gradient(90deg, hsl(140,60%,50%), hsl(150,60%,45%)); }
+.goal.near .goal-bar > i { box-shadow: 0 0 12px hsla(45,90%,55%,0.55); }
+/* animated shimmer sweeping the active fill — "alive, filling" feel */
+.goal:not(.done) .goal-bar > i::after { content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    transform: translateX(-100%); animation: shimmer 2.4s ease-in-out infinite; }
+@keyframes shimmer { 0% { transform: translateX(-100%); } 60%,100% { transform: translateX(280%); } }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; text-align: center; }
+.tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; text-align: center; transition: border-color 0.3s; cursor: default; }
+.tile.bump { animation: tile-bump 0.8s ease-out; }
+@keyframes tile-bump { 0% { transform: scale(1); } 30% { transform: scale(1.06); border-color: var(--accent); } 100% { transform: scale(1); } }
 .tile-v { font-size: 26px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .tile-k { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 4px; }
 
 .bymodel { display: flex; flex-direction: column; gap: 5px; }
 .bm-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .bm-row b { color: var(--gold); }
+
+/* celebration layer + goal toast */
+.fx-layer { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
+.confetti { position: fixed; width: 9px; height: 9px; border-radius: 2px; will-change: transform, opacity;
+    animation: confetti-fall var(--dur, 1.4s) cubic-bezier(0.2,0.6,0.4,1) forwards; }
+@keyframes confetti-fall {
+    0% { opacity: 1; transform: translate(0,0) rotate(0); }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); } }
+.goal-toast { position: fixed; top: 18px; left: 50%; z-index: 60; pointer-events: none;
+    background: linear-gradient(135deg, hsl(45,90%,56%), hsl(38,95%,52%)); color: #2a1d00;
+    font-weight: 900; letter-spacing: 0.02em; padding: 12px 22px; border-radius: 12px;
+    box-shadow: 0 10px 44px hsla(45,90%,50%,0.5); animation: toast-in 4s ease-out forwards; }
+@keyframes toast-in {
+    0% { opacity: 0; transform: translateX(-50%) translateY(-22px); }
+    9%,78% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-12px); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .hero.pop, .tile.bump, .goal.just-done, .live.on .live-dot,
+    .goal:not(.done) .goal-bar > i::after { animation: none !important; }
+    .ping, .confetti { display: none !important; }
+    .goal-toast { animation: none !important; opacity: 1; }
+}
 
 /* curate */
 .curate-bar { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; flex-wrap: wrap; }

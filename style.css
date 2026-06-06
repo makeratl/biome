@@ -117,10 +117,14 @@ body {
 
 /* ── Gear menu (top-right, replaces sidebar buttons) ────── */
 .gear-menu {
-    position: absolute;
+    position: fixed;
     top: 12px;
     right: 12px;
-    z-index: 60;
+    /* Above the launcher / match-intro overlay (#tournament-overlay, z 1000) so
+       the global menu stays reachable on the load screen — but below the modals
+       it opens (Settings / Manage Models, z 1200) and full-screen scenes
+       (rankings/labs/player-card, z 1300+), which should cover it. */
+    z-index: 1150;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -444,6 +448,85 @@ body {
     font-size: 11px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
+
+/* ── Settings panel (Game Dynamics) ───────────────────────────── */
+/* The base panel chrome is keyed to #model-config-panel (an ID), so the
+   settings panel must declare its own — without position:relative it paints
+   behind the blur backdrop; without the fill it's transparent. */
+.model-config-modal #settings-panel.settings-panel {
+    position: relative;
+    background: #11111e;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 520px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 16px 18px;
+    font-size: 11px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+.settings-tabs { margin-bottom: 12px; }
+.settings-presets { margin-bottom: 10px; }
+.settings-preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-preset {
+    padding: 5px 10px;
+    background: #0e1424; border: 1px solid #1f2942; border-radius: 5px;
+    color: #8a8ab0; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.settings-preset:hover { color: #b8b8d8; }
+.settings-preset.on {
+    background: rgba(200, 168, 110, 0.16);
+    color: #c8a86e; border-color: rgba(200, 168, 110, 0.45);
+}
+
+.settings-group { margin-top: 12px; }
+.settings-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 0;
+}
+.settings-row-label {
+    flex: 0 0 132px;
+    font-size: 11px; color: #b8b8d8; cursor: help;
+}
+.settings-row .settings-range { flex: 1; min-width: 80px; }
+.settings-row .settings-readout {
+    flex: 0 0 56px; color: #6e6e92;
+}
+.settings-row .settings-readout.settings-readout-off { color: #c8a86e; }
+
+.settings-advanced {
+    margin-top: 14px;
+    border-top: 1px solid #1f2942; padding-top: 8px;
+}
+.settings-advanced > summary {
+    cursor: pointer; list-style: revert;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: rgba(255, 255, 255, 0.4);
+    padding: 2px 0; user-select: none;
+}
+.settings-advanced > summary:hover { color: rgba(255, 255, 255, 0.7); }
+
+.settings-foot {
+    margin-top: 16px; padding-top: 12px;
+    border-top: 1px solid #1f2942;
+    display: flex; align-items: center; gap: 12px;
+}
+.settings-reset {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    background: #0e1424; border: 1px solid #1f2942; border-radius: 5px;
+    color: #b8b8d8; font-size: 11px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.settings-reset:hover {
+    color: #fff; border-color: rgba(200, 168, 110, 0.45);
+    background: rgba(200, 168, 110, 0.12);
+}
+.settings-foot-note { font-size: 10px; color: #6e6e92; line-height: 1.4; }
 
 /* Placeholder until Phase 2 (panel-section was the old wrapper) */
 .panel-section {
@@ -1627,9 +1710,17 @@ body {
     box-shadow: 0 0 16px 3px hsla(135, 75%, 52%, 0.50);
     animation: live-pulse 4s ease-in-out infinite;
 }
+.bio-rim[data-state="strained"] {
+    box-shadow: 0 0 14px 2px hsla(42, 92%, 55%, 0.45);
+    animation: live-pulse 2.4s ease-in-out infinite;
+}
 .bio-rim[data-state="alert"] {
-    box-shadow: 0 0 18px 4px hsla(8, 88%, 55%, 0.6);
-    animation: go-winner-glow 1.1s ease-in-out infinite;
+    box-shadow: 0 0 18px 4px hsla(20, 90%, 55%, 0.6);
+    animation: go-winner-glow 1.3s ease-in-out infinite;
+}
+.bio-rim[data-state="collapse"] {
+    box-shadow: 0 0 22px 5px hsla(4, 92%, 50%, 0.72);
+    animation: go-winner-glow 0.8s ease-in-out infinite;
 }
 .bio-caption {
     display: flex;
@@ -1646,7 +1737,9 @@ body {
 .bio-caption[data-state="primordial"] { color: hsl(96, 55%, 68%); }
 .bio-caption[data-state="infant"]  { color: hsl(165, 58%, 70%); }
 .bio-caption[data-state="zen"]     { color: hsl(135, 70%, 70%); }
-.bio-caption[data-state="alert"]   { color: hsl(12, 90%, 68%); }
+.bio-caption[data-state="strained"] { color: hsl(42, 92%, 66%); }
+.bio-caption[data-state="alert"]   { color: hsl(20, 92%, 66%); }
+.bio-caption[data-state="collapse"] { color: hsl(4, 95%, 66%); }
 .bio-icon { font-size: 13px; line-height: 1; }
 .bio-word { line-height: 1; }
 
@@ -2914,6 +3007,60 @@ body {
 }
 /* P2 mirrors right-to-left so the portrait stays on the outer edge. */
 .ai-overlay.p2 .aic-statfoot { flex-direction: row-reverse; }
+
+/* Gold-move tray — one ★ per training-gold move banked this match. Sits under
+   the statfoot; mirrors to the outer edge on P2 like the rest of the card. */
+.aic-golds {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid hsla(45, 90%, 55%, 0.18);
+}
+.ai-overlay.p2 .aic-golds { justify-content: flex-end; }
+/* Hollow ☆ = POTENTIAL gold: banked this match but only EARNED on a win. The
+   idle shimmer reads as "pending"; a new star pops, then yields to the shimmer. */
+.aic-gold-star {
+    display: inline-block;
+    font-size: 13px;
+    line-height: 1;
+    color: hsl(45, 90%, 62%);
+    text-shadow: 0 0 5px hsla(45, 90%, 55%, 0.35);
+    animation: aic-star-shimmer 2.6s ease-in-out infinite;
+}
+@keyframes aic-star-shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
+.aic-gold-star.pop { animation: aic-star-pop 0.6s cubic-bezier(0.22, 1.4, 0.4, 1); }
+@keyframes aic-star-pop {
+    0%   { transform: scale(0) rotate(-30deg); opacity: 0; }
+    55%  { transform: scale(1.5) rotate(8deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); opacity: 0.7; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .aic-gold-star, .aic-gold-star.pop { animation: none; opacity: 0.8; }
+}
+
+/* Win-screen gold — potential ☆ earned into solid ★ by the win; stars cascade in.
+   Shared by the solo game-over card and the tournament result screen. */
+.golds-won { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 10px 0 4px; }
+.gw-stars { display: flex; gap: 6px; }
+.gw-star {
+    font-size: 26px; line-height: 1; color: hsl(45, 95%, 62%);
+    text-shadow: 0 0 14px hsla(45, 95%, 55%, 0.7);
+    animation: gw-star-in 0.6s cubic-bezier(0.22, 1.4, 0.4, 1) both;
+}
+@keyframes gw-star-in {
+    0%   { transform: scale(0) rotate(-40deg); opacity: 0; }
+    60%  { transform: scale(1.4) rotate(10deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.gw-label {
+    font-size: 11px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+    color: hsl(45, 90%, 72%);
+}
+.gw-forfeit { font-size: 10px; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin-top: 2px; }
+@media (prefers-reduced-motion: reduce) { .gw-star { animation: none; } }
 
 /* Banter section — the star */
 .aic-banter-wrap {
@@ -7153,6 +7300,20 @@ body.event-promote #game-over-overlay {
     box-shadow:0 0 10px hsla(42,90%,55%,0.5); transition:width .6s ease; }
 .bct-foot { font-size:9px; letter-spacing:.06em; text-transform:uppercase; text-align:center;
     color:rgba(255,255,255,0.5); }
+/* 3-up stat grid (FIELD / MATCH / BOUTS) for the narrative tournament panel. */
+.bcd-grid-3 { grid-template-columns:repeat(3,1fr); }
+/* Projected cup-holder headline — gold card with a model-hue accent edge. */
+.bct-fav { display:flex; flex-direction:column; align-items:center; gap:1px; padding:5px 8px;
+    border-radius:7px; border:1px solid hsla(42,90%,55%,0.26); border-left:3px solid hsl(var(--bh,42),68%,58%);
+    background:hsla(42,90%,50%,0.10); }
+.bct-fav-k { font-size:8px; font-weight:800; letter-spacing:.06em; color:hsl(42,92%,72%); }
+.bct-fav-v { display:flex; align-items:baseline; gap:6px; font-size:14px; font-weight:900; color:#fff; }
+.bct-fav-elo { font-size:10px; font-weight:800; color:hsl(42,92%,74%); font-variant-numeric:tabular-nums; }
+.bct-fav-sub { font-size:8.5px; letter-spacing:.04em; text-transform:uppercase; color:rgba(255,255,255,0.5); }
+/* Foot narrative — bracket momentum + standout bout. */
+.bct-mom { font-size:10px; font-weight:700; text-align:center; color:rgba(255,255,255,0.7); font-variant-numeric:tabular-nums; }
+.bct-best { font-size:10px; text-align:center; color:rgba(255,255,255,0.72); }
+.bct-best b { color:#fff; font-weight:800; }
 
 /* Match Details — watch-mode counterpart to Tournament Details (reuses .bct-*). */
 .mf-tag-details { color:hsl(160,70%,70%); background:hsla(160,68%,45%,0.16); }
