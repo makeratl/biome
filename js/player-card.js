@@ -14,7 +14,7 @@
 import { resolveModel, titleCase } from './model-identity.js';
 import { applyAvatarVideo, clearAvatar } from './model-avatar.js';
 
-const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
 
 let modal = null;       // the backdrop element, built once
 let openToken = 0;      // guards against a slow fetch painting over a newer open

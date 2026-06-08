@@ -3020,9 +3020,10 @@ body {
     border-top: 1px solid hsla(45, 90%, 55%, 0.18);
 }
 .ai-overlay.p2 .aic-golds { justify-content: flex-end; }
-/* Hollow ☆ = POTENTIAL gold: banked this match but only EARNED on a win. The
-   idle shimmer reads as "pending"; a new star pops, then yields to the shimmer. */
-.aic-gold-star {
+/* In-game candidate stars. PENDING ☆ (gold-tinted) = a 2-signal move whose
+   gold/silver fate waits on the win. BRONZE ☆ (copper) = a 1-signal move, already
+   certain. The idle shimmer reads as "pending"; a new star pops, then yields. */
+.aic-medal-star {
     display: inline-block;
     font-size: 13px;
     line-height: 1;
@@ -3030,26 +3031,32 @@ body {
     text-shadow: 0 0 5px hsla(45, 90%, 55%, 0.35);
     animation: aic-star-shimmer 2.6s ease-in-out infinite;
 }
+.aic-medal-star.pending { color: hsl(45, 90%, 62%); text-shadow: 0 0 5px hsla(45, 90%, 55%, 0.35); }
+.aic-medal-star.bronze  { color: hsl(28, 72%, 56%); text-shadow: 0 0 5px hsla(28, 80%, 50%, 0.35); }
 @keyframes aic-star-shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
-.aic-gold-star.pop { animation: aic-star-pop 0.6s cubic-bezier(0.22, 1.4, 0.4, 1); }
+.aic-medal-star.pop { animation: aic-star-pop 0.6s cubic-bezier(0.22, 1.4, 0.4, 1); }
 @keyframes aic-star-pop {
     0%   { transform: scale(0) rotate(-30deg); opacity: 0; }
     55%  { transform: scale(1.5) rotate(8deg); opacity: 1; }
     100% { transform: scale(1) rotate(0); opacity: 0.7; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .aic-gold-star, .aic-gold-star.pop { animation: none; opacity: 0.8; }
+    .aic-medal-star, .aic-medal-star.pop { animation: none; opacity: 0.8; }
 }
 
-/* Win-screen gold — potential ☆ earned into solid ★ by the win; stars cascade in.
-   Shared by the solo game-over card and the tournament result screen. */
-.golds-won { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 10px 0 4px; }
+/* End-screen medals — one row per tier (gold/silver/bronze), each ★s cascading
+   in above its label. Shared by the solo game-over card and tournament result. */
+.golds-won { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.gw-row { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .gw-stars { display: flex; gap: 6px; }
 .gw-star {
     font-size: 26px; line-height: 1; color: hsl(45, 95%, 62%);
     text-shadow: 0 0 14px hsla(45, 95%, 55%, 0.7);
     animation: gw-star-in 0.6s cubic-bezier(0.22, 1.4, 0.4, 1) both;
 }
+.gw-star.gold   { color: hsl(45, 95%, 62%);  text-shadow: 0 0 14px hsla(45, 95%, 55%, 0.7); }
+.gw-star.silver { color: hsl(220, 14%, 82%); text-shadow: 0 0 14px hsla(220, 25%, 85%, 0.6); }
+.gw-star.bronze { color: hsl(28, 72%, 56%);  text-shadow: 0 0 12px hsla(28, 80%, 50%, 0.6); }
 @keyframes gw-star-in {
     0%   { transform: scale(0) rotate(-40deg); opacity: 0; }
     60%  { transform: scale(1.4) rotate(10deg); opacity: 1; }
@@ -3059,7 +3066,9 @@ body {
     font-size: 11px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
     color: hsl(45, 90%, 72%);
 }
-.gw-forfeit { font-size: 10px; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin-top: 2px; }
+.gw-label.gold   { color: hsl(45, 90%, 72%); }
+.gw-label.silver { color: hsl(220, 16%, 82%); }
+.gw-label.bronze { color: hsl(28, 60%, 66%); }
 @media (prefers-reduced-motion: reduce) { .gw-star { animation: none; } }
 
 /* Banter section — the star */

@@ -64,10 +64,24 @@ button.primary {
     border: 1px solid hsla(45,90%,55%,0.35); border-radius: 16px; padding: 32px 26px 28px; }
 .hero.pop { animation: hero-pop 0.7s cubic-bezier(0.22,1.2,0.4,1); }
 @keyframes hero-pop { 0% { transform: scale(1); } 35% { transform: scale(1.045); } 100% { transform: scale(1); } }
-.hero-main { position: relative; z-index: 1; }
-.hero-num { font-size: 64px; font-weight: 900; line-height: 1; color: var(--gold);
-    text-shadow: 0 0 28px hsla(45,95%,55%,0.5); font-variant-numeric: tabular-nums; }
-.hero-label { font-size: 11px; font-weight: 800; letter-spacing: 0.16em; color: var(--gold); margin-top: 8px; opacity: 0.92; }
+.hero-cap { position: relative; z-index: 1; font-size: 10px; font-weight: 800; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+
+/* medal podium — gold/silver/bronze bars, heights ∝ count */
+.podium { position: relative; z-index: 1; display: flex; justify-content: center; align-items: flex-end; gap: 34px; min-height: 168px; padding-top: 6px; }
+.pod { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 78px; }
+.pod-n { font-size: 30px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+.pod-bar-wrap { display: flex; align-items: flex-end; height: 110px; }
+.pod-bar { width: 54px; border-radius: 8px 8px 0 0; transition: height 0.7s cubic-bezier(0.25,1,0.5,1); }
+.pod-foot { font-size: 12px; font-weight: 800; letter-spacing: 0.03em; display: flex; gap: 5px; align-items: center; }
+.pod-em { font-size: 16px; }
+.pod-sub { font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.pod-gold .pod-n { color: var(--gold); text-shadow: 0 0 22px hsla(45,95%,55%,0.55); }
+.pod-gold .pod-bar { background: linear-gradient(180deg, hsl(45,95%,66%), hsl(38,95%,50%)); box-shadow: 0 0 26px hsla(45,95%,55%,0.5); }
+.pod-silver .pod-n { color: hsl(220,16%,84%); }
+.pod-silver .pod-bar { background: linear-gradient(180deg, hsl(220,16%,86%), hsl(220,12%,62%)); }
+.pod-bronze .pod-n { color: hsl(28,72%,62%); }
+.pod-bronze .pod-bar { background: linear-gradient(180deg, hsl(30,78%,62%), hsl(22,72%,44%)); }
 .hero-side { position: absolute; top: 14px; right: 16px; display: flex; flex-direction: column;
     align-items: flex-end; gap: 5px; z-index: 1; }
 .hero-refresh { text-align: right; }
@@ -88,25 +102,37 @@ button.primary {
     18% { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
     100% { opacity: 0; transform: translate(-50%, -44px) scale(1); } }
 
-.goals { display: flex; flex-direction: column; gap: 12px; }
-.goal { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
-.goal.done { border-color: var(--good); }
-.goal.next { border-color: hsla(45,90%,55%,0.45); box-shadow: 0 0 0 1px hsla(45,90%,55%,0.12) inset; }
-.goal.just-done { animation: goal-flash 1.3s ease-out; }
-@keyframes goal-flash { 0%,100% { background: var(--panel); } 30% { background: hsla(140,62%,45%,0.28); } }
-.goal-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 7px; }
-.goal.next .goal-head { color: var(--gold); }
-.goal.done .goal-head { color: var(--good); }
-.goal-bar { position: relative; height: 9px; border-radius: 5px; background: rgba(255,255,255,0.08); overflow: hidden; }
-.goal-bar > i { display: block; position: relative; height: 100%; border-radius: 5px;
-    background: linear-gradient(90deg, hsl(45,90%,55%), hsl(38,95%,52%)); transition: width 0.6s cubic-bezier(0.25,1,0.5,1); }
-.goal.done .goal-bar > i { background: linear-gradient(90deg, hsl(140,60%,50%), hsl(150,60%,45%)); }
-.goal.near .goal-bar > i { box-shadow: 0 0 12px hsla(45,90%,55%,0.55); }
-/* animated shimmer sweeping the active fill — "alive, filling" feel */
-.goal:not(.done) .goal-bar > i::after { content: ''; position: absolute; inset: 0;
+/* goals by training set — three lanes (Champion/Contender/Player), each a LINEAR
+   bar of honest progress to its next goal; pips carry the Smoke/Ladder/Robust ladder. */
+.goal-card { overflow: visible; }
+.rail { --lbl: 156px; --val: 110px; padding: 8px 0 4px; }
+.rail-lanes { display: flex; flex-direction: column; gap: 12px; }
+.rail-lane { display: grid; grid-template-columns: var(--lbl) 1fr auto var(--val); align-items: center; gap: 10px;
+    border-radius: 8px; }
+.lane-label { font-size: 12px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+.lane-em { font-size: 15px; }
+.lane-note { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); margin-left: 2px; }
+.lane-track { position: relative; height: 14px; border-radius: 7px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.lane-fill { position: absolute; left: 0; top: 0; height: 100%; min-width: 2px; border-radius: 7px;
+    transition: width 0.7s cubic-bezier(0.25,1,0.5,1); }
+.lane-fill::after { content: ''; position: absolute; inset: 0;
     background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-    transform: translateX(-100%); animation: shimmer 2.4s ease-in-out infinite; }
+    transform: translateX(-100%); animation: shimmer 2.6s ease-in-out infinite; }
 @keyframes shimmer { 0% { transform: translateX(-100%); } 60%,100% { transform: translateX(280%); } }
+.lane-champion  .lane-fill { background: linear-gradient(90deg, hsl(45,95%,58%), hsl(38,95%,52%)); box-shadow: 0 0 10px hsla(45,95%,55%,0.4); }
+.lane-contender .lane-fill { background: linear-gradient(90deg, hsl(220,16%,82%), hsl(220,12%,64%)); }
+.lane-player    .lane-fill { background: linear-gradient(90deg, hsl(28,78%,58%), hsl(22,72%,46%)); }
+/* goal ladder pips — Smoke / Ladder / Robust; fill green as each is passed */
+.lane-pips { display: flex; gap: 5px; }
+.pip { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.14); box-sizing: border-box; }
+.pip.on { background: var(--good); box-shadow: 0 0 6px hsla(140,62%,55%,0.7); }
+.pip.next { background: transparent; border: 1.5px solid var(--gold); box-shadow: 0 0 6px hsla(45,90%,55%,0.55); }
+.lane-val { text-align: right; display: flex; flex-direction: column; line-height: 1.2; }
+.lane-val b { color: var(--ink); font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.lane-cap { font-size: 9px; color: var(--muted); letter-spacing: 0.02em; }
+.lane-flash { animation: goal-flash 1.3s ease-out; }
+@keyframes goal-flash { 0%,100% { background: transparent; } 30% { background: hsla(140,62%,45%,0.20); } }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -116,9 +142,16 @@ button.primary {
 .tile-v { font-size: 26px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .tile-k { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 4px; }
 
-.bymodel { display: flex; flex-direction: column; gap: 5px; }
-.bm-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line); }
-.bm-row b { color: var(--gold); }
+.bymodel { display: flex; flex-direction: column; gap: 7px; }
+.bm-row { display: grid; grid-template-columns: 150px 1fr 64px; align-items: center; gap: 12px; font-size: 12px; }
+.bm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.bm-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.06); }
+.bm-bar > i { display: block; height: 100%; }
+.bm-bar .seg-gold { background: var(--gold); }
+.bm-bar .seg-silver { background: hsl(220,14%,78%); }
+.bm-bar .seg-bronze { background: hsl(28,72%,56%); }
+.bm-counts { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.bm-counts b { color: var(--gold); }
 
 /* celebration layer + goal toast */
 .fx-layer { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
@@ -137,8 +170,8 @@ button.primary {
     100% { opacity: 0; transform: translateX(-50%) translateY(-12px); } }
 
 @media (prefers-reduced-motion: reduce) {
-    .hero.pop, .tile.bump, .goal.just-done, .live.on .live-dot,
-    .goal:not(.done) .goal-bar > i::after { animation: none !important; }
+    .hero.pop, .tile.bump, .live.on .live-dot,
+    .lane-fill::after, .lane-flash { animation: none !important; }
     .ping, .confetti { display: none !important; }
     .goal-toast { animation: none !important; opacity: 1; }
 }
@@ -158,6 +191,8 @@ button.primary {
 .turn-row:hover { border-color: var(--accent); }
 .turn-row.sel { background: hsla(190,80%,55%,0.10); border-color: var(--accent); }
 .turn-row.gold { border-left-color: var(--gold); }
+.turn-row.silver { border-left-color: hsl(220, 14%, 78%); }
+.turn-row.bronze { border-left-color: hsl(28, 72%, 56%); }
 .turn-row.rej { opacity: 0.45; border-left-color: var(--bad); }
 .turn-row .tr-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .turn-row .tr-model { font-weight: 700; }
@@ -165,6 +200,8 @@ button.primary {
 .turn-row .tr-reason { color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.04em; }
 .badge.gold { background: var(--gold); color: #2a1d00; }
+.badge.silver { background: hsl(220, 14%, 80%); color: #1a1d24; }
+.badge.bronze { background: hsl(28, 72%, 56%); color: #2a1500; }
 .badge.won { color: var(--good); border: 1px solid currentColor; }
 .badge.fb { color: var(--bad); border: 1px solid currentColor; }
 .scorebar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 5px; }

@@ -4,123 +4,132 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Biome · AI Vision Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="vision-lab.css">
 </head>
 <body>
     <div class="vl-aurora" aria-hidden="true"></div>
+    <div class="vl-grid-overlay" aria-hidden="true"></div>
 
     <header class="vl-topbar">
         <div class="vl-brand">
-            <span class="vl-glyph">👁</span>
+            <span class="vl-glyph">◉</span>
             <div class="vl-brand-text">
-                <div class="vl-title">BIOME<span>VISION LAB</span></div>
-                <div class="vl-sub">Probe how a model reads the map</div>
+                <div class="vl-title">VISION<span>LAB</span></div>
+                <div class="vl-sub">Machine-perception bench · see the board as the model sees it</div>
             </div>
         </div>
         <div class="vl-toprow">
-            <label class="vl-field">Model
-                <select id="vl-model"><option>loading…</option></select>
-            </label>
-            <div class="vl-seg" id="vl-mode" title="What representation the model receives">
-                <button class="vl-mode-btn on" data-mode="raw">Raw grid</button>
-                <button class="vl-mode-btn" data-mode="game">Game view</button>
-            </div>
+            <span class="vl-status-dot" id="vl-conn" title="Ollama connection"></span>
             <a class="vl-back" href="/">← game</a>
         </div>
     </header>
 
     <main class="vl-main">
-        <!-- LEFT: board + map controls -->
-        <section class="vl-board-col">
-            <div class="vl-controls">
+        <!-- LEFT: the specimen — board + paint + simulation -->
+        <section class="vl-rig">
+            <div class="vl-rig-head">
+                <span class="vl-rig-title">SPECIMEN</span>
+                <span class="vl-rig-sub" id="vl-rig-sub">the board every vision reads</span>
+            </div>
+
+            <div class="vl-screen">
+                <div class="vl-screen-frame">
+                    <canvas id="vl-canvas"></canvas>
+                </div>
+                <div class="vl-screen-corner tl"></div>
+                <div class="vl-screen-corner tr"></div>
+                <div class="vl-screen-corner bl"></div>
+                <div class="vl-screen-corner br"></div>
+            </div>
+
+            <div class="vl-cell-info" id="vl-cell-info">Click a cell to inspect it.</div>
+
+            <div class="vl-rig-controls">
                 <button id="vl-regen" class="vl-btn">↻ Regenerate</button>
                 <label class="vl-field sm">Seed <input id="vl-seed" type="number" value="0"></label>
                 <label class="vl-field sm">Size
                     <select id="vl-size">
-                        <option value="tiny">Tiny (12×9)</option>
-                        <option value="small" selected>Small (16×12)</option>
-                        <option value="medium">Medium (22×16)</option>
+                        <option value="tiny">Tiny · 12×9</option>
+                        <option value="small" selected>Small · 16×12</option>
+                        <option value="medium">Medium · 22×16</option>
                     </select>
                 </label>
             </div>
 
-            <div class="vl-board-wrap">
-                <canvas id="vl-canvas"></canvas>
-            </div>
-
-            <div class="vl-legend" id="vl-legend"></div>
-
-            <div class="vl-place">
-                <div class="vl-place-row">
-                    <span class="vl-place-label">Brush</span>
-                    <div class="vl-brush" id="vl-brush"></div>
-                </div>
-                <div class="vl-place-row">
+            <div class="vl-paint">
+                <div class="vl-paint-head">
+                    <span class="vl-mini-label">Paint</span>
                     <div class="vl-seg sm" id="vl-owner">
                         <button class="vl-owner-btn on" data-owner="1">P1</button>
                         <button class="vl-owner-btn" data-owner="2">P2</button>
                     </div>
-                    <button id="vl-run" class="vl-btn">▶ Run</button>
-                    <label class="vl-field sm">steps <input id="vl-steps" type="number" value="10" min="1" max="40"></label>
-                    <button id="vl-clear-org" class="vl-btn ghost">Clear organisms</button>
-                    <button id="vl-clear-hl" class="vl-btn ghost">Clear highlights</button>
                 </div>
-                <div class="vl-cell-info" id="vl-cell-info">Click a cell to inspect it.</div>
+                <div class="vl-brush" id="vl-brush"></div>
+            </div>
+
+            <div class="vl-sim">
+                <button id="vl-run" class="vl-btn">▶ Run sim</button>
+                <label class="vl-field sm">steps <input id="vl-steps" type="number" value="10" min="1" max="40"></label>
+                <button id="vl-clear-org" class="vl-btn ghost">Clear life</button>
             </div>
         </section>
 
-        <!-- RIGHT: chat + inspector -->
-        <section class="vl-chat-col">
-            <div class="vl-chat" id="vl-chat">
-                <div class="vl-msg vl-msg-system">
-                    <span class="vl-msg-role">Lab</span>
-                    <div class="vl-msg-body">Ask about the board — e.g. “highlight the best 5 spots to plant grass”, or “where would a predator thrive?” The model answers and marks the map. Flip Raw grid ↔ Game view to compare what it can do with each representation.</div>
+        <!-- RIGHT: the bench — model + vision selection, prompt, comparison grid -->
+        <section class="vl-bench">
+            <!-- Models -->
+            <div class="vl-panel vl-models-panel">
+                <div class="vl-panel-head">
+                    <span class="vl-panel-label">Models</span>
+                    <span class="vl-panel-hint" id="vl-models-hint">pick one or more to compare</span>
                 </div>
+                <div class="vl-models" id="vl-models"><span class="vl-loading"><span class="vl-spinner"></span>scanning Ollama…</span></div>
             </div>
 
-            <label class="vl-apply"><input type="checkbox" id="vl-apply"> apply the model’s suggested placements</label>
-
-            <div class="vl-compose">
-                <textarea id="vl-input" placeholder="Ask the model about this map…  (Enter to send)"></textarea>
-                <button id="vl-send" class="vl-btn primary">Send</button>
-            </div>
-
-            <div class="vl-inspector" id="vl-inspector">
-                <button class="vl-inspect-toggle" id="vl-inspect-toggle">⌄ Inspector — exact prompt &amp; raw response</button>
-                <div class="vl-inspect-body">
-                    <h4>Prompt sent</h4>
-                    <pre id="vl-prompt" class="vl-pre">—</pre>
-                    <h4>Raw response</h4>
-                    <pre id="vl-response" class="vl-pre">—</pre>
+            <!-- Visions -->
+            <div class="vl-panel vl-visions-panel">
+                <div class="vl-panel-head">
+                    <span class="vl-panel-label">Vision strategies</span>
+                    <span class="vl-panel-hint">how the board is described to the model</span>
                 </div>
+                <div class="vl-visions" id="vl-visions"></div>
             </div>
 
-            <div class="vl-inspector vl-gp" id="vl-gp">
-                <button class="vl-inspect-toggle" id="vl-gp-toggle">⌄ Turn Prompt — verbatim, as a real match sends it</button>
-                <div class="vl-inspect-body">
-                    <p class="vl-gp-note">The exact prompt the game feeds the model on a turn — built by the real <code>AIPlayer._buildPrompt</code> over the live board. Candidate spots (A, B, …) are mirrored on the map. <strong>▶ Send turn</strong> runs it for real: places the model's moves, records continuity, then advances the round so you can watch the prompt evolve step by step.</p>
-                    <div class="vl-gp-controls">
-                        <div class="vl-seg sm" id="vl-gp-seat" title="Whose turn — fog &amp; ecosystem differ per seat">
+            <!-- Prompt console -->
+            <div class="vl-console">
+                <div class="vl-console-row">
+                    <div class="vl-seg vl-mode" id="vl-mode" title="Read = ask a question · Play = run a real game turn">
+                        <button class="on" data-mode="read">◐ Read</button>
+                        <button data-mode="play">▸ Play turn</button>
+                    </div>
+                    <div class="vl-turnopts" id="vl-turnopts">
+                        <div class="vl-seg sm" id="vl-seat" title="Whose perspective — fog & ecosystem differ per seat">
                             <button class="on" data-seat="1">P1</button>
                             <button data-seat="2">P2</button>
                         </div>
-                        <label class="vl-field sm">Round <input id="vl-gp-round" type="number" min="1" value="1"></label>
-                        <label class="vl-field sm">AP <input id="vl-gp-ap" type="number" min="1" value="6"></label>
-                        <label class="vl-field sm">Vision
-                            <select id="vl-gp-strategy">
-                                <option value="mediated">Mediated</option>
-                                <option value="ascii">ASCII</option>
-                                <option value="raw">Raw</option>
-                            </select>
-                        </label>
-                        <button id="vl-gp-send" class="vl-btn primary">▶ Send turn</button>
+                        <label class="vl-field sm">Round <input id="vl-round" type="number" min="1" value="1"></label>
+                        <label class="vl-field sm">AP <input id="vl-ap" type="number" min="1" value="4"></label>
                     </div>
-                    <h4>System</h4>
-                    <pre id="vl-gp-system" class="vl-pre">Open to build the turn prompt for the current board.</pre>
-                    <h4>User — per-turn payload</h4>
-                    <pre id="vl-gp-user" class="vl-pre">—</pre>
-                    <h4>Model's turn — action JSON, executed</h4>
-                    <pre id="vl-gp-response" class="vl-pre">—</pre>
+                </div>
+                <div class="vl-console-input">
+                    <textarea id="vl-prompt-input" placeholder="Ask the model to read this board — e.g. “where are the 3 best spots to plant, and why?”  (⌘/Ctrl+Enter to run)"></textarea>
+                    <button id="vl-run-cmp" class="vl-btn primary vl-run-btn"><span class="vl-run-spin"></span><span class="vl-run-label">Run</span><span class="vl-run-glyph">▶</span></button>
+                </div>
+                <div class="vl-console-foot">
+                    <div class="vl-console-meta" id="vl-console-meta">— select a model and a vision to begin —</div>
+                    <div class="vl-progress" id="vl-progress"><i></i></div>
+                </div>
+            </div>
+
+            <!-- Results grid -->
+            <div class="vl-results" id="vl-results">
+                <div class="vl-results-empty">
+                    <div class="vl-empty-eye">◉</div>
+                    <p>Results appear here side by side — one tile per <em>vision × model</em>.<br>
+                    In <strong>Read</strong> mode the model answers your prompt from each vision's view.
+                    In <strong>Play turn</strong> mode it makes a real move you can compare.</p>
                 </div>
             </div>
         </section>

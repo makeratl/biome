@@ -227,14 +227,18 @@ export class Simulation {
                         moves.push({ org: pred, from: cell, to: target.cell });
                     }
 
-                    // Attempt hunt
-                    if (target.prey && !target.prey.dead) {
+                    // Attempt hunt — but only when hungry. A sated predator stalks
+                    // without killing, so it crops prey to its need, not to extinction.
+                    const hunger = template.huntHunger ?? 0.7;
+                    const hungry = pred.energy < template.maxEnergy * hunger;
+                    if (hungry && target.prey && !target.prey.dead) {
                         const preyTemplate = CONFIG.SPECIES[target.prey.species];
                         const speedAdvantage = template.speed / (preyTemplate?.speed || 1);
                         const huntSuccess = template.huntSuccessBase * Math.min(speedAdvantage, 1.5);
 
                         if (Math.random() < huntSuccess) {
                             const eaten = Math.min(template.eatAmount, target.prey.energy);
+                            target.prey.energy -= eaten;   // carcass keeps the leftover for decomposition
                             target.prey.dead = true;
                             pred.energy += eaten;
                             pred.energy = Math.min(pred.energy, template.maxEnergy);
@@ -369,12 +373,29 @@ export class Simulation {
         this.grid.forEach((cell) => {
             if (cell.terrain === TERRAIN_TYPES.WATER) return;
             const max = CONFIG.NUTRIENTS[cell.terrain] || 0;
-            cell.nutrients = Math.min(max, cell.nutrients + CONFIG.TERRAIN.NUTRIENT_REGEN);
+            // Top up toward the terrain cap, but never claw back a compost surplus
+            // left by decomposition — let plants draw that down over time.
+            if (cell.nutrients < max) {
+                cell.nutrients = Math.min(max, cell.nutrients + CONFIG.TERRAIN.NUTRIENT_REGEN);
+            }
         });
     }
 
     _cleanDead() {
+        const T = CONFIG.TERRAIN;
         this.grid.forEach((cell) => {
+            if (cell.terrain !== TERRAIN_TYPES.WATER) {
+                let compost = 0;
+                for (const o of cell.organisms) {
+                    if (!o.dead) continue;
+                    const max = CONFIG.SPECIES[o.species]?.maxEnergy || 0;
+                    compost += Math.max(0, o.energy) * T.DECOMPOSE + max * T.DETRITUS;
+                }
+                if (compost > 0) {
+                    cell.nutrients = Math.min(T.COMPOST_CAP,
+                        cell.nutrients + compost / T.NUTRIENT_ENERGY_MULT);
+                }
+            }
             cell.organisms = cell.organisms.filter(o => !o.dead);
         });
     }

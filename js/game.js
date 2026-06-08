@@ -17,6 +17,7 @@ import { buildBiomeRosters, repaintBiomeRosterIcons, updateBiomeRosters } from '
 import { Biosphere } from './biosphere.js';
 import { trophicRead } from './trophic.js';
 import { setCaptureEnabled, isCaptureEnabled, newMatchUid, captureRound } from './capture.js';
+import { MEDAL, liveTier } from './medal.js';
 import { DYNAMICS_SCHEMA, PRESETS, applyDynamics, loadDynamics, saveDynamics, resetDynamics, settingValue, activePreset } from './game-dynamics.js';
 
 // Models excluded from tournaments: embeddings, vision / vision-language, and
@@ -1269,7 +1270,16 @@ class Game {
         if (!isCaptureEnabled()) return;
         try {
             const census = this.simulation.census();
-            const tr = (p) => trophicRead(census[p].plants, census[p].herbivores, census[p].predators);
+            const scores = this.simulation.finalScore();
+            const tr = (p) => trophicRead(census[p].plants, census[p].herbivores, census[p].predators, census[p].bySpecies);
+            const trophic = { 1: tr(1), 2: tr(2) };
+            // Per-player medal signals (marginGrew / trophicImproved). Computed
+            // here — the only point that runs EVERY round, including the final one
+            // (which jumps straight to GAME_OVER, skipping _detectMilestones). They
+            // are captured verbatim so traj.py reads the engine's exact booleans
+            // (zero recompute drift) and used to count this match's medals.
+            const signals = this._computeRoundSignals(scores, trophic);
+            this._countRoundMedals(signals);
             captureRound({
                 schema: 1,
                 match_uid: this.matchUid || null,
@@ -1277,11 +1287,53 @@ class Game {
                 round: this.turns.round,
                 census,
                 events: this.simulation.getEvents ? this.simulation.getEvents() : null,
-                final_score: this.simulation.finalScore(),
+                final_score: scores,
                 score_history: this._scoreHistory[this._scoreHistory.length - 1] || null,
-                trophic: { 1: tr(1), 2: tr(2) },
+                trophic,
+                signals,
             });
         } catch (_) { /* capture must never break the round */ }
+    }
+
+    // Per-player quality signals for this round, as deltas vs the previous round.
+    // Updates prev* in place. Shared rule with traj.py (see js/medal.js).
+    _computeRoundSignals(scores, trophic) {
+        if (!this._milestones) this._resetMilestones();
+        const ms = this._milestones;
+        const out = {};
+        for (const p of [1, 2]) {
+            const other = p === 1 ? 2 : 1;
+            const margin = (scores[p]?.finalScore || 0) - (scores[other]?.finalScore || 0);
+            const t = trophic[p] || { health: 0, risk: 1, state: 'empty' };
+            const marginGrew = margin > ms.prevMargin[p];
+            const trophicImproved = t.health > ms.prevHealth[p]
+                && t.risk <= ms.prevRisk[p]
+                && t.state !== 'collapsing';
+            out[p] = { marginGrew, trophicImproved };
+            ms.prevMargin[p] = margin;
+            ms.prevHealth[p] = t.health;
+            ms.prevRisk[p] = t.risk;
+        }
+        ms.roundSignals = out;
+        return out;
+    }
+
+    // Classify + tally this round's medals from the signals + each player's
+    // real-answer flag. Runs every round (called from _captureRound). Display is
+    // handled separately in _detectMilestones, which reads ms.roundTier.
+    _countRoundMedals(signals) {
+        const ms = this._milestones;
+        if (!ms) return;
+        ms.roundTier = { 1: null, 2: null };
+        for (const p of [1, 2]) {
+            const real = !!(this._roundMoveReal && this._roundMoveReal[p]);
+            const sig = signals[p] || {};
+            const tier = liveTier({ real, marginGrew: sig.marginGrew, trophicImproved: sig.trophicImproved });
+            if (tier === 'pending') ms.pending[p] += 1;
+            else if (tier === MEDAL.BRONZE) ms.bronze[p] += 1;
+            ms.roundTier[p] = tier;
+        }
+        this._roundMoveReal = {};   // consumed — reset for next round's turns
     }
 
     _sleep(ms) {
@@ -1559,65 +1611,96 @@ class Game {
             // Track last lead-leader to detect comebacks
             lastLeader:    0,
             biggestDeficit: { 1: 0, 2: 0 },
-            // GOLD MOVE detection — per-player running state for the in-game
-            // training-data celebration (see _detectMilestones).
-            goldMoves:  { 1: 0, 2: 0 },
-            goldMargin: { 1: 0, 2: 0 },
-            goldHealth: { 1: 0, 2: 0 },
-            goldRisk:   { 1: 1, 2: 1 },
+            // MEDAL detection — per-player running state for the in-game
+            // training-data celebration (see _countRoundMedals / _detectMilestones).
+            // pending = 2-signal moves (gold if this side wins, silver if not);
+            // bronze = 1-signal moves (win-independent). prev* hold last round's
+            // values so each round's signals are a delta. roundTier/roundSignals
+            // are this round's computed result, handed from capture to display.
+            pending:    { 1: 0, 2: 0 },
+            bronze:     { 1: 0, 2: 0 },
+            prevMargin: { 1: 0, 2: 0 },
+            prevHealth: { 1: 0, 2: 0 },
+            prevRisk:   { 1: 1, 2: 1 },
+            roundTier:    null,
+            roundSignals: null,
         };
         this._calloutQueue = [];
         this._calloutBusy = false;
-        // Clear both cards' gold-move trays for the new match.
-        this._renderGoldStars(1);
-        this._renderGoldStars(2);
+        // Clear both cards' medal trays for the new match.
+        this._renderMedalStars(1);
+        this._renderMedalStars(2);
     }
 
-    // Paint a player's on-board card with one HOLLOW ☆ per training-gold move this
-    // match (this._milestones.goldMoves[p]) — these are POTENTIAL gold: a move only
-    // becomes earned training gold if its side wins (the dataset gold-gate). Appends
-    // only the missing stars so existing ones don't re-animate; `pop` pops the
-    // newest, then yields back to the idle shimmer. Hidden at zero.
-    _renderGoldStars(playerNum, pop = false) {
+    // Paint a player's on-board card with this match's medal candidates: one
+    // GOLD-tinted ☆ per "pending" move (2 quality signals — gold if this side
+    // wins, silver if not) and one COPPER ☆ per bronze move (1 signal, already
+    // certain). Counts come from _milestones.pending/bronze (filled in
+    // _countRoundMedals). `pop` pops the newest star of the named group, then
+    // yields to the idle shimmer. Hidden when there's nothing yet.
+    _renderMedalStars(playerNum, pop = null) {
         const el = document.getElementById(`aic-golds-p${playerNum}`);
         if (!el) return;
-        const n = (this._milestones?.goldMoves?.[playerNum]) || 0;
-        if (n <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        const ms = this._milestones || {};
+        const nPending = (ms.pending?.[playerNum]) || 0;
+        const nBronze = (ms.bronze?.[playerNum]) || 0;
+        if (nPending <= 0 && nBronze <= 0) { el.hidden = true; el.innerHTML = ''; return; }
         el.hidden = false;
-        el.setAttribute('aria-label', `${n} potential gold move${n > 1 ? 's' : ''} this match`);
-        while (el.children.length > n) el.removeChild(el.lastChild);
-        for (let i = el.children.length; i < n; i++) {
-            const s = document.createElement('span');
-            s.className = 'aic-gold-star';
-            s.textContent = '☆';
-            if (pop && i === n - 1) {
-                s.classList.add('pop');
-                s.addEventListener('animationend', () => s.classList.remove('pop'), { once: true });
-            }
-            el.appendChild(s);
-        }
-    }
-
-    // Win-screen highlight: the winner's potential gold is EARNED by the win (the
-    // dataset gold-gate IS winning), so its hollow ☆s become solid ★s and cascade
-    // in. The loser's potential is forfeited — noted, muted. `el` is a screen's
-    // gold slot (#go-golds / #t-result-golds). Hidden when nothing to show.
-    _renderGoldsWon(el, won, forfeited = 0) {
-        if (!el) return;
-        won = won || 0; forfeited = forfeited || 0;
-        if (won <= 0 && forfeited <= 0) { el.hidden = true; el.innerHTML = ''; return; }
-        el.hidden = false;
+        const total = nPending + nBronze;
+        el.setAttribute('aria-label',
+            `${nPending} potential gold/silver and ${nBronze} bronze move${total !== 1 ? 's' : ''} this match`);
+        // Rebuilt deterministically each round: pending (gold) first, then bronze.
         let html = '';
-        if (won > 0) {
-            const stars = Array.from({ length: won }, (_, i) =>
-                `<span class="gw-star" style="animation-delay:${i * 90}ms">★</span>`).join('');
-            html += `<div class="gw-stars">${stars}</div>
-                <div class="gw-label">${won} gold move${won > 1 ? 's' : ''} banked for training</div>`;
+        for (let i = 0; i < nPending; i++) {
+            const popCls = (pop === 'pending' && i === nPending - 1) ? ' pop' : '';
+            html += `<span class="aic-medal-star pending${popCls}">☆</span>`;
         }
-        if (forfeited > 0) {
-            html += `<div class="gw-forfeit">${forfeited} potential gold forfeited — no win</div>`;
+        for (let i = 0; i < nBronze; i++) {
+            const popCls = (pop === 'bronze' && i === nBronze - 1) ? ' pop' : '';
+            html += `<span class="aic-medal-star bronze${popCls}">☆</span>`;
         }
         el.innerHTML = html;
+    }
+
+    // End-screen medal summary. The match outcome resolves every "pending" move:
+    // the winner's become GOLD (captured for training), the loser's become SILVER
+    // (strong play, no win); bronze is win-independent. `medals` is
+    // {gold, silver, bronze} from _medalTally(). `el` is a screen's medal slot
+    // (#go-golds / #t-result-golds). Hidden when nothing to show.
+    _renderMedalsEarned(el, medals) {
+        if (!el) return;
+        const gold = medals?.gold || 0, silver = medals?.silver || 0, bronze = medals?.bronze || 0;
+        if (gold <= 0 && silver <= 0 && bronze <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+        el.hidden = false;
+        const row = (n, cls, label) => {
+            if (n <= 0) return '';
+            const stars = Array.from({ length: n }, (_, i) =>
+                `<span class="gw-star ${cls}" style="animation-delay:${i * 90}ms">★</span>`).join('');
+            return `<div class="gw-row"><div class="gw-stars">${stars}</div>` +
+                `<div class="gw-label ${cls}">${label}</div></div>`;
+        };
+        el.innerHTML =
+            row(gold, 'gold', `${gold} gold — captured for training`) +
+            row(silver, 'silver', `${silver} silver — strong play, no win`) +
+            row(bronze, 'bronze', `${bronze} bronze — logged`);
+    }
+
+    // Resolve this match's per-tier totals across BOTH players from the live
+    // pending/bronze counts + who won. winSlot is 1, 2, or 0 (tie). On a tie
+    // nobody won, so every pending move is silver.
+    _medalTally(winSlot) {
+        const ms = this._milestones || {};
+        const pending = ms.pending || { 1: 0, 2: 0 };
+        const bronze = ms.bronze || { 1: 0, 2: 0 };
+        let gold = 0, silver = 0;
+        if (winSlot === 1 || winSlot === 2) {
+            const lose = winSlot === 1 ? 2 : 1;
+            gold = pending[winSlot] || 0;
+            silver = pending[lose] || 0;
+        } else {
+            silver = (pending[1] || 0) + (pending[2] || 0);
+        }
+        return { gold, silver, bronze: (bronze[1] || 0) + (bronze[2] || 0) };
     }
 
     _dispatchCallout({ text, subtitle = '', tone = 'neutral', sound = 'callout' }) {
@@ -1727,35 +1810,31 @@ class Game {
             }
         }
 
-        // GOLD MOVE — a training-worthy turn captured this round: a real
-        // (non-fallback) answer that grew the score lead AND improved trophic
-        // balance. True dataset "gold" also needs the match WIN (applied at
-        // export); here we celebrate the move in the moment, like other events.
-        if (isCaptureEnabled()) {
+        // MEDAL MOVE — surface the tier this round earned (counted already in
+        // _captureRound, which runs every round incl. the final one). A "pending"
+        // move is a strong play whose gold/silver fate waits on the match result;
+        // bronze is already certain. Pure presentation here — no counting.
+        if (isCaptureEnabled() && ms.roundTier) {
             for (const p of [1, 2]) {
-                const other = p === 1 ? 2 : 1;
-                const c = census[p];
-                const pop = (c.plants || 0) + (c.herbivores || 0) + (c.predators || 0);
-                const tr = trophicRead(c.plants, c.herbivores, c.predators);
-                const margin = scores[p].finalScore - scores[other].finalScore;
-                const real = !!(this._roundMoveReal && this._roundMoveReal[p]);
-                const grew = margin > ms.goldMargin[p] + 1;
-                const improved = tr.health > ms.goldHealth[p] && tr.risk <= ms.goldRisk[p] && tr.state !== 'collapsing';
-                if (real && grew && improved && pop > 0) {
-                    ms.goldMoves[p] += 1;
-                    this._renderGoldStars(p, true);
+                const tier = ms.roundTier[p];
+                if (tier === 'pending') {
+                    this._renderMedalStars(p, 'pending');
                     this._dispatchCallout({
-                        text: 'GOLD MOVE',
-                        subtitle: `${this._playerTag(p)} · banked for training${ms.goldMoves[p] > 1 ? ` (×${ms.goldMoves[p]})` : ''}`,
+                        text: 'STRONG MOVE',
+                        subtitle: `${this._playerTag(p)} · gold if you win · silver if not`,
                         tone: 'gold',
                         sound: 'score',
                     });
+                } else if (tier === MEDAL.BRONZE) {
+                    this._renderMedalStars(p, 'bronze');
+                    this._dispatchCallout({
+                        text: 'BRONZE MOVE',
+                        subtitle: `${this._playerTag(p)} · logged for quality metrics`,
+                        tone: 'neutral',
+                        sound: 'callout',
+                    });
                 }
-                ms.goldMargin[p] = margin;
-                ms.goldHealth[p] = tr.health;
-                ms.goldRisk[p] = tr.risk;
             }
-            this._roundMoveReal = {};   // reset for next round's turns
         }
 
         // DOMINANCE — one player has ≥60% of total biomass
@@ -2194,12 +2273,13 @@ class Game {
     }
 
     _renderBiomassTower(census) {
-        // Trophic pyramid. A healthy biome is a 9:3:1 stack — herbivores ≈ 1/3 of
-        // plants, predators ≈ 1/3 of herbivores. Each tier radiates from the central
-        // spine: a faint TARGET outline (+ tick) marks the tier's ideal width, a
-        // solid FILL marks its actual count, both on one shared scale so the panel
-        // reads as a tapering pyramid and shape-conformity = biome health. A gap
-        // between fill and tick = starving tier; fill past the tick = overpopulated.
+        // Trophic pyramid. The ideal width of each tier is DERIVED from the energy
+        // economy and the live species mix (via trophicRead → js/ecobalance.js), not
+        // a fixed 9:3:1 — a tier is sized to what the tier beneath it can feed, so a
+        // tree-heavy base wants a narrower herbivore band than a grass base. Each tier
+        // radiates from the central spine: a faint TARGET outline (+ tick) marks the
+        // ideal width, a solid FILL marks the actual count, both on one shared scale.
+        // A gap between fill and tick = starving tier; fill past the tick = overpopulated.
         const MIN_PCT = 5;     // a nonzero tier always shows a sliver
         const CAP = 100;       // a tier can't fill past its half of the bar
 
@@ -2222,12 +2302,14 @@ class Game {
         for (const p of [1, 2]) {
             const c = census[p];
             const plants = c.plants || 0, herbs = c.herbivores || 0, preds = c.predators || 0;
-            // Targets cascade down the chain (each tier ≈ 1/3 of the one below it).
+            // Derived targets cascade down the chain — same read the orb and the
+            // per-player badge use, so the whole panel tells one story.
+            const r = trophicRead(plants, herbs, preds, c.bySpecies);
             const tiers = [
-                { key: 'pred',  actual: preds,  ideal: herbs / 3,  health: health(preds, herbs / 3) },
-                { key: 'herb',  actual: herbs,  ideal: plants / 3, health: health(herbs, plants / 3) },
+                { key: 'pred',  actual: preds,  ideal: r.idealPred, health: health(preds, r.idealPred) },
+                { key: 'herb',  actual: herbs,  ideal: r.idealHerb, health: health(herbs, r.idealHerb) },
                 // The base sets the pyramid's footprint; its only "target" is to exist.
-                { key: 'plant', actual: plants, ideal: plants,     health: plants > 0 ? 'good' : 'empty' },
+                { key: 'plant', actual: plants, ideal: plants,      health: plants > 0 ? 'good' : 'empty' },
             ];
             for (const t of tiers) {
                 const bar = document.getElementById(`bt-bar-${t.key}-p${p}`);
@@ -2290,7 +2372,7 @@ class Game {
         // Read the SAME trophic model the info orb uses, so the per-player badge
         // and the central orb tell one coherent story. Base failing (herbivores
         // with nothing to eat) is grave (collapse); a tilt or apex glut is a warn.
-        const r = trophicRead(c.plants, c.herbivores, c.predators);
+        const r = trophicRead(c.plants, c.herbivores, c.predators, c.bySpecies);
         if (r.state === 'empty') return { state: 'empty', icon: '–' };
         // Only a failing BASE (herbivores with nothing to eat) is grave. Predators
         // starving for lack of herbivores is an apex hiccup — a warn, matching the
@@ -2358,12 +2440,10 @@ class Game {
             else { clearAvatar(goAva); goAva.classList.remove('show'); }
         }
 
-        // Gold won: the winner's potential gold (banked this match) is earned by the
-        // win; the loser's is forfeited. Ties claim none.
+        // Medals: the win resolves every pending move — winner's → gold (trained),
+        // loser's → silver; bronze is win-independent. Ties make all pending silver.
         const winSlot = s1.finalScore > s2.finalScore ? 1 : s2.finalScore > s1.finalScore ? 2 : 0;
-        const gm = this._milestones?.goldMoves || {};
-        this._renderGoldsWon(document.getElementById('go-golds'),
-            winSlot ? gm[winSlot] : 0, winSlot ? gm[winSlot === 1 ? 2 : 1] : 0);
+        this._renderMedalsEarned(document.getElementById('go-golds'), this._medalTally(winSlot));
 
         this._playSound('victory');
 
@@ -4101,7 +4181,7 @@ class Game {
         // Vision = map strategy (UI calls it "Map vision"). Friendly names match
         // the dashboard's: mediated → Standard, ascii → ASCII, raw → Raw.
         const strat = getStrategy(world.mapStrategy);
-        const VISION_NAMES = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+        const VISION_NAMES = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
         const visionName = VISION_NAMES[strat.id] || strat.label;
 
         const nameEl = document.getElementById('ma-vision-name');
@@ -4621,9 +4701,9 @@ class Game {
         // Clear AI cards
         this._resetAICard(1);
         this._resetAICard(2);
-        // Reset per-match milestones too — zeroes goldMoves and clears both gold-star
-        // trays. _startMatch (solo/watch) does this separately; the tournament path
-        // goes through resetForMatch, so without this the stars carried across matches.
+        // Reset per-match milestones too — zeroes pending/bronze and clears both
+        // medal trays. _startMatch (solo/watch) does this separately; the tournament
+        // path goes through resetForMatch, so without this the stars carried across matches.
         this._resetMilestones();
         const log = document.getElementById('action-log');
         if (log) log.innerHTML = '';

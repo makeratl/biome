@@ -330,6 +330,8 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 filters['model'] = q['model'][0]
             if q.get('gold', [''])[0] in ('1', 'true'):
                 filters['gold'] = True
+            if q.get('medal', [''])[0] in ('gold', 'silver', 'bronze'):
+                filters['medal'] = q['medal'][0]
             labels = traj.load_labels()
             rows = []
             for t, lbl in traj.labeled_turns(filters):

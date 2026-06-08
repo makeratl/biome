@@ -27,8 +27,8 @@ let refocus = null;        // id of a search box to refocus after a re-render
 
 const short = (m) => (m || '—').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
 const hueOf = (m) => resolveModel(m).hue;
-const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
-const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['raw', 'Raw']];
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
+const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['ascii-ext', 'ASCII+'], ['raw', 'Raw']];
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const $ = (id) => document.getElementById(id);
 

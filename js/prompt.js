@@ -279,18 +279,35 @@ function candidatesBlock(candidates) {
     return `CANDIDATE MOVES:\n${moveText.replace(/\n$/, '')}`;
 }
 
-function directiveBlock(ctx) {
+function directiveBlock(ctx, placement = 'candidates') {
     const g = speciesByType();
+    const species = `VALID SPECIES NAMES (use EXACTLY one of these, ALL CAPS):\n  Plants: ${g.plant.join(', ')}\n  Herbivores: ${g.herbivore.join(', ')}\n  Predator: ${g.predator.join(', ')}`;
+    const original = `IMPORTANT: Write ORIGINAL reasoning and banter. Reference the CURRENT game state (round ${ctx.round}, your species, the score).`;
+
+    // Bucket placement (ascii-ext): no candidate menu — the model reads the
+    // layered map and names a bucket; the engine snaps to the best legal hex.
+    if (placement === 'bucket') {
+        return [
+            `Spend ALL ${ctx.ap} AP. For each action pick a species AND a target BUCKET by its label (column letter + row number, e.g. "C2"). The engine snaps your placement to the best LEGAL hex inside that bucket (avoids water, respects the 2-plants-per-cell cap, prefers good ground near the right food). Read all three layers: place plants on good TERRAIN, herbivores in buckets near plants, predators near herbivores — yours or the enemy's.`,
+            species,
+            original,
+            `JSON format (each action uses "bucket" + "species"):\n{"reasoning":"<strategic analysis>","actions":[{"bucket":"C2","species":"GRASS"},{"bucket":"E4","species":"GRAZER"}],"banter":"<competitive comment>"}`,
+        ].join('\n\n');
+    }
+
     const maxCol = ctx.board.cols - 1, maxRow = ctx.board.rows - 1;
     return [
         `Spend ALL ${ctx.ap} AP. For each action pick a species AND where to place it — EITHER a CANDIDATE letter (a safe, pre-vetted spot) OR exact "col" and "row" to place anywhere on land (col 0..${maxCol}, row 0..${maxRow}; never on water). Use coordinates when the candidate spots don't reach where you want to play.`,
-        `VALID SPECIES NAMES (use EXACTLY one of these, ALL CAPS):\n  Plants: ${g.plant.join(', ')}\n  Herbivores: ${g.herbivore.join(', ')}\n  Predator: ${g.predator.join(', ')}`,
-        `IMPORTANT: Write ORIGINAL reasoning and banter. Reference the CURRENT game state (round ${ctx.round}, your species, the score).`,
+        species,
+        original,
         `JSON format (each action uses EITHER "spot" OR "col"+"row"):\n{"reasoning":"<strategic analysis>","actions":[{"spot":"A","species":"GRASS"},{"col":6,"row":2,"species":"GRAZER"}],"banter":"<competitive comment>"}`,
     ].join('\n\n');
 }
 
 function composeUser(ctx) {
+    // A strategy may declare a placement mode (e.g. 'bucket' for ascii-ext); the
+    // default 'candidates' keeps the pre-scored A/B/C menu + letter/coord directive.
+    const placement = ctx.mapStrategy?.placement || 'candidates';
     const segments = [
         `Round ${ctx.round}/${ctx.total}. You are Player ${ctx.player}. AP: ${ctx.ap}.`,
         matchContextBlock(ctx),
@@ -299,8 +316,8 @@ function composeUser(ctx) {
         phaseBlock(ctx),
         balanceBlock(ctx),
         boardBlock(ctx),
-        candidatesBlock(ctx.board.candidates),
-        directiveBlock(ctx),
+        placement === 'bucket' ? null : candidatesBlock(ctx.board.candidates),
+        directiveBlock(ctx, placement),
     ];
     return segments.filter(Boolean).join('\n\n');
 }

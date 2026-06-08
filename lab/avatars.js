@@ -286,7 +286,7 @@ function eloSpark(timeline) {
 
 // The game's "Map vision" (map_strategy) values → the friendly names the game UI
 // and dashboards use, so the studio reads the same language everywhere.
-const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
 
 // A labelled set of winrate bars for one split dimension (mode / map size / vision).
 // keyFmt optionally maps raw split keys to display names (e.g. vision strategies).

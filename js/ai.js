@@ -4,7 +4,7 @@ import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 import { extractJSON } from './util.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
-import { getStrategy } from './map-strategies.js';
+import { getStrategy, bucketGeometry, cellBucket, parseBucketLabel } from './map-strategies.js';
 import { parseTier } from './model-identity.js';
 import { trophicRead } from './trophic.js';
 import { captureTurn, isCaptureEnabled } from './capture.js';
@@ -145,7 +145,11 @@ export class AIPlayer {
 
     // ── Candidate move scoring ─────────────────────────────────
 
-    _findCandidates() {
+    // Build the curated, lettered candidate list. With `{ raw:true }` it instead
+    // returns the underlying score-sorted spot pools { plantSpots, herbSpots,
+    // predSpots } — used by _resolveBucket to snap a bucket to its best legal hex
+    // with the SAME scoring/legality the candidate menu uses.
+    _findCandidates(opts = {}) {
         const grid = this.game.grid;
         const round = this.game.turns.round;
         const enemy = this.player === 1 ? 2 : 1;
@@ -226,6 +230,10 @@ export class AIPlayer {
         plantSpots.sort((a,b) => b.score - a.score);
         herbSpots.sort((a,b) => b.score - a.score);
         predSpots.sort((a,b) => b.score - a.score);
+
+        // Raw pools for bucket snapping — already water/cap-filtered and sorted by
+        // score, so _resolveBucket can just filter to a bucket and take the top.
+        if (opts.raw) return { plantSpots, herbSpots, predSpots };
 
         // Build labeled candidate list — enforce regional diversity
         const candidates = [];
@@ -309,6 +317,7 @@ export class AIPlayer {
     _getCensus(playerNum) {
         const round = this.game.turns.round;
         let plants = 0, herbs = 0, preds = 0, biomass = 0;
+        const bySpecies = {};
         this.game.grid.forEach(cell => {
             for (const org of cell.organisms) {
                 if (org._placedRound === round && org.player !== this.player) continue;
@@ -318,9 +327,10 @@ export class AIPlayer {
                 if (type === 'plant') plants++;
                 else if (type === 'herbivore') herbs++;
                 else if (type === 'predator') preds++;
+                bySpecies[org.species] = (bySpecies[org.species] || 0) + 1;
             }
         });
-        return { plants, herbs, preds, biomass: Math.round(biomass) };
+        return { plants, herbs, preds, biomass: Math.round(biomass), bySpecies };
     }
 
     // ── Turn-to-turn continuity ────────────────────────────────
@@ -439,10 +449,19 @@ export class AIPlayer {
             grid,
             candidates,
             regionSummary: this._generateMapSummary().replace(/\n+$/, ''),
+            // Fog context for the raw view: hide the opponent's current-round
+            // placements just like _summarizePlayer/_getCensus/_findCandidates do.
+            // Without this, raw's exact (col,row) dump leaks the live move to the
+            // second mover (see CLAUDE.md "Fog of war").
+            fog: { viewer: player, round },
         });
 
         return {
             player, enemy, round, total, ap,
+            // The active strategy descriptor — js/prompt.js reads its `placement`
+            // to decide whether to show the candidate menu and which directive to
+            // emit (bucket vs candidate/coord). null-safe for any future strategy.
+            mapStrategy: strategy,
             match: { mode: mc.mode || null, modeLabel: mc.modeLabel || null, stakes: mc.stakes || null },
             board: {
                 cols: grid.cols, rows: grid.rows,
@@ -458,8 +477,8 @@ export class AIPlayer {
             // placements already hidden), so it only synthesizes numbers the
             // model is already shown — no fog leak.
             trophic: {
-                mine: trophicRead(myCensus.plants, myCensus.herbs, myCensus.preds),
-                enemy: trophicRead(enemyCensus.plants, enemyCensus.herbs, enemyCensus.preds),
+                mine: trophicRead(myCensus.plants, myCensus.herbs, myCensus.preds, myCensus.bySpecies),
+                enemy: trophicRead(enemyCensus.plants, enemyCensus.herbs, enemyCensus.preds, enemyCensus.bySpecies),
             },
             strategy: {
                 ahead: myCensus.biomass > enemyCensus.biomass * 1.2,
@@ -566,6 +585,46 @@ export class AIPlayer {
         };
     }
 
+    // Snap a bucket label ("C2") to the best legal hex inside it for `species`
+    // (ascii-ext placement). Reuses the candidate scorer so the snap honors the
+    // same nutrient/proximity heuristics and water/plant-cap legality the curated
+    // menu uses. Returns a cell, or null if the bucket id is invalid or the bucket
+    // has no legal cell at all (→ action fails, leftover AP covered by grass top-up).
+    _resolveBucket(bucketId, species) {
+        const grid = this.game.grid;
+        const geo = bucketGeometry(grid);
+        const b = parseBucketLabel(bucketId, geo);
+        if (!b) return null;
+        const type = CONFIG.SPECIES[species?.toUpperCase()]?.type;
+        const inBucket = (cell) => {
+            const cb = cellBucket(cell, geo);
+            return cb.bx === b.bx && cb.by === b.by;
+        };
+
+        // Best scored spot of this trophic type within the bucket (pools are
+        // already water/cap-filtered and sorted by score). Unknown species fall to
+        // the herbivore pool here and get rejected by species validation downstream.
+        const pools = this._findCandidates({ raw: true });
+        const pool = type === 'plant' ? pools.plantSpots
+                   : type === 'predator' ? pools.predSpots : pools.herbSpots;
+        const best = pool.find(s => inBucket(s.cell));
+        if (best) return best.cell;
+
+        // Fallback: a valid bucket with land but no scored spot of that type —
+        // snap to any legal hex (non-water; respect plant cap for plants) so a
+        // sensible bucket choice never wastes AP on a technicality.
+        let fallback = null;
+        grid.forEach(cell => {
+            if (fallback || cell.terrain === 'WATER' || !inBucket(cell)) return;
+            if (type === 'plant') {
+                const plants = cell.organisms.filter(o => CONFIG.SPECIES[o.species]?.type === 'plant').length;
+                if (plants >= CONFIG.SIM.PLANT_CAP) return;
+            }
+            fallback = cell;
+        });
+        return fallback;
+    }
+
     // ── Execute actions ────────────────────────────────────────
 
     _executeActions(actions, candidates) {
@@ -577,11 +636,12 @@ export class AIPlayer {
         const results = [];
 
         for (const action of actions) {
-            // Resolve the target cell from EITHER a curated candidate letter
-            // ({spot:"A"}) OR free coordinates ({col,row}). Free placement gives
-            // capable models real spatial agency over the whole board; the
-            // lettered menu stays as the always-legal floor for smaller models.
-            // Both paths land in the same validation below (water/cap/AP).
+            // Resolve the target cell from one of three addressing modes:
+            //   • free coordinates ({col,row}) — capable models, whole-board agency
+            //   • a bucket ({bucket:"C2"}) — ascii-ext; snap to the best legal hex
+            //   • a curated candidate letter ({spot:"A"}) — the always-legal floor
+            // Coords win first (preserving prior behavior); all paths land in the
+            // same validation below (water/cap/AP).
             let cell;
             const col = Number(action.col), row = Number(action.row);
             const hasCoords = action.col != null && action.row != null
@@ -590,6 +650,9 @@ export class AIPlayer {
                 cell = grid.getCell(col, row);
                 if (!cell) { results.push({ ok: false, msg: `Off-board: (${action.col},${action.row})` }); continue; }
                 if (cell.terrain === 'WATER') { results.push({ ok: false, msg: `Water cell: (${col},${row})` }); continue; }
+            } else if (action.bucket != null) {
+                cell = this._resolveBucket(action.bucket, action.species);
+                if (!cell) { results.push({ ok: false, msg: `No legal cell in bucket ${action.bucket}` }); continue; }
             } else {
                 const cand = lookup[action.spot?.toUpperCase()];
                 if (!cand) { results.push({ ok: false, msg: `Bad spot: ${action.spot}` }); continue; }
@@ -652,6 +715,9 @@ export class AIPlayer {
             const out = await Promise.race([this._callOllama(system, user, controller.signal), timeout]);
             response = out.parsed;
             raw = out.raw;
+            // Stash the verbatim response so out-of-band callers (the Vision Lab's
+            // compare view) can show exactly what the model emitted this turn.
+            this._lastRaw = raw;
         } catch (err) {
             console.error('[AI] Ollama error:', err.message);
             // Classify so the card can speak to *what* went wrong, not just go mute.

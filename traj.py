@@ -5,11 +5,18 @@ Reads the three append-only capture logs written by server.py
 match_uid + round, scores each turn with an engine-grounded reward, and emits
 provider-neutral SFT rows (messages + meta).
 
-The reward is "engine-validated distillation": a turn is GOLD only if the
-simulation confirms it worked — its side WON the match (hard gate), and the
-weighted signal clears a threshold. Winners' moves that also improved their
-score margin and trophic balance score highest. Fallback turns (the model
-failed to answer) are never gold — they aren't model answers to imitate.
+The reward is "engine-validated distillation". Each move carries two quality
+signals the engine computed live — marginGrew (its score lead grew) and
+trophicImproved (a healthier pyramid) — plus has_answer (a real model answer,
+not a fallback) and won_match. The medal tier is driven by how many quality
+signals a move has; the win only decides gold-vs-silver (see classify_medal,
+mirrored from js/medal.js):
+
+    2 signals -> GOLD if won, else SILVER
+    1 signal  -> BRONZE (win-independent)
+    0 signals -> no medal ;  fallbacks (no answer) never earn a medal.
+
+Only GOLD is exported for training; silver/bronze are quality metrics.
 
 Pure stdlib so it runs both inside the server and standalone for inspection:
     python3 traj.py            # summary of what's captured + would-be-gold count
@@ -23,15 +30,35 @@ import time
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAINING_DIR = os.path.join(BASE_DIR, 'training-data')
 
-# ── reward weights (tunable; echoed into the dataset manifest) ──────────────
-# won_match is also a HARD GATE — non-winning turns are never gold regardless.
+# ── reward weights ──────────────────────────────────────────────────────────
+# The medal tier (classify_medal) is the GATE for what trains. These weights now
+# only drive `label_score`, a secondary continuous quality number kept for the
+# curate UI's sort/scorebar; they no longer decide gold. Echoed into the manifest.
 REWARD = {
     'w_won': 0.45,        # the move's side won the match
     'w_margin': 0.35,     # this round grew the player's score lead
     'w_trophic': 0.20,    # this round moved the player toward a balanced pyramid
     'margin_scale': 1000.0,   # score-margin delta that maps to a full +0.5 swing
-    'gold_threshold': 0.60,
 }
+
+
+def classify_medal(real, won_match, margin_grew, trophic_improved):
+    """Training medal tier — MIRROR of classifyMedal() in js/medal.js. Keep both
+    in sync or the in-game end screen and the exported dataset will disagree.
+    real gates everything; quality = marginGrew + trophicImproved; the win only
+    decides gold vs silver.
+        2 signals -> 'gold' if won else 'silver'
+        1 signal  -> 'bronze'   (win-independent)
+        0 signals -> None
+    """
+    if not real:
+        return None
+    q = (1 if margin_grew else 0) + (1 if trophic_improved else 0)
+    if q == 2:
+        return 'gold' if won_match else 'silver'
+    if q == 1:
+        return 'bronze'
+    return None
 
 
 def _read_jsonl(name):
@@ -100,8 +127,17 @@ def _trophic(round_rec, player):
     return tr.get(str(player)) or tr.get(player)
 
 
+def _signal(round_rec, player):
+    """The engine's CAPTURED per-player quality booleans for a round, if present
+    (logs written after the medal change). None for older logs → recompute."""
+    if not round_rec:
+        return None
+    sg = round_rec.get('signals') or {}
+    return sg.get(str(player)) or sg.get(player)
+
+
 def score_turn(turn, rounds_idx, outcomes_idx):
-    """Compute the reward breakdown + gold verdict for one turn record."""
+    """Compute the reward breakdown + medal verdict for one turn record."""
     muid = turn.get('match_uid')
     player = turn.get('player')
     rnd = turn.get('round')
@@ -116,38 +152,51 @@ def score_turn(turn, rounds_idx, outcomes_idx):
     prev_r = rounds_idx.get((muid, rnd - 1)) if rnd else None
     m_now = _margin(this_r, player)
     m_prev = _margin(prev_r, player) if prev_r else 0.0
+    t_now = _trophic(this_r, player)
+
+    # label_score: a secondary, continuous quality number for the curate UI's
+    # sort/scorebar. Not the gate (the medal is).
     if m_now is None:
         margin_norm = 0.5
     else:
         delta = m_now - (m_prev if m_prev is not None else 0.0)
         margin_norm = _clamp(0.5 + delta / (2.0 * REWARD['margin_scale']))
 
-    # trophic improvement: health up / risk down / not collapsing this round.
-    t_now = _trophic(this_r, player)
-    t_prev = _trophic(prev_r, player) if prev_r else None
-    if not t_now:
-        trophic_improved = 0.0
-    elif t_prev:
-        better = (t_now.get('health', 0) >= t_prev.get('health', 0)
-                  and t_now.get('risk', 1) <= t_prev.get('risk', 1))
-        trophic_improved = 1.0 if better and t_now.get('state') != 'collapsing' else 0.0
+    # Boolean quality signals — prefer the engine's CAPTURED booleans (zero drift
+    # vs the in-game end screen); recompute from score/trophic deltas only for
+    # pre-signals logs. Same rule as game.js._computeRoundSignals.
+    sig = _signal(this_r, player)
+    if sig is not None:
+        margin_grew = bool(sig.get('marginGrew'))
+        trophic_improved = bool(sig.get('trophicImproved'))
     else:
-        trophic_improved = 1.0 if (t_now.get('risk', 1) < 0.4 and t_now.get('state') != 'collapsing') else 0.0
+        margin_grew = (m_now is not None
+                       and (m_now - (m_prev if m_prev is not None else 0.0)) > 0)
+        t_prev = _trophic(prev_r, player) if prev_r else None
+        h_now = (t_now or {}).get('health', 0)
+        r_now = (t_now or {}).get('risk', 1)
+        h_prev = (t_prev or {}).get('health', 0.0)
+        r_prev = (t_prev or {}).get('risk', 1.0)
+        trophic_improved = bool(t_now and h_now > h_prev and r_now <= r_prev
+                                and t_now.get('state') != 'collapsing')
+
+    medal = classify_medal(has_answer, won, margin_grew, trophic_improved)
 
     label_score = (REWARD['w_won'] * (1.0 if won else 0.0)
                    + REWARD['w_margin'] * margin_norm
-                   + REWARD['w_trophic'] * trophic_improved)
-    gold = won and has_answer and label_score >= REWARD['gold_threshold']
+                   + REWARD['w_trophic'] * (1.0 if trophic_improved else 0.0))
 
     return {
         'won_match': won,
         'has_answer': has_answer,
         'margin_now': m_now,
         'margin_norm': round(margin_norm, 3),
+        'margin_grew': bool(margin_grew),
         'trophic_state': (t_now or {}).get('state'),
         'trophic_improved': bool(trophic_improved),
         'label_score': round(label_score, 3),
-        'gold': bool(gold),
+        'medal': medal,
+        'gold': medal == 'gold',
     }
 
 
@@ -162,6 +211,8 @@ def labeled_turns(filters=None):
             continue
         lbl = score_turn(t, rounds_idx, outcomes_idx)
         if filters.get('gold') and not lbl['gold']:
+            continue
+        if filters.get('medal') and lbl['medal'] != filters['medal']:
             continue
         yield t, lbl
 
@@ -182,6 +233,7 @@ def summarize(turn, lbl):
         'won_match': lbl['won_match'],
         'label_score': lbl['label_score'],
         'gold': lbl['gold'],
+        'medal': lbl['medal'],
         'trophic_state': lbl['trophic_state'],
     }
 
@@ -227,6 +279,7 @@ def build_dataset(filters=None, manual=None):
                 'won_match': lbl['won_match'],
                 'label_score': lbl['label_score'],
                 'label_source': 'manual' if decision == 'gold' else 'auto',
+                'medal': lbl['medal'],
                 'trophic_state': lbl['trophic_state'],
                 'map_strategy': t.get('map_strategy'),
             },
@@ -260,10 +313,12 @@ def write_dataset(filters=None, manual=None):
 
 
 def stats():
-    """Dashboard metrics: capture totals, gold count, and progress to goals."""
+    """Dashboard metrics: capture totals, medal counts, and progress to goals."""
     turns, rounds_idx, outcomes_idx = load()
-    gold = won = fallback = 0
-    by_model = {}
+    gold = silver = bronze = won = fallback = 0
+    by_model = {}        # gold per model (the trainable tier)
+    silver_by_model = {}
+    bronze_by_model = {}
     seeds = set()
     for t in turns:
         if t.get('fallback_reason'):
@@ -271,20 +326,32 @@ def stats():
         lbl = score_turn(t, rounds_idx, outcomes_idx)
         if lbl['won_match']:
             won += 1
-        if lbl['gold']:
+        model = t.get('model')
+        if lbl['medal'] == 'gold':
             gold += 1
-            by_model[t.get('model')] = by_model.get(t.get('model'), 0) + 1
+            by_model[model] = by_model.get(model, 0) + 1
+        elif lbl['medal'] == 'silver':
+            silver += 1
+            silver_by_model[model] = silver_by_model.get(model, 0) + 1
+        elif lbl['medal'] == 'bronze':
+            bronze += 1
+            bronze_by_model[model] = bronze_by_model.get(model, 0) + 1
         if t.get('seed') is not None:
             seeds.add(t.get('seed'))
+    _sort = lambda d: dict(sorted(d.items(), key=lambda kv: -kv[1]))
     return {
         'gold': gold,
+        'silver': silver,
+        'bronze': bronze,
         'turns': len(turns),
         'rounds': len(rounds_idx),
         'matches': len(outcomes_idx),
         'won_turns': won,
         'fallback_turns': fallback,
         'distinct_seeds': len(seeds),
-        'gold_by_model': dict(sorted(by_model.items(), key=lambda kv: -kv[1])),
+        'gold_by_model': _sort(by_model),
+        'silver_by_model': _sort(silver_by_model),
+        'bronze_by_model': _sort(bronze_by_model),
         'goals': {'smoke': 300, 'ladder': 2000, 'robust': 10000},
     }
 

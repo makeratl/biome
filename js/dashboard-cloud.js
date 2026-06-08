@@ -305,7 +305,7 @@ export function biomeSpec(opts = {}) {
 
 // Match Conditions — one puff per match, columned by map size or round count.
 const MAP_ORDER = ['auto', 'small', 'medium', 'large'];
-const STRATEGY_ORDER = ['mediated', 'ascii', 'raw'];
+const STRATEGY_ORDER = ['mediated', 'ascii', 'ascii-ext', 'raw'];
 
 export function conditionsSpec(groupBy = 'map_size') {
     const fmtGroup = (g) => groupBy === 'rounds' ? `${g} rounds` : (g === 'auto' ? 'fit screen' : cap(g));

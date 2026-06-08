@@ -35,6 +35,13 @@ function jitter(key, salt = 0) {
     return ((h >>> 0) / 4294967295) * 2 - 1;
 }
 
+// Sum two {species: count} maps into one (for the combined board trophic read).
+function mergeBySpecies(a, b) {
+    const out = { ...(a || {}) };
+    for (const [sp, n] of Object.entries(b || {})) out[sp] = (out[sp] || 0) + n;
+    return out;
+}
+
 // Ease a hue toward a target along the shortest arc (so red↔green never sweeps
 // the whole colour wheel through yellow).
 function easeHue(cur, tgt, t) {
@@ -144,9 +151,12 @@ export class Biosphere {
         // Shared trophic read — the SAME evaluation the AI prompt uses. Risk is
         // per-player then worst-wins: overgrazing lives inside one biome, so a
         // big plant base on one side mustn't mask the other's herbivore overload.
-        const read1 = trophicRead(c1.plants, c1.herbivores, c1.predators);
-        const read2 = trophicRead(c2.plants, c2.herbivores, c2.predators);
-        const board = trophicRead(P, H, R);   // combined — drives the calm/zen read
+        const read1 = trophicRead(c1.plants, c1.herbivores, c1.predators, c1.bySpecies);
+        const read2 = trophicRead(c2.plants, c2.herbivores, c2.predators, c2.bySpecies);
+        // Combined board read (drives the calm/zen mood) — merge both species mixes
+        // so the derived ideal reflects everything alive, not one player's slice.
+        const boardMix = mergeBySpecies(c1.bySpecies, c2.bySpecies);
+        const board = trophicRead(P, H, R, boardMix);
         const health = board.health;
 
         // Layer live starvation on top of the count-based risk.

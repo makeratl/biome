@@ -112,12 +112,21 @@ function perSpecies(key, fields) {
 
 // ── Presets ────────────────────────────────────────────────────────────────
 // Each preset is a sparse values map; omitted sliders use their default.
-// 'Balanced' == {} == the ship baseline.
+// 'Balanced' == {} == the ship baseline, which is itself tuned to a biome that
+// evolves gracefully (no boom-bust collapse) over a normal game. Each variant
+// below is validated with dev-logs/sim-harness.mjs to still hold its chain —
+// they shift the FEEL of a stable world, they don't break it.
 export const PRESETS = {
     'Balanced': {},
-    'Lush': { plantVigor: 1.5, soilRichness: 1.3, regeneration: 1.4, predatorPressure: 0.7 },
-    'Harsh': { metabolism: 1.5, regeneration: 0.6, soilRichness: 0.7, plantVigor: 0.85 },
-    "Predator's Reign": { predatorPressure: 1.6, reproductionRate: 1.2, herbivoreAppetite: 1.2 },
+    // Generous world: vigorous flora, rich soil, relaxed predators. Big, lively,
+    // forgiving — populations swell and the chain is easy to keep whole.
+    'Lush': { plantVigor: 1.4, soilRichness: 1.3, regeneration: 1.3, predatorPressure: 0.8 },
+    // Lean world: hungry metabolism, poor soil, slow regrowth. Scarce and
+    // unforgiving — every tier runs thin, but life still hangs on.
+    'Harsh': { metabolism: 1.15, regeneration: 0.85, soilRichness: 0.9, plantVigor: 0.92 },
+    // Apex-driven world: fierce, fast-breeding hunters over a churning prey base
+    // (richer soil + faster breeding keep the herd feeding the predators).
+    "Predator's Reign": { predatorPressure: 1.4, reproductionRate: 1.3, soilRichness: 1.2 },
 };
 
 export const DEFAULT_SETTINGS = {};

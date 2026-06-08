@@ -20,6 +20,8 @@ $('#tabs').addEventListener('click', (e) => {
 let _dbTimer = null;
 let _prev = null;        // last snapshot, for delta detection between refreshes
 let _lastChange = 0;     // ts of the last refresh that saw new data (live indicator)
+let _built = false;      // dashboard skeleton built once; refreshes patch in place
+let _teachersKey = '';   // last-rendered by-model signature (skip rebuild if unchanged)
 const GOAL_LABEL = { smoke: 'Smoke train', ladder: 'Ladder attempt', robust: 'Robust set' };
 const GOAL_ORDER = ['smoke', 'ladder', 'robust'];
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -53,6 +55,11 @@ function flash(el, cls) {
     el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
 }
 
+// In-place patch helpers — only touch the DOM when the value actually changed,
+// so CSS transitions / count-ups fire on change and stay still otherwise.
+function setText(el, v) { if (el && el.textContent !== String(v)) el.textContent = v; }
+function setStyleIf(el, prop, v) { if (el && el.style[prop] !== v) el.style[prop] = v; }
+
 // A burst of confetti from the centre of `originEl` (gravity-pulled, varied).
 function confettiBurst(originEl, n) {
     const layer = document.getElementById('fx-layer');
@@ -83,6 +90,141 @@ function goalToast(text) {
     el.addEventListener('animationend', () => el.remove());
 }
 
+// Medal podium — gold/silver/bronze bars, heights proportional to count. Built
+// once (buildPodium); each refresh patches counts + heights in place so the
+// count-up only runs on a real change. Gold carries the headline count (#db-gold).
+function buildPodium() {
+    const tiers = [['gold', '🥇', 'Gold', 'trained'], ['silver', '🥈', 'Silver', 'logged'], ['bronze', '🥉', 'Bronze', 'logged']];
+    $('#db-podium').innerHTML = tiers.map(([key, em, lab, sub]) => `
+        <div class="pod pod-${key}">
+            <div class="pod-n" id="${key === 'gold' ? 'db-gold' : 'pod-n-' + key}">0</div>
+            <div class="pod-bar-wrap"><div class="pod-bar" id="pod-bar-${key}" style="height:14px"></div></div>
+            <div class="pod-foot"><span class="pod-em">${em}</span><span>${lab}</span></div>
+            <div class="pod-sub">${sub}</div>
+        </div>`).join('');
+}
+function updatePodium(s) {
+    const max = Math.max(1, s.gold, s.silver, s.bronze);
+    const h = (n) => 14 + Math.round((n / max) * 96) + 'px';   // px fill in a 110px track
+    animateCount($('#db-gold'), s.gold);
+    animateCount($('#pod-n-silver'), s.silver);
+    animateCount($('#pod-n-bronze'), s.bronze);
+    setStyleIf($('#pod-bar-gold'), 'height', h(s.gold));
+    setStyleIf($('#pod-bar-silver'), 'height', h(s.silver));
+    setStyleIf($('#pod-bar-bronze'), 'height', h(s.bronze));
+}
+
+// Goals by TRAINING SET — three cumulative datasets the user might train on, each
+// racing the same goals (smoke/ladder/robust are dataset-size targets):
+//   Champion = gold only · Contender = gold+silver · Player = any medal.
+// A LOG scale keeps the small early counts visible and the three tiers distinct
+// across the wide 300→10k range. Shared milestone gridlines span all three lanes.
+const SET_TIERS = [
+    { key: 'champion',  label: 'Champion',  em: '🥇', note: 'gold only', val: s => s.gold },
+    { key: 'contender', label: 'Contender', em: '🥈', note: '+ silver',  val: s => s.gold + s.silver },
+    { key: 'player',    label: 'Player',    em: '🥉', note: '+ bronze',  val: s => s.gold + s.silver + s.bronze },
+];
+function _goals(s) { return GOAL_ORDER.map(k => ({ key: k, label: GOAL_LABEL[k], val: s.goals[k] })); }
+const _fmtGoal = (n) => n >= 1000 ? (n % 1000 === 0 ? (n / 1000) + 'k' : (n / 1000).toFixed(1) + 'k') : '' + n;
+// Honest LINEAR progress toward the tier's next unmet goal: pct = count / nextGoal.
+// 29 of 300 reads as ~10%, not the ~40% the old log scale faked. The little goal
+// pips carry the full Smoke/Ladder/Robust ladder without distorting the bar.
+function laneState(v, goals) {
+    const next = goals.find(g => v < g.val);
+    const done = goals.filter(g => v >= g.val).length;
+    if (!next) return { pct: 100, target: goals[goals.length - 1], done, complete: true };
+    return { pct: Math.max(0, Math.min(100, v / next.val * 100)), target: next, done, complete: false };
+}
+function buildRail(s) {
+    const goals = _goals(s);
+    const lanes = SET_TIERS.map(t => {
+        const pips = goals.map(g => `<i class="pip" title="${esc(g.label)} — ${g.val.toLocaleString()}"></i>`).join('');
+        return `
+        <div class="rail-lane lane-${t.key}">
+            <span class="lane-label"><span class="lane-em">${t.em}</span>${t.label}<span class="lane-note">${t.note}</span></span>
+            <span class="lane-track"><i class="lane-fill" id="lane-fill-${t.key}" style="width:0%"></i></span>
+            <span class="lane-pips" id="lane-pips-${t.key}">${pips}</span>
+            <span class="lane-val"><b id="lane-n-${t.key}">0</b><span class="lane-cap" id="lane-cap-${t.key}"></span></span>
+        </div>`;
+    }).join('');
+    $('#db-rail').innerHTML = `<div class="rail-lanes">${lanes}</div>`;
+}
+function updateRail(s) {
+    const goals = _goals(s);
+    for (const t of SET_TIERS) {
+        const v = t.val(s);
+        const st = laneState(v, goals);
+        setStyleIf($('#lane-fill-' + t.key), 'width', st.pct.toFixed(1) + '%');
+        animateCount($('#lane-n-' + t.key), v);
+        setText($('#lane-cap-' + t.key),
+            st.complete ? `/ ${_fmtGoal(st.target.val)} · all goals ✓` : `/ ${_fmtGoal(st.target.val)} · to ${st.target.label}`);
+        const pipsEl = $('#lane-pips-' + t.key);
+        if (pipsEl) [...pipsEl.children].forEach((dot, i) => {
+            dot.classList.toggle('on', i < st.done);
+            dot.classList.toggle('next', !st.complete && i === st.done);
+        });
+    }
+}
+
+// Operational tiles — built once; refreshes patch the values only when changed.
+const TILE_DEFS = [
+    ['matches', 'Matches', 'Completed matches with a recorded outcome.'],
+    ['turns', 'Turns', 'Total model turns captured across all matches.'],
+    ['won', 'Winning turns', 'Turns played by the side that went on to win the match (quality-agnostic).'],
+    ['goldrate', 'Gold rate', 'Share of all captured turns certified GOLD: a real answer on the WINNING side that grew its score lead AND improved trophic balance. The only tier auto-queued for training — your trainable signal yield per turn.'],
+    ['fbrate', 'Fallback rate', 'Share of turns where the model gave no usable move and the deterministic fallback (plant grass) stepped in. Never a medal — a teacher-reliability signal.'],
+    ['seeds', 'Distinct seeds', 'Unique map seeds = data diversity. More varied boards → a more generalizable training set.'],
+];
+function buildTiles() {
+    $('#db-tiles').innerHTML = TILE_DEFS.map(([key, k, tip]) =>
+        `<div class="tile" data-key="${key}" title="${esc(tip)}"><div class="tile-v" id="tile-${key}">—</div><div class="tile-k">${k}</div></div>`).join('');
+}
+function updateTiles(s) {
+    const rate = (n) => s.turns ? Math.round((n / s.turns) * 100) + '%' : '0%';
+    setText($('#tile-matches'), s.matches);
+    setText($('#tile-turns'), s.turns);
+    setText($('#tile-won'), s.won_turns);
+    setText($('#tile-goldrate'), rate(s.gold));
+    setText($('#tile-fbrate'), rate(s.fallback_turns));
+    setText($('#tile-seeds'), s.distinct_seeds);
+}
+
+// Per-teacher stacked quality bars (gold · silver · bronze), sorted by gold then total.
+// Re-renders only when the by-model data actually changed (no static bars to churn).
+function renderTeachers(s) {
+    const sig = JSON.stringify([s.gold_by_model, s.silver_by_model, s.bronze_by_model]);
+    if (sig === _teachersKey) return;
+    _teachersKey = sig;
+    const names = new Set([
+        ...Object.keys(s.gold_by_model || {}),
+        ...Object.keys(s.silver_by_model || {}),
+        ...Object.keys(s.bronze_by_model || {}),
+    ]);
+    const rows = [...names].map(m => {
+        const g = (s.gold_by_model || {})[m] || 0;
+        const sv = (s.silver_by_model || {})[m] || 0;
+        const b = (s.bronze_by_model || {})[m] || 0;
+        return { m, g, sv, b, total: g + sv + b };
+    }).sort((a, b) => b.g - a.g || b.total - a.total);
+    const el = $('#db-bymodel');
+    if (!rows.length) {
+        el.classList.add('muted');
+        el.innerHTML = 'No medals yet — run a batch or play a tournament.';
+        return;
+    }
+    el.classList.remove('muted');
+    const max = Math.max(1, ...rows.map(r => r.total));
+    const seg = (n) => n > 0 ? `width:${(n / max) * 100}%` : 'display:none';
+    el.innerHTML = rows.map(r => `
+        <div class="bm-row">
+            <span class="bm-name" title="${esc(r.m)}">${esc(r.m)}</span>
+            <span class="bm-bar" title="${r.g} gold · ${r.sv} silver · ${r.b} bronze">
+                <i class="seg-gold" style="${seg(r.g)}"></i><i class="seg-silver" style="${seg(r.sv)}"></i><i class="seg-bronze" style="${seg(r.b)}"></i>
+            </span>
+            <span class="bm-counts"><b>${r.g}</b>·${r.sv}·${r.b}</span>
+        </div>`).join('');
+}
+
 async function loadDashboard() {
     let s;
     try { s = await (await fetch('/trajectory/stats')).json(); } catch { return; }
@@ -92,56 +234,34 @@ async function loadDashboard() {
     const dTurns = first ? 0 : s.turns - _prev.turns;
     const dMatches = first ? 0 : s.matches - _prev.matches;
 
-    animateCount($('#db-gold'), s.gold);
-
-    // Goals — mark the nearest unmet one as "next", glow the near-complete ones.
-    let nextMarked = false;
-    $('#db-goals').innerHTML = GOAL_ORDER.map(k => {
-        const target = s.goals[k];
-        const pct = Math.min(100, Math.round((s.gold / target) * 100));
-        const done = s.gold >= target;
-        const isNext = !done && !nextMarked; if (isNext) nextMarked = true;
-        const near = !done && pct >= 80;
-        return `<div class="goal ${done ? 'done' : ''} ${isNext ? 'next' : ''} ${near ? 'near' : ''}" data-key="${k}">
-            <div class="goal-head"><span>${GOAL_LABEL[k]}</span><span>${s.gold} / ${target} ${done ? '✓' : ''}</span></div>
-            <div class="goal-bar"><i style="width:${pct}%"></i></div></div>`;
-    }).join('');
-
-    // Tiles — self-documenting via tooltips (answers "what is gold/fallback rate?").
-    const rate = (n) => s.turns ? Math.round((n / s.turns) * 100) + '%' : '0%';
-    const tiles = [
-        ['matches', 'Matches', s.matches, 'Completed matches with a recorded outcome.'],
-        ['turns', 'Turns', s.turns, 'Total model turns captured across all matches.'],
-        ['won', 'Winning turns', s.won_turns, 'Turns played by the side that went on to win the match (quality-agnostic).'],
-        ['goldrate', 'Gold rate', rate(s.gold), 'Share of all captured turns the engine certified GOLD: winning side, grew its score lead, stayed in trophic balance (≥0.60). Your signal yield per turn.'],
-        ['fbrate', 'Fallback rate', rate(s.fallback_turns), 'Share of turns where the model gave no usable move and the deterministic fallback (plant grass) stepped in. Never gold — a teacher-reliability signal.'],
-        ['seeds', 'Distinct seeds', s.distinct_seeds, 'Unique map seeds = data diversity. More varied boards → a more generalizable training set.'],
-    ];
-    $('#db-tiles').innerHTML = tiles.map(([key, k, v, tip]) =>
-        `<div class="tile" data-key="${key}" title="${esc(tip)}"><div class="tile-v">${v}</div><div class="tile-k">${k}</div></div>`).join('');
-
-    const bm = Object.entries(s.gold_by_model || {});
-    $('#db-bymodel').innerHTML = bm.length
-        ? bm.map(([m, n]) => `<div class="bm-row"><span>${esc(m)}</span><b>${n}</b></div>`).join('')
-        : 'No gold yet — run a batch or play a tournament.';
+    if (!_built) { buildPodium(); buildRail(s); buildTiles(); _built = true; }
+    updatePodium(s);     // idempotent — count-ups only fire on a real change
+    updateRail(s);
+    updateTiles(s);
+    renderTeachers(s);
 
     // ── win moments ──────────────────────────────────────────────────────
     if (!first && dGold > 0) {
-        // Good data: the headline celebration.
+        // New gold is the headline celebration (it's the trainable tier).
         flash($('.hero'), 'pop');
         ping($('.hero'), `+${dGold} GOLD`);
         confettiBurst($('.hero'), Math.min(60, 22 + dGold * 8));
-        // A crossed goal threshold is a bigger moment still.
-        for (const k of GOAL_ORDER) {
-            if (_prev.gold < s.goals[k] && s.gold >= s.goals[k]) {
-                goalToast(`🎉 ${GOAL_LABEL[k]} goal reached — ${s.goals[k]} gold!`);
-                flash($(`.goal[data-key="${k}"]`), 'just-done');
-            }
-        }
     } else if (!first && (dTurns > 0 || dMatches > 0)) {
         // New data, not yet gold: a gentler "it's flowing" beat.
         if (dTurns > 0) { const t = $('.tile[data-key="turns"]'); flash(t, 'bump'); ping(t, `+${dTurns}`, true); }
         if (dMatches > 0) flash($('.tile[data-key="matches"]'), 'bump');
+    }
+    // A training set crossing a goal is a milestone for THAT tier — celebrate each.
+    if (!first) {
+        for (const t of SET_TIERS) {
+            const cur = t.val(s), prv = t.val(_prev);
+            for (const g of _goals(s)) {
+                if (prv < g.val && cur >= g.val) {
+                    goalToast(`🎉 ${t.label} set hit ${g.label} — ${g.val.toLocaleString()}!`);
+                    flash($('.lane-' + t.key), 'lane-flash');
+                }
+            }
+        }
     }
 
     if (!first && (dGold > 0 || dTurns > 0 || dMatches > 0)) _lastChange = performance.now();
@@ -150,7 +270,7 @@ async function loadDashboard() {
     $('#db-live-text').textContent = liveOn ? 'capturing' : 'idle';
     $('#db-refresh').textContent = 'auto-refresh · updated ' + new Date().toLocaleTimeString();
 
-    _prev = { gold: s.gold, turns: s.turns, matches: s.matches, won_turns: s.won_turns };
+    _prev = { gold: s.gold, silver: s.silver, bronze: s.bronze, turns: s.turns, matches: s.matches, won_turns: s.won_turns };
 }
 function startDashboard() { loadDashboard(); clearInterval(_dbTimer); _dbTimer = setInterval(loadDashboard, 5000); }
 function stopDashboard() { clearInterval(_dbTimer); _dbTimer = null; }
@@ -211,10 +331,10 @@ async function loadTurns() {
     if (!d.turns.length) { list.innerHTML = '<p class="muted">No turns captured yet. Run a generation batch.</p>'; return; }
     for (const t of d.turns) {
         const row = document.createElement('div');
-        row.className = 'turn-row' + (t.gold ? ' gold' : '') + (t.decision === 'reject' ? ' rej' : '');
+        row.className = 'turn-row' + (t.medal ? ' ' + t.medal : '') + (t.decision === 'reject' ? ' rej' : '');
         row.dataset.uid = t.turn_uid;
         const badges = [
-            t.gold ? '<span class="badge gold">GOLD</span>' : '',
+            t.medal ? `<span class="badge ${t.medal}">${t.medal.toUpperCase()}</span>` : '',
             t.won_match ? '<span class="badge won">WON</span>' : '',
             t.fallback_reason ? `<span class="badge fb">${esc(t.fallback_reason)}</span>` : '',
         ].join(' ');
@@ -249,7 +369,7 @@ async function selectTurn(uid, row) {
             <span>label: <b>${l.label_score}</b></span>
             <span>margin: <b>${l.margin_norm}</b></span>
             <span>trophic: <b>${esc(l.trophic_state)}</b> ${l.trophic_improved ? '↑' : ''}</span>
-            <span>gold: <b>${l.gold}</b></span>
+            <span>medal: <b>${esc(l.medal || '—')}</b></span>
             <span>seed: ${t.seed}</span>
         </div>
         <div class="block"><h4>Model answer (verbatim)</h4><pre>${esc(raw)}</pre></div>

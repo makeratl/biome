@@ -27,8 +27,8 @@ let eloVision = 'all';      // 'all' = global ELO, else a map-vision derived lad
 
 // 'Standard' = the game's default 'mediated' map vision. The four filters are
 // always offered (even with no data yet) so the ladder set is predictable.
-const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', raw: 'Raw' };
-const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['raw', 'Raw']];
+const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
+const VISION_FILTERS = [['all', 'All'], ['mediated', 'Standard'], ['ascii', 'ASCII'], ['ascii-ext', 'ASCII+'], ['raw', 'Raw']];
 
 // The leaderboard + timeline currently driving the ELO chart and Standings:
 // the global rating, or a derived per-vision ladder when one is selected. A

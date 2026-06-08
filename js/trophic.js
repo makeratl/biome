@@ -2,22 +2,30 @@
 // ecosystem?", shared by the health orb (js/biosphere.js) and the AI prompt
 // (js/prompt.js) so the model reads the SAME evaluation the human sees.
 //
-// A healthy chain is roughly 9 plants : 3 herbivores : 1 predator — each tier
-// about a third of the one below it. Below that ratio a tier has room to grow;
-// past it the tier overruns the food beneath it and the whole stack crashes.
+// The "ideal" pyramid is no longer a fixed 9:3:1 guess — it's DERIVED from the
+// game's energy economy (js/ecobalance.js) and weighted by the species actually
+// on the board: each tier is sized to what the tier beneath it can energetically
+// feed. Below that a tier has room to grow; past it the tier overruns its food
+// base and the stack crashes. Pass `bySpecies` to get the live-mix ideal; omit
+// it and the config-default ratios are used.
 //
 // Pure: counts in, assessment out. Starvation/events are layered on by callers
 // that have them (the orb folds in live starvation; the prompt doesn't need to).
 
+import { idealRatios } from './ecobalance.js';
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // Assess ONE ecosystem (one player's organisms, or the whole board summed).
-export function trophicRead(plants, herbs, preds) {
+// `bySpecies` (optional) = { GRASS: n, GRAZER: n, ... } → the ideal adapts to
+// the live species mix; omitted → config-default ratios.
+export function trophicRead(plants, herbs, preds, bySpecies) {
     plants = plants || 0; herbs = herbs || 0; preds = preds || 0;
     const total = plants + herbs + preds;
     const tiers = (plants > 0) + (herbs > 0) + (preds > 0);
-    const idealHerb = plants / 3;
-    const idealPred = herbs / 3;
+    const { plantsPerHerb, herbsPerPred } = idealRatios(bySpecies);
+    const idealHerb = plants / plantsPerHerb;
+    const idealPred = herbs / herbsPerPred;
 
     // Ratio of a tier to what its base can feed. null = no tier present and no
     // base issue; Infinity = the tier exists with NO base beneath it.

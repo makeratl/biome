@@ -359,11 +359,10 @@ export class TournamentManager {
         document.getElementById('t-result-next').textContent =
             isFinal ? 'Revealing the Champion...' : 'Bracket updating...';
 
-        // Gold won: the winner's potential gold (banked this match) is earned by the
-        // win; the loser's potential is forfeited.
-        const gm = this.game._milestones?.goldMoves || {};
-        this.game._renderGoldsWon?.(document.getElementById('t-result-golds'),
-            gm[winnerSlot], gm[loserSlot]);
+        // Medals: the win resolves every pending move — winner's → gold (trained),
+        // loser's → silver; bronze is win-independent.
+        this.game._renderMedalsEarned?.(document.getElementById('t-result-golds'),
+            this.game._medalTally?.(winnerSlot));
 
         const resultScreen = document.getElementById('t-match-result');
         resultScreen.classList.remove('t-tier-win', 't-tier-promote', 't-tier-throne', 't-tier-upset', 't-tier-massive');
