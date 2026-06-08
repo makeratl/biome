@@ -367,18 +367,35 @@
         <div class="mcm-backdrop"></div>
         <div id="model-config-panel" class="model-config-panel">
             <div class="mcp-header">
-                <span>Model Configuration</span>
+                <div class="mcp-title">
+                    <span>Model Roster</span>
+                    <span id="mcp-count" class="mcp-count"></span>
+                </div>
                 <button id="btn-mcp-close" class="mcp-close">×</button>
             </div>
-            <div class="mcp-section">
-                <div class="mcp-label">Installed Models</div>
-                <div id="mcp-installed" class="mcp-model-list"></div>
+
+            <!-- Add any model by name (pulls via Ollama) -->
+            <div class="mcp-addbar">
+                <input id="mcp-add-input" class="mcp-add-input" type="text"
+                       placeholder="Pull a model by name — e.g. qwen2.5:14b" spellcheck="false" autocomplete="off">
+                <button id="mcp-add-btn" class="mcp-act mcp-act-install">Pull</button>
             </div>
+
             <div class="mcp-section">
-                <div class="mcp-label">Recommended Models</div>
-                <div class="mcp-hint">Click to download via Ollama</div>
-                <div id="mcp-recommended" class="mcp-model-list"></div>
+                <div class="mcp-label">Active Roster</div>
+                <div id="mcp-active" class="mcp-card-grid"></div>
             </div>
+
+            <div id="mcp-retired-section" class="mcp-section" style="display:none;">
+                <div class="mcp-label">Retired <span class="mcp-label-note">— weights freed, history kept · reactivate to re-download</span></div>
+                <div id="mcp-retired" class="mcp-card-grid"></div>
+            </div>
+
+            <div id="mcp-recommended-section" class="mcp-section">
+                <div class="mcp-label">Add Models <span class="mcp-label-note">— recommended, click to install</span></div>
+                <div id="mcp-recommended" class="mcp-card-grid"></div>
+            </div>
+
             <div id="mcp-status" class="mcp-status"></div>
         </div>
     </div>
@@ -440,7 +457,11 @@
             <div class="winner"></div>
             <div class="golds-won" id="go-golds" hidden></div>
             <div class="final-score"></div>
-            <button id="btn-play-again" class="btn btn-primary" style="margin-top:16px;">Play Again</button>
+            <div class="go-actions">
+                <button id="btn-go-dashboard" class="btn" hidden>📊 Match Details</button>
+                <button id="btn-play-again" class="btn btn-primary">Play Again</button>
+            </div>
+            <div id="go-dashboard" class="md-dashboard md-hidden"></div>
         </div>
     </div>
 
@@ -594,13 +615,33 @@
                             <button type="button" data-val="32">32</button>
                         </div>
                     </div>
-                    <div class="mw-row">
+                    <div class="mw-row mw-row-fmt">
                         <span class="mw-label">Format</span>
-                        <div class="world-seg world-seg-fmt" id="t-format">
-                            <button type="button" data-val="seeded"><span class="ws-seg-name">Seeded</span></button>
-                            <button type="button" data-val="champions"><span class="ws-seg-name">Champions</span></button>
-                            <button type="button" data-val="davidGoliath"><span class="ws-seg-name">David v Goliath</span></button>
-                            <button type="button" data-val="open"><span class="ws-seg-name">Open Draw</span></button>
+                        <div class="fmt-grid" id="t-format">
+                            <button type="button" class="fmt-tile" data-val="qualifier">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 6"/><polyline points="15 6 21 6 21 12"/></svg></span>
+                                <span class="fmt-name">Qualifier</span>
+                            </button>
+                            <button type="button" class="fmt-tile" data-val="seeded">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 4h4v6h4"/><path d="M3 20h4v-6h4"/><path d="M11 10v4"/><path d="M11 12h4"/></svg></span>
+                                <span class="fmt-name">Seeded</span>
+                            </button>
+                            <button type="button" class="fmt-tile" data-val="champions">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 18 L3.8 9.5 L8.5 13.5 L12 7.5 L15.5 13.5 L20.2 9.5 L19 18 Z"/></svg></span>
+                                <span class="fmt-name">Champions</span>
+                            </button>
+                            <button type="button" class="fmt-tile" data-val="davidGoliath">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6.5" cy="15" r="3.2"/><circle cx="15.5" cy="11" r="6.2"/></svg></span>
+                                <span class="fmt-name">David v Goliath</span>
+                            </button>
+                            <button type="button" class="fmt-tile" data-val="open">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7h3.5c2 0 3.5 10 7 10H21"/><path d="M3 17h3.5c2 0 3.5-10 7-10H21"/><polyline points="17.5 3.5 21 7 17.5 10.5"/><polyline points="17.5 13.5 21 17 17.5 20.5"/></svg></span>
+                                <span class="fmt-name">Open Draw</span>
+                            </button>
+                            <button type="button" class="fmt-tile" data-val="locals">
+                                <span class="fmt-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 11.5L12 4l8.5 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></span>
+                                <span class="fmt-name">Home Turf</span>
+                            </button>
                         </div>
                     </div>
                     <div class="mt-blurb" id="t-format-blurb"></div>
@@ -688,18 +729,6 @@
 
     </div>
 
-    <!-- Tournament stats toggle button (shown during tournament) -->
-    <button id="btn-t-stats" class="btn-t-stats-toggle t-stats-hidden">📊 Stats</button>
-
-    <!-- Tournament stats panel (side drawer) -->
-    <div id="t-stats-panel" class="t-stats-hidden">
-        <div class="tsp-header">
-            <span>Tournament Results</span>
-            <button id="btn-t-stats-close" class="tsp-close" title="Close">×</button>
-        </div>
-        <div id="tsp-content" class="tsp-content"></div>
-    </div>
-
     <!-- Labs chooser overlay — front door for all standalone labs -->
     <div id="labs-overlay" class="labs-hidden">
         <div class="labs-backdrop" data-labs-close></div>
@@ -719,6 +748,10 @@
                 <button class="labs-card" type="button" data-lab-src="/lab/avatars.html" data-lab-title="Avatar Lab">
                     <span class="labs-card-glyph">🧬</span>
                     <span class="labs-card-text"><b>Avatar Lab</b><span>Generate per-model biome-creature avatars for every installed model.</span></span>
+                </button>
+                <button class="labs-card" type="button" data-lab-src="/lab/train.html" data-lab-title="Training Lab">
+                    <span class="labs-card-glyph">🎓</span>
+                    <span class="labs-card-text"><b>Training Lab</b><span>Turn gameplay into training data — generate trajectories, curate engine-validated moves, export an SFT dataset.</span></span>
                 </button>
                 <button class="labs-card" type="button" data-lab-src="/dashboard.html" data-lab-title="Analytics Dashboard">
                     <span class="labs-card-glyph">📊</span>

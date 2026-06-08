@@ -15,6 +15,7 @@
 import { fetchRankings, fetchHistory, resetRankings } from './rankings.js';
 import { applyAvatar, applyAvatarVideo, teardownClips } from './model-avatar.js';
 import { resolveModel, paramLabel, mightLevel } from './model-identity.js';
+import { openPlayerCard } from './player-card.js';
 
 const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
@@ -141,6 +142,29 @@ export async function openLeaderboard(root, opts = {}) {
     paintPodium(root.querySelector('.lb-podium'));
     paintAvatars(root.querySelector('.lb-history'));
 
+    // Click a fighter (row or podium) to open their dossier — which carries the
+    // Recent Tournaments strip, the doorway into past brackets.
+    const byName = new Map(entries.map(e => [e.name, e]));
+    const openCard = (name) => {
+        const e = byName.get(name);
+        if (!e) return;
+        openPlayerCard({
+            model: e.name,
+            charName: e.rm.displayName,
+            prettyName: e.rm.displayName,
+            ranking: { model: e.name, elo: e.stats.elo, wins: e.stats.wins, losses: e.stats.losses, rank: e.rank },
+        });
+    };
+    root.addEventListener('click', (ev) => {
+        const el = ev.target.closest('[data-open-card]');
+        if (el) openCard(el.dataset.openCard);
+    });
+    root.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        const el = ev.target.closest('[data-open-card]');
+        if (el) { ev.preventDefault(); openCard(el.dataset.openCard); }
+    });
+
     // Leaving the scene: stop every podium decoder before handing control back, so
     // no <video>/bounce-canvas keeps running off-screen.
     const back = () => { teardownClips(root); onBack(); };
@@ -166,8 +190,10 @@ function podiumHTML(top) {
             : `<div class="lb-pod-ava" data-model="${e.name}"></div>`;
         const fam = e.isHuman ? 'Human Challenger'
             : `${creatureGlyph(e.rm.family.archetype)} ${e.rm.family.label}`;
+        const clickable = e.isHuman ? '' : ' lb-clickable';
+        const openAttr = e.isHuman ? '' : ` data-open-card="${e.name}" role="button" tabindex="0"`;
         return `
-        <div class="lb-pod p${e.rank}" style="--bh:${e.rm.hue}">
+        <div class="lb-pod p${e.rank}${clickable}"${openAttr} style="--bh:${e.rm.hue}">
             <div class="lb-pod-medal">${MEDAL[e.rank]}</div>
             ${ava}
             <div class="lb-pod-perch">
@@ -249,7 +275,7 @@ function rowHTML(e) {
 
     const cloud = e.rm.sizeTier === 'cloud';
     const tag = cloud ? '<span class="lb-where cloud">CLOUD</span>' : '<span class="lb-where local">LOCAL</span>';
-    return `<div class="lb-row" data-tier="${e.rm.sizeTier}" style="--bh:${e.rm.hue}">
+    return `<div class="lb-row lb-clickable" data-tier="${e.rm.sizeTier}" data-open-card="${e.name}" role="button" tabindex="0" style="--bh:${e.rm.hue}">
         ${rankCell}
         <div class="lb-ava" data-model="${e.name}"></div>
         <div class="lb-id">

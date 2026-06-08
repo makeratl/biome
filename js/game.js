@@ -7,7 +7,7 @@ import { Renderer } from './renderer.js';
 import { Simulation } from './simulation.js';
 import { createOrganism, getAllSpecies } from './species.js';
 import { TurnManager, PHASE } from './turn.js';
-import { AIPlayer, listOllamaModels, pullModel, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel, isModelResident } from './ai.js';
+import { AIPlayer, listOllamaModels, pullModel, deleteModel, fetchRoster, setModelRetired, formatModelSize, RECOMMENDED_MODELS, prepareResidentSet, isCloudModel, isModelResident } from './ai.js';
 import { TournamentManager } from './tournament.js';
 import { buildField, FORMATS, DEFAULT_FORMAT } from './tournament-format.js';
 import { getStrategy } from './map-strategies.js';
@@ -31,9 +31,10 @@ const TOURNAMENT_EXCLUDE = /embed|nomic|mxbai|moondream|llava|coder|codellama|vi
 import { fetchRankings, fetchHistory, postResult, renderOddsInto, expectedScore } from './rankings.js';
 import { applyAvatar, applyAvatarVideo, clearAvatar, preloadAvatars } from './model-avatar.js';
 import { openPlayerCard } from './player-card.js';
-import { resolveModel, titleCase, resolvePlayerPalettes } from './model-identity.js';
+import { resolveModel, titleCase, resolvePlayerPalettes, paramLabel } from './model-identity.js';
 import { loadIdentityOverrides } from './identity-overrides.js';
 import { shortId } from './util.js';
+import { buildSingleMatchDashboard, paintDashboard } from './match-dashboard.js';
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
 import { playSound, setMuted, isMuted } from './sound.js';
@@ -58,6 +59,9 @@ class Game {
         this.turns = new TurnManager((phase) => this._onPhaseChange(phase));
         this.aiPlayers = {};   // { playerNum: AIPlayer }
         this._aiThinking = false;
+        // Retired (benched) models — excluded from tournament fields and the AI
+        // opponent pickers. Loaded from the server roster; empty until it resolves.
+        this._retired = new Set();
         // Pristine cyan/orange player palette, snapshotted before any match can
         // mutate CONFIG. Human-vs-human and human slots fall back to these.
         this._defaultPalettes = {
@@ -310,8 +314,6 @@ class Game {
                     this._openLabsChooser();
                 } else if (action === 'field-guide') {
                     openCodex();
-                } else if (action === 'tournament-stats') {
-                    this.tournament._toggleStats(true);
                 } else if (action === 'magnifier') {
                     this._toggleMagnifier();
                 }
@@ -2450,6 +2452,15 @@ class Game {
         const card = overlay.querySelector('.game-over-card');
         card?.classList.remove('t-tier-win', 't-tier-promote', 't-tier-throne', 't-tier-upset', 't-tier-massive');
 
+        // Reset the match-detail dashboard each game over — hidden until a ranked
+        // result lands (the toggle is wired in the _recordCasualResult callback).
+        const goDash = document.getElementById('go-dashboard');
+        const goDashBtn = document.getElementById('btn-go-dashboard');
+        goDash?.classList.add('md-hidden');
+        if (goDash) goDash.innerHTML = '';
+        if (goDashBtn) goDashBtn.hidden = true;
+        const scoreHistorySnapshot = [...this._scoreHistory];
+
         // Solo + Watch matches now count toward the leaderboard. Post the
         // result, then stage any rank drama (upset / promotion / throne) as its
         // own beat — a short pause after the match-end fanfare so the two don't
@@ -2464,6 +2475,30 @@ class Game {
                 card?.classList.add(`t-tier-${drama.tier}`);
                 if (drama.tier !== 'win') this._burstSparks(card, drama.tier);
                 setTimeout(() => this._celebrateResult(res.result), 800);
+
+                // Wire the match-detail dashboard — one card with score bars, the
+                // ELO each model carried into this match → after, and a score chart.
+                const dashMatch = {
+                    label: 'Ranked Match',
+                    p1: res.result.p1?.name,
+                    p2: res.result.p2?.name,
+                    winner: res.result.winner,
+                    scores: { 1: { finalScore: s1.finalScore }, 2: { finalScore: s2.finalScore } },
+                    scoreHistory: scoreHistorySnapshot,
+                    eloResult: res.result,
+                };
+                if (goDashBtn && goDash) {
+                    goDashBtn.hidden = false;
+                    goDashBtn.onclick = () => {
+                        const open = goDash.classList.toggle('md-hidden') === false;
+                        if (open && !goDash.dataset.rendered) {
+                            goDash.innerHTML = buildSingleMatchDashboard(dashMatch);
+                            paintDashboard(goDash, { matches: [dashMatch] });
+                            goDash.dataset.rendered = '1';
+                        }
+                    };
+                    delete goDash.dataset.rendered;
+                }
             }
         });
         overlay.querySelector('.final-score').innerHTML =
@@ -2850,35 +2885,39 @@ class Game {
         if (selects.length === 0) return;
 
         this._installedModels = await listOllamaModels();
+        this._retired = await fetchRoster();
         await this._loadModelMeta();   // ranking + record + form, for the cards
+
+        // Retired models are benched — never selectable as an opponent.
+        const available = this._installedModels.filter(m => !this._retired.has(m.name));
 
         for (const select of selects) {
             const prevValue = select.value;
             select.innerHTML = '';
 
-            if (this._installedModels.length === 0) {
+            if (available.length === 0) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No models found — is Ollama running?';
+                opt.textContent = 'No models available — is Ollama running?';
                 select.appendChild(opt);
                 continue;
             }
 
-            for (const m of this._installedModels) {
+            for (const m of available) {
                 const opt = document.createElement('option');
                 opt.value = m.name;
                 const size = formatModelSize(m.size);
                 opt.textContent = size ? `${m.name}  (${size})` : m.name;
                 select.appendChild(opt);
             }
-            if (prevValue && this._installedModels.some(m => m.name === prevValue)) {
+            if (prevValue && available.some(m => m.name === prevValue)) {
                 select.value = prevValue;
             }
         }
 
         // Set sensible defaults: prefer cloud models, pick two truly different ones for Watch
-        if (this._installedModels.length === 0) { this._wirePickerPreviews(); return; }
-        const installed = this._installedModels;
+        if (available.length === 0) { this._wirePickerPreviews(); return; }
+        const installed = available;
         const cloud = installed.filter(m => m.name.includes('cloud'));
         const first = cloud[0] || installed[0];
         // Find ANY model with a different name than first; fall back to first only if none exists
@@ -3319,11 +3358,21 @@ class Game {
         };
         bindSeg('t-size', (v) => { this._tournamentSize = Number(v); });
         bindSeg('t-format', (v) => { this._tournamentFormat = v; });
+
+        // Hovering a format tile previews its blurb without committing the
+        // selection; leaving the grid restores the chosen format's note.
+        const fmtBox = document.getElementById('t-format');
+        if (fmtBox) {
+            fmtBox.addEventListener('mouseover', (e) => {
+                const tile = e.target.closest('button[data-val]');
+                if (tile) this._setFormatBlurb(tile.dataset.val);
+            });
+            fmtBox.addEventListener('mouseleave', () => this._setFormatBlurb());
+        }
         this._syncTournamentControls();
     }
 
-    // Highlight the active size/format buttons, show the format blurb, and an
-    // honest one-liner on the bracket the current install can actually field.
+    // Highlight the active size/format buttons and show the chosen format's note.
     _syncTournamentControls() {
         const mark = (id, val) => {
             const box = document.getElementById(id);
@@ -3332,12 +3381,19 @@ class Game {
         };
         mark('t-size', this._tournamentSize);
         mark('t-format', this._tournamentFormat);
+        this._setFormatBlurb();
+    }
 
-        const fmt = FORMATS[this._tournamentFormat] || FORMATS[DEFAULT_FORMAT];
+    // Write the blurb for `formatKey` (defaults to the selected format) into the
+    // blurb line: the format's flavour text plus an honest one-liner on the
+    // bracket the current install can actually field. Home Turf scopes to local
+    // models, so its eligible count excludes cloud contenders.
+    _setFormatBlurb(formatKey = this._tournamentFormat) {
         const blurbEl = document.getElementById('t-format-blurb');
         if (!blurbEl) return;
-
-        const eligible = this._eligibleModelNames();
+        const fmt = FORMATS[formatKey] || FORMATS[DEFAULT_FORMAT];
+        const eligible = this._eligibleModelNames()
+            .filter(n => !fmt.localOnly || !isCloudModel(n));
         let note = fmt.blurb;
         if (eligible.length) {
             const cap = this._largestBracketFor(eligible.length);
@@ -3354,7 +3410,9 @@ class Game {
     // Models that can actually compete: chat models only (no embeddings, vision,
     // or code specialists — they can't follow the JSON action protocol fairly).
     _eligibleModelNames(models = this._installedModels || []) {
-        return models.filter(m => !TOURNAMENT_EXCLUDE.test(m.name)).map(m => m.name);
+        return models
+            .filter(m => !TOURNAMENT_EXCLUDE.test(m.name) && !this._retired?.has(m.name))
+            .map(m => m.name);
     }
 
     // World settings: grid size / hex zoom / round count, shared across modes.
@@ -4544,105 +4602,265 @@ class Game {
 
         const backdrop = document.querySelector('#model-config-modal .mcm-backdrop');
         if (backdrop) backdrop.addEventListener('click', () => this._closeModelConfigModal());
+
+        // Warm the retired set so eligibility + pickers honor the bench from the
+        // first match setup, before the manager is ever opened.
+        fetchRoster().then(set => { this._retired = set; }).catch(() => {});
+
+        // Wire the "pull arbitrary model" add bar.
+        const addBtn = document.getElementById('mcp-add-btn');
+        const addInput = document.getElementById('mcp-add-input');
+        if (addBtn && addInput) {
+            const submit = () => {
+                const name = addInput.value.trim();
+                if (name) this._pullModel(name, addBtn);
+            };
+            addBtn.addEventListener('click', submit);
+            addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+        }
     }
 
     async _refreshModelConfig() {
-        const installedDiv = document.getElementById('mcp-installed');
+        const activeDiv = document.getElementById('mcp-active');
+        const retiredDiv = document.getElementById('mcp-retired');
         const recommendedDiv = document.getElementById('mcp-recommended');
         const statusDiv = document.getElementById('mcp-status');
-        if (!installedDiv || !recommendedDiv) return;
+        if (!activeDiv || !recommendedDiv) return;
 
-        statusDiv.textContent = 'Checking models...';
+        statusDiv.textContent = 'Checking models…';
         this._installedModels = await listOllamaModels();
-        const installedNames = new Set(this._installedModels.map(m => m.name.split(':')[0]));
+        this._retired = await fetchRoster();
+        await this._loadModelMeta();   // ranking + record + form for the cards
+        const installedBaseNames = new Set(this._installedModels.map(m => m.name.split(':')[0]));
 
-        // Installed models list
-        installedDiv.innerHTML = '';
-        if (this._installedModels.length === 0) {
-            installedDiv.innerHTML = '<div class="mcp-model-item"><span class="mcp-model-name" style="color:#666;">No models installed</span></div>';
+        // Active roster = everything currently installed (retiring deletes the
+        // weights, so a retired model normally isn't installed anymore — but if
+        // one lingers in both lists, the roster bench wins).
+        const active = this._installedModels.filter(m => !this._retired.has(m.name));
+        const eloOf = (name) => this._modelMeta?.get(name)?.elo ?? -1;
+        active.sort((a, b) => eloOf(b.name) - eloOf(a.name) || a.name.localeCompare(b.name));
+
+        // Retired bench is a graveyard: weights are gone, so these cards are
+        // built straight from the roster names (Ollama no longer lists them).
+        // Their ELO/record still lives in the DB → still rendered.
+        const retired = [...this._retired]
+            .sort((a, b) => eloOf(b) - eloOf(a) || a.localeCompare(b))
+            .map(name => ({ name }));
+
+        // Active roster
+        activeDiv.innerHTML = '';
+        if (active.length === 0) {
+            activeDiv.innerHTML = '<div class="mcp-empty">No active models — install one below or reactivate a retired model.</div>';
         } else {
-            for (const m of this._installedModels) {
-                const item = document.createElement('div');
-                item.className = 'mcp-model-item';
-                const size = formatModelSize(m.size);
-                item.innerHTML = `
-                    <span class="mcp-model-name">${m.name}</span>
-                    <span class="mcp-model-size">${size}</span>
-                    <span class="mcp-model-tag mcp-tag-installed">installed</span>
-                `;
-                installedDiv.appendChild(item);
-            }
+            for (const m of active) activeDiv.appendChild(this._modelCard(m, false));
         }
 
-        // Recommended models list
+        // Retired bench — section hides itself when empty
+        const retiredSection = document.getElementById('mcp-retired-section');
+        if (retiredSection) retiredSection.style.display = retired.length ? '' : 'none';
+        retiredDiv.innerHTML = '';
+        for (const m of retired) retiredDiv.appendChild(this._modelCard(m, true));
+
+        // Recommended (not yet installed)
         recommendedDiv.innerHTML = '';
         for (const rec of RECOMMENDED_MODELS) {
-            const baseName = rec.name.split(':')[0];
-            const isInstalled = installedNames.has(baseName);
-            const item = document.createElement('div');
-            item.className = 'mcp-model-item';
-
-            if (isInstalled) {
-                item.innerHTML = `
-                    <span class="mcp-model-name" style="color:#6a6;">${rec.name}</span>
-                    <span class="mcp-model-size">${rec.size}</span>
-                    <span class="mcp-model-tag mcp-tag-installed">installed</span>
-                `;
-            } else {
-                const pullBtn = document.createElement('button');
-                pullBtn.className = 'mcp-pull-btn';
-                pullBtn.textContent = 'Install';
-                pullBtn.addEventListener('click', () => this._pullModel(rec.name, pullBtn));
-                item.innerHTML = `
-                    <span class="mcp-model-name">${rec.name}</span>
-                    <span class="mcp-model-size" title="${rec.desc}">${rec.size}</span>
-                    <span class="mcp-model-tag mcp-tag-recommended" title="${rec.desc}">rec</span>
-                `;
-                item.appendChild(pullBtn);
-            }
-            recommendedDiv.appendChild(item);
+            if (installedBaseNames.has(rec.name.split(':')[0])) continue;
+            recommendedDiv.appendChild(this._recommendedCard(rec));
         }
+        const recSection = document.getElementById('mcp-recommended-section');
+        if (recSection) recSection.style.display = recommendedDiv.children.length ? '' : 'none';
+
+        const countEl = document.getElementById('mcp-count');
+        if (countEl) countEl.textContent = `${active.length} active · ${retired.length} retired`;
 
         statusDiv.textContent = '';
     }
 
-    async _pullModel(modelName, btn) {
+    // A rich roster card: avatar art, identity-hue accent, ELO/rank/record/form,
+    // and the per-section action (Retire frees weights + benches / Reactivate
+    // re-downloads). Retired cards are built from a bare { name } since their
+    // weights — and thus the Ollama tag entry — are gone.
+    _modelCard(m, isRetired) {
+        const id = resolveModel(m.name);
+        const meta = this._modelMeta?.get(m.name) || null;
+        const size = this._modelSizeLabel(m.size);
+        const cloud = isCloudModel(m.name);
+
+        const card = document.createElement('div');
+        card.className = 'mcp-card' + (isRetired ? ' retired' : '');
+        card.style.setProperty('--mcp-hue', id.hue);
+
+        let statsHtml;
+        if (meta && meta.elo != null) {
+            const wr = meta.winrate != null ? ` · ${meta.winrate}%` : '';
+            const form = (meta.form || []).map(r => `<span class="mcp-f mcp-f-${r}">${r}</span>`).join('');
+            statsHtml = `
+                <div class="mcp-card-elo">ELO ${meta.elo}<span class="mcp-card-rank">#${meta.rank}</span></div>
+                <div class="mcp-card-rec">${meta.wins}W-${meta.losses}L${wr}</div>
+                <div class="mcp-card-form">${form}</div>`;
+        } else {
+            statsHtml = `<div class="mcp-card-unproven">⚡ Unproven — no ranked matches yet</div>`;
+        }
+
+        card.innerHTML = `
+            <div class="mcp-card-head">
+                <div class="mcp-card-ava-slot"></div>
+                <div class="mcp-card-id">
+                    <div class="mcp-card-name" title="${m.name}">${id.displayName}</div>
+                    <div class="mcp-card-sub">${id.vendor} · ${paramLabel(m.name)}${cloud ? ' ☁' : ''}${size ? ' · ' + size : ''}${isRetired ? ' · weights freed' : ''}</div>
+                </div>
+                ${isRetired ? '<div class="mcp-card-badge">retired</div>' : ''}
+            </div>
+            <div class="mcp-card-stats">${statsHtml}</div>
+            <div class="mcp-card-actions"></div>`;
+
+        // Avatar art (baked still → procedural hue fallback), same pipeline as the
+        // board/player cards. Seed the slot with initials so it never paints blank.
+        const ava = document.createElement('div');
+        ava.className = 'mcp-card-ava';
+        ava.textContent = id.initials;
+        card.querySelector('.mcp-card-ava-slot').appendChild(ava);
+        applyAvatar(ava, m.name, { style: 'cyber-organic', cover: true }).catch(() => {});
+
+        const actions = card.querySelector('.mcp-card-actions');
+        const benchBtn = document.createElement('button');
+        if (isRetired) {
+            benchBtn.className = 'mcp-act mcp-act-reactivate';
+            benchBtn.textContent = 'Reactivate';
+            benchBtn.title = 'Re-download the weights and return this model to active competition';
+            benchBtn.addEventListener('click', () => this._reactivateModel(m.name, benchBtn));
+        } else {
+            benchBtn.className = 'mcp-act mcp-act-retire';
+            benchBtn.textContent = 'Retire';
+            benchBtn.title = 'Free the weights from disk and bench from competition — ELO history is kept';
+            benchBtn.addEventListener('click', () => this._retireModel(m.name, benchBtn));
+        }
+        actions.appendChild(benchBtn);
+
+        return card;
+    }
+
+    // A compact "add this" card for a recommended model that isn't installed yet.
+    _recommendedCard(rec) {
+        const id = resolveModel(rec.name);
+        const card = document.createElement('div');
+        card.className = 'mcp-card mcp-card-add';
+        card.style.setProperty('--mcp-hue', id.hue);
+        card.innerHTML = `
+            <div class="mcp-card-head">
+                <div class="mcp-card-id">
+                    <div class="mcp-card-name">${rec.name}</div>
+                    <div class="mcp-card-sub" title="${rec.desc}">${rec.desc}</div>
+                </div>
+            </div>
+            <div class="mcp-card-stats"><div class="mcp-card-recsize">${rec.size}</div></div>
+            <div class="mcp-card-actions"></div>`;
+        const btn = document.createElement('button');
+        btn.className = 'mcp-act mcp-act-install';
+        btn.textContent = 'Install';
+        btn.addEventListener('click', () => this._pullModel(rec.name, btn));
+        card.querySelector('.mcp-card-actions').appendChild(btn);
+        return card;
+    }
+
+    // Retire a model. Destructive: frees the weights from disk (Ollama delete)
+    // AND benches it everywhere — but the ELO/record stays in the DB and the
+    // model lands in the Retired graveyard so its history survives. Two-click
+    // confirm on the button itself (no browser dialog, harness rule).
+    async _retireModel(name, btn) {
+        const statusDiv = document.getElementById('mcp-status');
+        if (!btn.classList.contains('confirming')) {
+            btn.classList.add('confirming');
+            btn.textContent = 'Retire? Frees weights';
+            clearTimeout(btn._confirmTimer);
+            btn._confirmTimer = setTimeout(() => {
+                btn.classList.remove('confirming');
+                btn.textContent = 'Retire';
+            }, 4000);
+            return;
+        }
+        clearTimeout(btn._confirmTimer);
+        btn.disabled = true;
+        btn.classList.remove('confirming');
+        btn.textContent = 'Retiring…';
+        if (statusDiv) statusDiv.textContent = `Retiring ${name} — freeing weights…`;
+
+        // Delete weights first; only bench once the disk is actually freed, so a
+        // failed delete never leaves a "retired" model that's still installed.
+        const del = await deleteModel(name);
+        if (!del.success) {
+            btn.disabled = false;
+            btn.textContent = 'Retire';
+            if (statusDiv) statusDiv.textContent = `Failed to free weights: ${del.error}`;
+            return;
+        }
+        this._installedModels = this._installedModels.filter(m => m.name !== name);
+        const r = await setModelRetired(name, true);
+        this._retired = r.success ? new Set(r.retired) : (this._retired.add(name), this._retired);
+        await this._populateModelPickers();
+        await this._refreshModelConfig();
+        if (statusDiv) statusDiv.textContent = `${name} retired — weights freed, ELO history kept.`;
+    }
+
+    // Reactivate a retired model: re-download the weights (the graveyard only
+    // kept the record, not the bits), then un-bench. Progress shows on the
+    // button; for a big model this is a full re-pull.
+    async _reactivateModel(name, btn) {
         const statusDiv = document.getElementById('mcp-status');
         btn.disabled = true;
-        btn.textContent = 'Pulling...';
-        const originalHtml = btn.closest('.mcp-model-item').innerHTML;
+        btn.textContent = 'Fetching…';
+        if (statusDiv) statusDiv.textContent = `Reactivating ${name} — re-downloading weights…`;
 
-        // Replace tag with pulling indicator
-        const tag = btn.closest('.mcp-model-item').querySelector('.mcp-tag-recommended');
-        if (tag) {
-            tag.className = 'mcp-model-tag mcp-tag-pulling';
-            tag.textContent = 'pulling';
+        const result = await pullModel(name, (status, completed, total) => {
+            if (status === 'downloading' && total) {
+                const pct = Math.round((completed / total) * 100);
+                btn.textContent = `${pct}%`;
+                if (statusDiv) statusDiv.textContent = `Re-downloading ${name}: ${pct}%`;
+            } else if (statusDiv) {
+                statusDiv.textContent = `${name}: ${status}`;
+            }
+        });
+
+        if (!result.success) {
+            btn.disabled = false;
+            btn.textContent = 'Reactivate';
+            if (statusDiv) statusDiv.textContent = `Reactivate failed: ${result.error} — still retired.`;
+            return;
         }
+        const r = await setModelRetired(name, false);
+        this._retired = r.success ? new Set(r.retired) : (this._retired.delete(name), this._retired);
+        await this._populateModelPickers();
+        await this._refreshModelConfig();
+        if (statusDiv) statusDiv.textContent = `${name} reactivated — back in competition.`;
+    }
+
+    // Pull a model by name — from the add bar or a recommended card. DOM-agnostic:
+    // progress shows on the triggering button (if any) and the status line.
+    async _pullModel(modelName, btn) {
+        const statusDiv = document.getElementById('mcp-status');
+        const origLabel = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Pulling…'; }
 
         const result = await pullModel(modelName, (status, completed, total) => {
             if (status === 'downloading' && total) {
                 const pct = Math.round((completed / total) * 100);
-                btn.textContent = `${pct}%`;
-                statusDiv.textContent = `Downloading ${modelName}: ${pct}%`;
-            } else {
+                if (btn) btn.textContent = `${pct}%`;
+                if (statusDiv) statusDiv.textContent = `Downloading ${modelName}: ${pct}%`;
+            } else if (statusDiv) {
                 statusDiv.textContent = `${modelName}: ${status}`;
             }
         });
 
         if (result.success) {
-            statusDiv.textContent = `${modelName} installed!`;
-            // Refresh everything — pickers + config panel
+            if (statusDiv) statusDiv.textContent = `${modelName} installed!`;
+            const input = document.getElementById('mcp-add-input');
+            if (input) input.value = '';
+            // Refresh pickers + the card grid (the triggering button is replaced here).
             await this._populateModelPickers();
             await this._refreshModelConfig();
         } else {
-            statusDiv.textContent = `Failed: ${result.error}`;
-            btn.disabled = false;
-            btn.textContent = 'Install';
-            const pullingTag = btn.closest('.mcp-model-item')?.querySelector('.mcp-tag-pulling');
-            if (pullingTag) {
-                pullingTag.className = 'mcp-model-tag mcp-tag-recommended';
-                pullingTag.textContent = 'rec';
-            }
+            if (statusDiv) statusDiv.textContent = `Failed: ${result.error}`;
+            if (btn) { btn.disabled = false; btn.textContent = origLabel || 'Install'; }
         }
     }
 
@@ -4767,11 +4985,20 @@ class Game {
             return { name, elo: s?.elo ?? BASE_ELO, games: s?.games ?? 0 };
         });
 
-        const size = Math.min(this._tournamentSize || 8, this._largestBracketFor(pool.length));
         const formatKey = this._tournamentFormat || DEFAULT_FORMAT;
-        const field = buildField(pool, size, formatKey);
+        const fmt = FORMATS[formatKey] || FORMATS[DEFAULT_FORMAT];
+        // Home Turf (localOnly) scopes the pool to local models before the field
+        // is built — cloud contenders sit this one out.
+        const scopedPool = fmt.localOnly ? pool.filter(p => !isCloudModel(p.name)) : pool;
+        if (scopedPool.length < 2) {
+            alert('Need at least 2 local models for a Home Turf tournament.');
+            return;
+        }
 
-        this.tournament.start(field, mode, world, FORMATS[formatKey]);
+        const size = Math.min(this._tournamentSize || 8, this._largestBracketFor(scopedPool.length));
+        const field = buildField(scopedPool, size, formatKey);
+
+        this.tournament.start(field, mode, world, fmt);
     }
 }
 

@@ -547,6 +547,191 @@ def get_matches(limit=2000):
         return out
 
 
+# ── tournament history ───────────────────────────────────────
+# Brackets are reconstructable from `matches`: every tournament match carries
+# `tournament_id` and `round` — where `round` is the FLAT bracket index the
+# client posts (match.id: 0..N-1 across the whole tree), not the depth. A clean
+# single-elim bracket of P players has N = P-1 matches; the flat indices fill the
+# rounds in order (P/2 quarter-type matches, then P/4, … then 1 final). We use
+# that to derive each match's depth and "participants entering" for placement.
+
+def _participants_at(flat_index, total_matches):
+    """Players entering the round that the flat-index match belongs to (8→QF,
+    4→SF, 2→Final). Returns None when the tournament isn't a clean power-of-two
+    single-elim bracket (then callers fall back to a flat, untiered view)."""
+    P = total_matches + 1
+    if P < 2 or (P & (P - 1)) != 0:
+        return None
+    boundary = 0
+    participants = P
+    while participants >= 2:
+        matches_in_round = participants // 2
+        if flat_index < boundary + matches_in_round:
+            return participants
+        boundary += matches_in_round
+        participants //= 2
+    return 2
+
+
+def _placement_label(participants):
+    """Human label for being eliminated in the round of `participants`."""
+    return {2: 'Runner-up', 4: 'Semi-finalist', 8: 'Quarter-finalist'}.get(
+        participants, f'Round of {participants}')
+
+
+def get_tournaments(limit=100):
+    """One row per real tournament (a multi-match bracket — single ranked games
+    carry a one-off id and a single match, filtered out here): champion, when it
+    ran, format/mode, and how many distinct models competed. Newest first."""
+    with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            """SELECT tournament_id,
+                      MIN(played_at) AS started_at,
+                      MAX(played_at) AS played_at,
+                      COUNT(*)       AS match_count,
+                      MAX(format)    AS format,
+                      MAX(mode)      AS mode
+               FROM matches
+               WHERE tournament_id IS NOT NULL
+               GROUP BY tournament_id
+               HAVING match_count > 1
+               ORDER BY played_at DESC
+               LIMIT ?""", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            tid = r['tournament_id']
+            final = conn.execute(
+                """SELECT winner FROM matches
+                   WHERE tournament_id=? ORDER BY round DESC, id DESC LIMIT 1""",
+                (tid,)).fetchone()
+            model_count = conn.execute(
+                """SELECT COUNT(*) AS c FROM
+                       (SELECT p1 AS m FROM matches WHERE tournament_id=?
+                        UNION SELECT p2 FROM matches WHERE tournament_id=?)""",
+                (tid, tid)).fetchone()['c']
+            out.append({
+                'tournament_id': tid,
+                'champion': final['winner'] if final else None,
+                'started_at': r['started_at'],
+                'played_at': r['played_at'],
+                'match_count': r['match_count'],
+                'model_count': model_count,
+                'format': r['format'],
+                'mode': r['mode'],
+            })
+        return out
+
+
+def get_tournament(tournament_id):
+    """One tournament's matches in bracket order, each with the ELO both players
+    carried into the match → out of it (from rating_events). Shaped so the client
+    can feed it straight into the match dashboard. Rank-at-time isn't stored, so
+    the per-side rank fields are null (historical views show ELO + delta only)."""
+    with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            """SELECT id, played_at, round, mode, format, map_size, map_strategy,
+                      rounds, p1, p2, p1_score, p2_score, winner, loser, margin, seed
+               FROM matches WHERE tournament_id=?
+               ORDER BY round ASC, id ASC""", (tournament_id,)).fetchall()
+        if not rows:
+            return {'tournament_id': tournament_id, 'found': False, 'matches': []}
+
+        ids = [r['id'] for r in rows]
+        ev_by_match = {}
+        placeholders = ','.join('?' * len(ids))
+        for e in conn.execute(
+            f"""SELECT match_id, model, elo_before, elo_after, delta, win_prob
+                FROM rating_events WHERE match_id IN ({placeholders})""", ids).fetchall():
+            ev_by_match.setdefault(e['match_id'], {})[e['model']] = {
+                'eloBefore': e['elo_before'], 'eloAfter': e['elo_after'],
+                'delta': e['delta'], 'winProb': e['win_prob']}
+
+        total = len(rows)
+        matches = []
+        for r in rows:
+            d = dict(r)
+            ev = ev_by_match.get(r['id'], {})
+
+            def side(name):
+                s = ev.get(name)
+                return {'name': name, 'eloBefore': s['eloBefore'], 'eloAfter': s['eloAfter'],
+                        'rankBefore': None, 'rankAfter': None} if s else \
+                       {'name': name, 'eloBefore': None, 'eloAfter': None,
+                        'rankBefore': None, 'rankAfter': None}
+
+            d['eloResult'] = {'winner': r['winner'], 'p1': side(r['p1']), 'p2': side(r['p2'])}
+            d['participants'] = _participants_at(r['round'], total)
+            matches.append(d)
+
+        final = matches[-1] if matches else None
+        return {
+            'tournament_id': tournament_id,
+            'found': True,
+            'champion': final['winner'] if final else None,
+            'match_count': total,
+            'matches': matches,
+        }
+
+
+def get_model_tournaments(name, limit=12):
+    """The tournaments a model competed in, newest first, with how far it got
+    (Champion / Runner-up / Semi-finalist / …) and its win count that bracket.
+    Powers the 'Recent Tournaments' strip on the model's profile card."""
+    with _lock:
+        conn = _connect()
+        tids = conn.execute(
+            """SELECT tournament_id, MAX(played_at) AS played_at, COUNT(*) AS match_count
+               FROM matches
+               WHERE tournament_id IS NOT NULL AND (p1=? OR p2=?)
+               GROUP BY tournament_id
+               HAVING (SELECT COUNT(*) FROM matches m2 WHERE m2.tournament_id = matches.tournament_id) > 1
+               ORDER BY played_at DESC
+               LIMIT ?""", (name, name, limit)).fetchall()
+        out = []
+        for t in tids:
+            tid = t['tournament_id']
+            total = conn.execute(
+                'SELECT COUNT(*) AS c FROM matches WHERE tournament_id=?', (tid,)).fetchone()['c']
+            final = conn.execute(
+                """SELECT winner FROM matches
+                   WHERE tournament_id=? ORDER BY round DESC, id DESC LIMIT 1""",
+                (tid,)).fetchone()
+            champion = final['winner'] if final else None
+            model_count = conn.execute(
+                """SELECT COUNT(*) AS c FROM
+                       (SELECT p1 AS m FROM matches WHERE tournament_id=?
+                        UNION SELECT p2 FROM matches WHERE tournament_id=?)""",
+                (tid, tid)).fetchone()['c']
+            # The model's matches in this bracket; its last (highest flat index)
+            # is where its run ended.
+            mine = conn.execute(
+                """SELECT round, winner FROM matches
+                   WHERE tournament_id=? AND (p1=? OR p2=?)
+                   ORDER BY round ASC""", (tid, name, name)).fetchall()
+            wins = sum(1 for r in mine if r['winner'] == name)
+            if champion == name:
+                placement = 'Champion'
+            elif mine:
+                exit_round = mine[-1]['round']
+                participants = _participants_at(exit_round, total)
+                placement = _placement_label(participants) if participants else 'Competed'
+            else:
+                placement = 'Competed'
+            out.append({
+                'tournament_id': tid,
+                'played_at': t['played_at'],
+                'champion': champion,
+                'model_count': model_count,
+                'match_count': total,
+                'wins': wins,
+                'placement': placement,
+                'is_champion': champion == name,
+            })
+        return out
+
+
 def get_model_detail(name):
     """Everything about one model for the drill-in view: standing + rank, the full
     ELO timeline, every match it played, head-to-head splits vs each opponent, and

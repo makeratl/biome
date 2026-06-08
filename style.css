@@ -388,7 +388,7 @@ body {
     border-radius: 12px;
     padding: 24px 26px;
     width: 100%;
-    max-width: 420px;
+    max-width: 500px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -397,6 +397,8 @@ body {
 .launcher-setup-card .mt-blurb {
     padding: 8px 4px;
     font-size: 12px;
+    /* Hold height across formats so hover-preview doesn't jolt the layout. */
+    min-height: 52px;
 }
 .launcher-setup-actions {
     display: flex;
@@ -437,16 +439,19 @@ body {
 }
 .model-config-modal #model-config-panel {
     position: relative;
-    background: #11111e;
+    background:
+        radial-gradient(120% 80% at 0% 0%, rgba(60, 90, 180, 0.10), transparent 60%),
+        radial-gradient(120% 80% at 100% 0%, rgba(150, 70, 180, 0.10), transparent 60%),
+        #0d0d18;
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 10px;
-    width: 100%;
-    max-width: 480px;
-    max-height: 80vh;
+    border-radius: 14px;
+    width: min(960px, 92vw);
+    max-width: none;
+    max-height: 85vh;
     overflow-y: auto;
-    padding: 16px 18px;
+    padding: 18px 20px 20px;
     font-size: 11px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
 }
 
 /* ── Settings panel (Game Dynamics) ───────────────────────────── */
@@ -807,15 +812,63 @@ body {
     line-height: 1.15;
 }
 .ws-seg-name { font-size: 11px; font-weight: 700; }
-/* Format segment: 4 options with longer labels — let them wrap to two lines
-   and centre so the row stays the same height as the size/round segments. */
-.world-seg-fmt button {
-    display: flex; align-items: center; justify-content: center;
-    text-align: center; min-height: 30px;
+/* Format picker: a 3×2 grid of illustrated tiles (glyph + name) rather than a
+   cramped segmented row — six modes need the room. The row stacks the label
+   above the grid instead of sitting inline. */
+.mw-row-fmt {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
 }
-.world-seg-fmt .ws-seg-name {
-    font-size: 9.5px; font-weight: 700; line-height: 1.12;
-    white-space: normal;
+.mw-row-fmt .mw-label { flex: none; }
+.fmt-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+.fmt-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 11px 6px 9px;
+    background: #0e1424;
+    border: 1px solid #1f2942;
+    border-radius: 8px;
+    color: #6e6e92;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s, border-color 0.15s,
+                box-shadow 0.15s, transform 0.12s;
+}
+.fmt-tile:hover {
+    color: #b8b8d8;
+    border-color: #324063;
+    transform: translateY(-1px);
+}
+.fmt-tile.on {
+    color: #c8a86e;
+    border-color: rgba(200, 168, 110, 0.55);
+    background: rgba(200, 168, 110, 0.10);
+    box-shadow: 0 0 0 1px rgba(200, 168, 110, 0.22),
+                0 6px 16px rgba(200, 168, 110, 0.10);
+}
+.fmt-ico { display: flex; }
+.fmt-ico svg {
+    width: 26px; height: 26px; display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.fmt-name {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.12;
+    text-align: center;
 }
 .ws-seg-dim {
     font-size: 9px; font-weight: 600; opacity: 0.6;
@@ -1170,106 +1223,220 @@ body {
     border-style: solid;
 }
 
-.model-config-panel {
-    margin-top: 4px;
-    padding: 6px;
-    background: #0e0e1a;
-    border: 1px solid #2a2a4e;
-    border-radius: 4px;
-    font-size: 10px;
-    color: #c8c8e0;
-    max-height: 260px;
-    overflow-y: auto;
-}
+/* ── Model Roster manager — card grid ─────────────────────────── */
 .mcp-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-weight: 600;
-    margin-bottom: 6px;
+    margin-bottom: 12px;
 }
+.mcp-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+    color: #eef;
+}
+.mcp-count { font-size: 10px; font-weight: 500; color: #8890b0; letter-spacing: 0.3px; }
 .mcp-close {
     background: none;
     border: none;
     color: #888;
-    font-size: 14px;
+    font-size: 20px;
+    line-height: 1;
     cursor: pointer;
     padding: 0 4px;
 }
 .mcp-close:hover { color: #ccc; }
-.mcp-section { margin-bottom: 6px; }
+
+.mcp-addbar { display: flex; gap: 8px; margin-bottom: 14px; }
+.mcp-add-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 8px 11px;
+    color: #dde;
+    font-size: 11px;
+    outline: none;
+}
+.mcp-add-input:focus { border-color: rgba(120, 160, 255, 0.5); }
+.mcp-add-input::placeholder { color: #667; }
+
+.mcp-section { margin-bottom: 16px; }
 .mcp-label {
-    font-weight: 600;
-    color: #aaa;
-    margin-bottom: 3px;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: #aab;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
-.mcp-hint {
-    font-size: 9px;
-    color: #666;
-    margin-bottom: 3px;
+.mcp-label-note { font-weight: 400; text-transform: none; letter-spacing: 0; color: #667; }
+.mcp-empty {
+    grid-column: 1 / -1;
+    color: #778;
+    font-size: 11px;
+    padding: 14px;
+    text-align: center;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
 }
-.mcp-model-list { display: flex; flex-direction: column; gap: 2px; }
-.mcp-model-item {
+
+.mcp-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 10px;
+}
+
+/* --mcp-hue is set per card from the model's identity palette */
+.mcp-card {
+    position: relative;
+    background:
+        linear-gradient(180deg, hsla(var(--mcp-hue, 220), 60%, 40%, 0.14), transparent 55%),
+        #14141f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid hsl(var(--mcp-hue, 220), 65%, 58%);
+    border-radius: 10px;
+    padding: 11px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.mcp-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45),
+                0 0 0 1px hsla(var(--mcp-hue, 220), 70%, 60%, 0.35);
+}
+.mcp-card.retired { filter: saturate(0.35) brightness(0.82); opacity: 0.9; }
+
+.mcp-card-head { display: flex; align-items: center; gap: 10px; }
+.mcp-card-ava-slot { flex: none; }
+.mcp-card-ava {
+    width: 44px;
+    height: 44px;
+    border-radius: 9px;
+    background: hsl(var(--mcp-hue, 220), 45%, 26%);
+    border: 1px solid hsla(var(--mcp-hue, 220), 70%, 60%, 0.5);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 3px 6px;
-    background: #141428;
-    border-radius: 3px;
-    gap: 4px;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
 }
-.mcp-model-name {
-    flex: 1;
+.mcp-card-ava.has-avatar { color: transparent; }
+.mcp-card-id { min-width: 0; flex: 1; }
+.mcp-card-name {
+    font-weight: 700;
+    font-size: 12.5px;
+    color: #eef;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.mcp-model-size {
-    font-size: 9px;
-    color: #666;
+.mcp-card-sub {
+    font-size: 9.5px;
+    color: #889;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
-.mcp-model-tag {
+.mcp-card-badge {
+    flex: none;
+    align-self: flex-start;
     font-size: 8px;
-    padding: 1px 4px;
-    border-radius: 2px;
-    white-space: nowrap;
-}
-.mcp-tag-installed {
-    background: #1a3a1a;
-    color: #6a6;
-}
-.mcp-tag-recommended {
-    background: #3a2a1a;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     color: #c8a86e;
+    background: rgba(120, 90, 40, 0.25);
+    border: 1px solid rgba(200, 168, 110, 0.3);
+    border-radius: 4px;
+    padding: 2px 5px;
 }
-.mcp-tag-pulling {
-    background: #1a2a3a;
-    color: #6ac;
+
+.mcp-card-stats {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    min-height: 18px;
 }
-.mcp-pull-btn {
-    font-size: 9px;
-    padding: 1px 6px;
-    background: #1a2a4e;
-    color: #88aacc;
-    border: 1px solid #2a3a5e;
-    border-radius: 2px;
+.mcp-card-elo { font-size: 13px; font-weight: 700; color: #fff; }
+.mcp-card-rank { font-size: 9px; font-weight: 600; color: #99a; margin-left: 4px; }
+.mcp-card-rec { font-size: 10.5px; color: #aab; }
+.mcp-card-form { display: inline-flex; gap: 2px; margin-left: auto; }
+.mcp-f {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #0a0a10;
+}
+.mcp-f-W { background: #5cd07a; }
+.mcp-f-L { background: #d06a6a; color: #f4dede; }
+.mcp-card-unproven { font-size: 10px; color: #889; font-style: italic; }
+.mcp-card-recsize { font-size: 11px; color: #99a; font-weight: 600; }
+.mcp-card-add { border-left-style: dashed; }
+
+.mcp-card-actions { display: flex; gap: 6px; margin-top: 2px; }
+.mcp-act {
+    flex: 1;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 7px;
+    border: 1px solid transparent;
     cursor: pointer;
     white-space: nowrap;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.mcp-pull-btn:hover {
-    background: #2a3a6e;
-    color: #aaccff;
+.mcp-act:disabled { opacity: 0.5; cursor: not-allowed; }
+.mcp-act-install {
+    flex: none;
+    background: hsla(150, 50%, 40%, 0.22);
+    color: #7ddca0;
+    border-color: hsla(150, 50%, 50%, 0.4);
 }
-.mcp-pull-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+.mcp-act-install:hover { background: hsla(150, 55%, 45%, 0.34); color: #a8f0c4; }
+.mcp-addbar .mcp-act-install { padding: 8px 18px; }
+/* Retire is destructive (frees weights) — neutral at rest, red on confirm. */
+.mcp-act-retire {
+    background: rgba(255, 255, 255, 0.05);
+    color: #aab;
+    border-color: rgba(255, 255, 255, 0.14);
 }
+.mcp-act-retire:hover { background: rgba(190, 70, 70, 0.16); color: #e89a9a; border-color: rgba(200, 90, 90, 0.42); }
+.mcp-act-retire.confirming {
+    background: rgba(190, 60, 60, 0.5);
+    color: #fff;
+    border-color: #c05656;
+}
+.mcp-act-reactivate {
+    background: hsla(150, 50%, 40%, 0.2);
+    color: #7ddca0;
+    border-color: hsla(150, 50%, 50%, 0.38);
+}
+.mcp-act-reactivate:hover { background: hsla(150, 55%, 45%, 0.32); color: #a8f0c4; }
+
 .mcp-status {
-    font-size: 9px;
-    color: #888;
-    margin-top: 4px;
-    min-height: 14px;
+    font-size: 10px;
+    color: #99a;
+    margin-top: 6px;
+    min-height: 16px;
 }
 
 /* ── AP chip (canvas overlay, only during human turns) ──── */
@@ -4223,6 +4390,14 @@ body.event-promote #game-over-overlay {
     margin: 5px 2px;
 }
 
+/* Journey highlight — a traced competitor's matches glow gold through the tree. */
+.bt-card.bt-card-mine {
+    border-color: hsl(45, 85%, 58%);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.45), 0 0 0 1px hsl(45, 85%, 58%, 0.5),
+                0 0 18px hsl(45, 90%, 55%, 0.28);
+}
+.bt-side.bt-side-mine .bt-name { color: hsl(45, 92%, 72%); }
+
 .bt-side {
     display: flex;
     align-items: center;
@@ -5005,9 +5180,6 @@ body.event-promote #game-over-overlay {
     border-color: rgba(255,255,255,0.3);
 }
 
-/* ── Tournament Stats Panel ──────────────────────────────── */
-.t-stats-hidden { display: none !important; }
-
 /* ── Launcher ghost button (Back / Cancel) ──────────────────── */
 /* (The old Standard/Lightning Tournament Mode Select screen was retired —
    round count is chosen directly via the world-settings Rounds picker.) */
@@ -5768,146 +5940,72 @@ body.event-promote #game-over-overlay {
     font-variant-numeric: tabular-nums;
 }
 
-/* Floating stats toggle button is replaced by the gear menu entry */
-#btn-t-stats { display: none !important; }
-#btn-t-stats.legacy {
-    position: fixed;
-    bottom: 18px;
-    right: 18px;
-    z-index: 1100;
-    background: linear-gradient(135deg, hsl(270, 45%, 26%), hsl(220, 45%, 26%));
-    border: 1px solid hsl(270, 40%, 42%);
-    color: hsl(270, 80%, 85%);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 8px 16px;
-    border-radius: 20px;
-    cursor: pointer;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
-    transition: background 0.15s, border-color 0.15s;
-}
-#btn-t-stats:hover {
-    background: linear-gradient(135deg, hsl(270, 50%, 34%), hsl(220, 50%, 34%));
-    border-color: hsl(270, 60%, 58%);
-}
-
-#t-stats-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 320px;
-    height: 100vh;
-    z-index: 1050;
-    background: linear-gradient(180deg, rgba(15, 20, 38, 0.96), rgba(10, 12, 26, 0.98));
-    border-left: 1px solid rgba(255,255,255,0.08);
-    backdrop-filter: blur(12px);
-    display: flex;
-    flex-direction: column;
-    box-shadow: -8px 0 32px rgba(0,0,0,0.65);
-    animation: tsp-slidein 0.22s cubic-bezier(0.2, 0.9, 0.4, 1);
-}
-@keyframes tsp-slidein {
-    from { transform: translateX(100%); opacity: 0; }
-    to   { transform: translateX(0);   opacity: 1; }
-}
-
-.tsp-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.18em;
-    color: hsl(45, 60%, 75%);
-    text-transform: uppercase;
-    flex-shrink: 0;
-    background: linear-gradient(180deg, rgba(200, 168, 110, 0.08), transparent);
-}
-.tsp-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-.tsp-close,
-.tsp-action {
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.3);
-    font-size: 18px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0 2px;
-}
-.tsp-action { font-size: 14px; }
-.tsp-close:hover,
-.tsp-action:hover { color: rgba(255,255,255,0.85); }
-
-.tsp-content {
-    flex: 1;
+/* ── Match dashboard (championship + ranked game-over) ───────── */
+/* Embedded, in-screen results view: bracket summary, ELO progression, and
+   per-match cards. Replaces the old right-side "Tournament Results" drawer. */
+.md-dashboard {
+    width: min(560px, 92vw);
+    max-height: 56vh;
     overflow-y: auto;
-    padding: 10px 12px 20px;
+    margin-top: 16px;
+    padding: 14px 16px;
+    text-align: left;
+    background: linear-gradient(180deg, rgba(15, 20, 38, 0.55), rgba(10, 12, 26, 0.65));
+    border: 1px solid rgba(200, 168, 110, 0.18);
+    border-radius: 10px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    animation: md-fadein 0.22s ease;
 }
-.tsp-content::-webkit-scrollbar { width: 4px; }
-.tsp-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+.md-dashboard.md-hidden { display: none; }
+@keyframes md-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.md-dashboard::-webkit-scrollbar { width: 5px; }
+.md-dashboard::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 3px; }
 
-.tsp-section-title {
+.md-section-title {
     font-size: 9px;
     font-weight: 800;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.25);
-    margin-bottom: 6px;
+    color: hsl(45, 55%, 70%);
+    margin: 14px 0 7px;
 }
+.md-section-title:first-child { margin-top: 0; }
+.md-section-title .md-sub {
+    color: rgba(255,255,255,0.3);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: none;
+}
+.md-empty { font-size: 11px; color: rgba(255,255,255,0.25); padding: 6px 0; }
 
 /* Bracket summary */
-.tsp-bracket-section {
+.md-bracket-round {
     font-size: 8px;
     font-weight: 800;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.2);
     margin: 8px 0 4px;
 }
-.tsp-match {
+.md-bracket-match {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
     background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 6px;
-    padding: 7px 9px;
-    margin-bottom: 5px;
+    padding: 6px 9px;
+    margin-bottom: 4px;
 }
-.tsp-match.tsp-done { border-color: rgba(255,255,255,0.13); }
-.tsp-match-label {
+.md-bracket-match.md-done { border-color: rgba(255,255,255,0.13); }
+.md-bm-name { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5); white-space: nowrap; }
+.md-bm-vs { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.2); }
+.md-bm-name.md-win  { color: hsl(140, 60%, 65%); }
+.md-bm-name.md-lose { color: rgba(255,255,255,0.22); text-decoration: line-through; }
+.md-bm-tag {
     font-size: 9px;
-    color: rgba(255,255,255,0.25);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 3px;
-}
-.tsp-match-row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-}
-.tsp-name {
-    font-size: 11px;
-    font-weight: 600;
-    color: rgba(255,255,255,0.45);
-    white-space: nowrap;
-}
-.tsp-name.tsp-win  { color: hsl(140, 60%, 65%); }
-.tsp-name.tsp-lose { color: rgba(255,255,255,0.2); text-decoration: line-through; }
-.tsp-vs {
-    font-size: 9px;
-    color: rgba(255,255,255,0.18);
-    font-weight: 700;
-}
-.tsp-winner-tag {
-    font-size: 9px;
-    color: hsl(140, 55%, 55%);
+    color: hsl(140, 55%, 58%);
     background: rgba(80, 200, 100, 0.1);
     border: 1px solid rgba(80, 200, 100, 0.2);
     border-radius: 3px;
@@ -5916,75 +6014,183 @@ body.event-promote #game-over-overlay {
     white-space: nowrap;
 }
 
-/* Match result cards */
-.tsp-result-card {
-    background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 7px;
-    padding: 9px 10px;
-    margin-bottom: 8px;
+/* ELO progression chart */
+.md-elo-chart {
+    display: block;
+    width: 100%;
+    height: 120px;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.22);
 }
-.tsp-result-title {
+.md-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px 12px;
+    margin-top: 7px;
+}
+.md-leg { font-size: 10px; color: rgba(255,255,255,0.45); display: inline-flex; align-items: center; gap: 4px; }
+.md-leg b { color: rgba(255,255,255,0.7); font-variant-numeric: tabular-nums; }
+.md-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* Per-match card */
+.md-card {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 10px 11px;
+    margin-bottom: 9px;
+}
+.md-card-title {
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.25);
-    margin-bottom: 7px;
+    color: rgba(255,255,255,0.3);
+    margin-bottom: 8px;
 }
-.tsp-bar-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-}
-.tsp-bar-name {
-    font-size: 10px;
+.md-bar-row { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.md-bar-name {
+    font-size: 11px;
     font-weight: 600;
-    width: 68px;
+    width: 86px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex-shrink: 0;
 }
-.tsp-bar-name-win  { color: hsl(180, 60%, 60%); }
-.tsp-bar-name-lose { color: rgba(255,255,255,0.25); }
-.tsp-bar-track {
-    flex: 1;
-    height: 6px;
-    background: rgba(255,255,255,0.06);
+.md-bar-name-win  { color: hsl(180, 60%, 62%); }
+.md-bar-name-lose { color: rgba(255,255,255,0.3); }
+.md-bar-track { flex: 1; height: 7px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+.md-bar { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+.md-bar-win  { background: hsl(180, 55%, 47%); }
+.md-bar-lose { background: rgba(255,255,255,0.13); }
+.md-bar-score { font-size: 10px; color: rgba(255,255,255,0.4); width: 46px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+/* ELO-at-match lines */
+.md-elo { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); }
+.md-elo-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; margin-bottom: 4px; }
+.md-elo-name { display: inline-flex; align-items: center; gap: 5px; min-width: 96px; color: rgba(255,255,255,0.55); font-weight: 600; }
+.md-elo-name.md-win { color: hsl(45, 75%, 68%); }
+.md-elo-val { color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+.md-elo-val b { color: rgba(255,255,255,0.85); }
+.md-elo-delta { font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.md-elo-delta.md-up   { color: hsl(140, 70%, 62%); }
+.md-elo-delta.md-down { color: hsl(8, 75%, 64%); }
+.md-elo-delta.md-flat { color: rgba(255,255,255,0.3); }
+.md-rb { font-size: 9px; font-weight: 700; margin-left: auto; white-space: nowrap; }
+.md-rb-up   { color: hsl(140, 70%, 62%); }
+.md-rb-down { color: hsl(8, 75%, 64%); }
+.md-rb-new  { color: hsl(45, 90%, 64%); }
+.md-rb-hold { color: rgba(255,255,255,0.4); }
+
+/* Journey highlight — one competitor's path through a past bracket */
+.md-bracket-match.md-bracket-mine {
+    border-color: hsl(45, 80%, 55%);
+    background: linear-gradient(90deg, rgba(220, 180, 90, 0.12), rgba(220, 180, 90, 0.03));
+}
+.md-bm-name.md-hl { color: hsl(45, 90%, 72%); font-weight: 800; }
+.md-card.md-card-mine {
+    border-color: rgba(220, 180, 90, 0.4);
+    box-shadow: inset 3px 0 0 hsl(45, 80%, 55%);
+}
+.md-card-flag {
+    float: right;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
     border-radius: 3px;
+    background: rgba(220, 180, 90, 0.15);
+    color: hsl(45, 90%, 70%);
+}
+.md-card-mine .md-card-title { color: hsl(45, 70%, 65%); }
+
+/* Score-over-time mini chart */
+.md-chart { display: block; margin-top: 8px; width: 100%; border-radius: 4px; background: rgba(0,0,0,0.2); }
+
+/* Game-over overlay action row */
+.go-actions { display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
+
+/* ── Historical tournament viewer (full-screen) ─────────────── */
+.tv-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1400;  /* above the player card (1300) it can be opened from */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(6, 8, 18, 0.82);
+    backdrop-filter: blur(8px);
+    animation: md-fadein 0.18s ease;
+}
+.tv-overlay[hidden] { display: none; }
+.tv-panel {
+    width: min(1500px, 97vw);
+    height: 92vh;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, rgba(16, 21, 40, 0.97), rgba(10, 12, 26, 0.99));
+    border: 1px solid rgba(200, 168, 110, 0.22);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
     overflow: hidden;
 }
-.tsp-bar {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.4s ease;
-}
-.tsp-bar-win  { background: hsl(180, 55%, 45%); }
-.tsp-bar-lose { background: rgba(255,255,255,0.12); }
-.tsp-bar-score {
-    font-size: 9px;
-    color: rgba(255,255,255,0.3);
-    width: 38px;
-    text-align: right;
+.tv-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    background: linear-gradient(180deg, rgba(200, 168, 110, 0.08), transparent);
     flex-shrink: 0;
 }
-
-/* Mini chart */
-.tsp-chart {
-    display: block;
-    margin-top: 7px;
+.tv-back {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.8);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+}
+.tv-back:hover { background: rgba(255,255,255,0.13); border-color: rgba(255,255,255,0.3); }
+.tv-title { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; min-width: 0; }
+.tv-champ { font-size: 15px; font-weight: 800; }
+.tv-meta { font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: 0.04em; }
+.tv-journey { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.tv-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 12px 26px;
+    text-align: left;
+}
+.tv-body::-webkit-scrollbar { width: 6px; }
+.tv-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 3px; }
+/* Bracket-tree hero fills the stage width; scroll sideways on a narrow viewport.
+   The tree's own CSS assumes a height-filling flex parent (#be-grid); inside the
+   stage's auto-height scroll column we let it size to content instead. */
+.tv-tree { width: 100%; overflow-x: auto; flex-shrink: 0; }
+.tv-tree .bt-stage { height: auto; }
+.tv-tree .bracket-tree { height: auto; flex: none; min-height: min(62vh, 520px); }
+.tv-tree::-webkit-scrollbar { height: 6px; }
+.tv-tree::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 3px; }
+/* Analytical layer below the bracket. */
+.tv-details {
     width: 100%;
-    border-radius: 3px;
-    background: rgba(0,0,0,0.2);
+    max-width: 760px;
+    margin-top: 14px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
 }
-
-.tsp-empty {
-    font-size: 11px;
-    color: rgba(255,255,255,0.2);
-    padding: 8px 0;
-}
+.tv-details:empty { display: none; }
 
 /* ── Rank badge on player cards ─────────────────────────── */
 .pc-rank {
@@ -6856,6 +7062,9 @@ body.event-promote #game-over-overlay {
     border-color: hsla(180, 60%, 55%, 0.3);
     border-left-color: hsl(180, 60%, 55%);
 }
+.lb-clickable { cursor: pointer; }
+.lb-clickable:focus-visible { outline: 2px solid hsl(var(--bh, 210), 75%, 62%); outline-offset: 2px; }
+.lb-pod.lb-clickable:hover { transform: translateY(-3px); transition: transform 0.14s; }
 
 .lb-rank {
     font-size: 15px; font-weight: 800;
@@ -7505,6 +7714,32 @@ body.event-promote #game-over-overlay {
              font-size: 12px; padding: 1px 0; color: #cdd6e6; }
 .pcm-rrec { font-weight: 800; font-variant-numeric: tabular-nums; }
 .pcm-rrec.is-win { color: #7de2a0; } .pcm-rrec.is-loss { color: #f3796a; } .pcm-rrec.is-even { color: #8b95a5; }
+
+/* Recent tournaments strip — each row opens the historical bracket viewer. */
+.pcm-tours { margin-top: 17px; }
+.pcm-tour {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 8px 11px;
+    margin-bottom: 5px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 7px;
+    cursor: pointer;
+    color: #cdd6e6;
+    font-family: inherit;
+    transition: background 0.14s, border-color 0.14s, transform 0.14s;
+}
+.pcm-tour:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.2); transform: translateX(2px); }
+.pcm-tour.champ { border-color: rgba(220, 180, 90, 0.4); background: linear-gradient(90deg, rgba(220,180,90,0.1), rgba(255,255,255,0.02)); }
+.pcm-tour-place { font-size: 12px; font-weight: 800; color: #e7ecf3; white-space: nowrap; }
+.pcm-tour.champ .pcm-tour-place { color: hsl(45, 85%, 70%); }
+.pcm-tour-meta { font-size: 10px; color: #8b95a5; margin-left: 2px; }
+.pcm-tour-go { margin-left: auto; font-size: 15px; color: #5b6576; font-weight: 700; }
+.pcm-tour:hover .pcm-tour-go { color: #cdd6e6; }
 
 /* The banter-card avatar becomes a tap target. */
 .aic-avatar.pcm-clickable { cursor: pointer; }

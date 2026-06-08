@@ -975,6 +975,63 @@ export async function pullModel(modelName, onProgress) {
     }
 }
 
+// Uninstall a model — delete its weights from disk via Ollama. Distinct from
+// retiring (which only benches it): this frees disk and loses the local copy,
+// but the model's ELO/history in biome.db is untouched. Treats a 2xx as success.
+export async function deleteModel(modelName) {
+    try {
+        const resp = await fetch('/ollama/api/delete', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: modelName }),
+        });
+        if (!resp.ok) {
+            const err = await resp.text();
+            return { success: false, error: `Delete failed: ${resp.status} ${err}` };
+        }
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+// ── Model roster (active vs retired) ─────────────────────────────────────────
+// The server's model-roster.json is the source of truth for the bench. A retired
+// model is excluded from tournament fields and the AI-opponent pickers while its
+// weights and history stay put.
+
+// Fetch the retired set. Returns a Set of full model names (empty on any error).
+export async function fetchRoster() {
+    try {
+        const resp = await fetch('/model-roster');
+        if (!resp.ok) return new Set();
+        const data = await resp.json();
+        return new Set(Array.isArray(data.retired) ? data.retired : []);
+    } catch {
+        return new Set();
+    }
+}
+
+// Bench or reactivate a model. Returns { success, retired? } where retired is the
+// updated full list from the server.
+export async function setModelRetired(modelName, retired) {
+    try {
+        const resp = await fetch('/model-roster', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: modelName, retired: !!retired }),
+        });
+        if (!resp.ok) {
+            const err = await resp.text();
+            return { success: false, error: `Roster update failed: ${resp.status} ${err}` };
+        }
+        const data = await resp.json();
+        return { success: true, retired: data.retired || [] };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
 // ── Model residency lifecycle (warming / unloading / inspection) ──────────────
 // All of these resolve and never throw — warming must never block or fail a
 // match. Cloud (:cloud) models have no local footprint, so they're skipped.

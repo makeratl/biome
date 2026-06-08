@@ -13,11 +13,14 @@
 
 import { resolveModel, titleCase } from './model-identity.js';
 import { applyAvatarVideo, clearAvatar } from './model-avatar.js';
+import { fetchModelTournaments } from './rankings.js';
+import { openTournamentViewer } from './tournament-viewer.js';
 
 const VISION_LABELS = { mediated: 'Standard', ascii: 'ASCII', 'ascii-ext': 'ASCII+', raw: 'Raw' };
 
 let modal = null;       // the backdrop element, built once
 let openToken = 0;      // guards against a slow fetch painting over a newer open
+let cardModel = null;   // canonical name of the model the open card describes
 
 // ── public entry ─────────────────────────────────────────────────────────────
 // opts: { model, charName, prettyName, ranking, opponent }
@@ -41,15 +44,20 @@ export async function openPlayerCard(opts) {
     renderShell(opts, id);
 
     // Heavy detail keyed by the canonical ranking name (matches the DB model row).
-    let detail = null;
+    // The tournaments strip is fetched in parallel — same key.
+    let detail = null, tournaments = [];
     if (opts.ranking?.model) {
-        try {
-            const r = await fetch('/stats/model?m=' + encodeURIComponent(opts.ranking.model));
-            if (r.ok) detail = await r.json();
-        } catch { /* offline → identity-only card */ }
+        const name = opts.ranking.model;
+        const [d, t] = await Promise.all([
+            fetch('/stats/model?m=' + encodeURIComponent(name))
+                .then(r => r.ok ? r.json() : null).catch(() => null),
+            fetchModelTournaments(name),
+        ]);
+        detail = d; tournaments = t || [];
     }
     if (token !== openToken) return;            // a newer open superseded us
-    renderBody(opts, id, detail);
+    cardModel = opts.ranking?.model || opts.model;
+    renderBody(opts, id, detail, tournaments);
 }
 
 export function closePlayerCard() {
@@ -77,6 +85,13 @@ function ensureModal() {
     modal.querySelector('.pcm-close').addEventListener('click', closePlayerCard);
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && modal && !modal.hidden) closePlayerCard();
+    });
+    // A Recent-Tournaments row opens the historical viewer with this model's
+    // path highlighted. The card stays open underneath; Back returns to it.
+    modal.querySelector('.pcm-scroll').addEventListener('click', (e) => {
+        const row = e.target.closest('[data-open-tournament]');
+        if (!row) return;
+        openTournamentViewer(row.dataset.openTournament, { highlight: cardModel });
     });
 }
 
@@ -113,7 +128,7 @@ function renderShell(opts, id) {
     if (ava) applyAvatarVideo(ava, model, { category: 'idle', loop: true });
 }
 
-function renderBody(opts, id, d) {
+function renderBody(opts, id, d, tournaments) {
     const body = modal.querySelector('[data-body]');
     const roleEl = modal.querySelector('[data-role]');
     if (!body) return;
@@ -162,7 +177,32 @@ function renderBody(opts, id, d) {
                 ${biomeBlock('By map size', d.splits && d.splits.map_size)}
                 ${rivalsBlock(d.h2h)}
             </div>
-        </div>`;
+        </div>
+        ${tournamentsBlock(tournaments)}`;
+}
+
+// Recent tournaments this fighter competed in — each row opens the historical
+// bracket with their journey highlighted (wired via delegation in ensureModal).
+function tournamentsBlock(tournaments) {
+    if (!tournaments || !tournaments.length) return '';
+    const rows = tournaments.slice(0, 6).map((t) => {
+        const champ = t.is_champion ? ' champ' : '';
+        const icon = t.is_champion ? '🏆 ' : '';
+        const winLabel = t.wins ? `${t.wins}W` : '';
+        return `<button class="pcm-tour${champ}" type="button" data-open-tournament="${escapeHtml(t.tournament_id)}">
+            <span class="pcm-tour-place">${icon}${escapeHtml(t.placement)}</span>
+            <span class="pcm-tour-meta">${t.model_count} models${winLabel ? ' · ' + winLabel : ''} · ${shortDate(t.played_at)}</span>
+            <span class="pcm-tour-go">›</span>
+        </button>`;
+    }).join('');
+    return `<div class="pcm-split pcm-tours"><span class="pcm-sub2">Recent tournaments</span>${rows}</div>`;
+}
+
+function shortDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+    if (!m) return '';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${months[+m[2] - 1]} ${+m[3]}`;
 }
 
 // ── role / matchup ───────────────────────────────────────────────────────────

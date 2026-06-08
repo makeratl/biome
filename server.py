@@ -192,6 +192,39 @@ def _save_identity(key, label, archetype, motif):
             f.write('\n')
     return data
 
+# --- Model roster (active vs retired) ---
+# The bench is a roster decision orthogonal to ELO (which lives in biome.db), so
+# it persists in its own file rather than on the models table — that table only
+# has rows for models that have actually played. Shape: {"retired": [<full ollama
+# name>, ...]}. Retiring a model excludes it from tournament fields and the AI
+# opponent pickers (enforced client-side) while keeping its weights and history.
+ROSTER_FILE = os.path.join(BASE_DIR, 'model-roster.json')
+_roster_lock = threading.Lock()
+
+def _load_roster():
+    try:
+        with open(ROSTER_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get('retired'), list):
+            return {'retired': [m for m in data['retired'] if m]}
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {'retired': []}
+
+def _save_roster_entry(model, retired):
+    """Add or remove a model from the retired list, then persist. Returns the
+    updated roster dict."""
+    with _roster_lock:
+        data = _load_roster()
+        cur = [m for m in data['retired'] if m != model]
+        if retired:
+            cur.append(model)
+        data = {'retired': sorted(set(cur))}
+        with open(ROSTER_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+    return data
+
 def _comfy_upload_image(path):
     """Upload a local PNG into ComfyUI's input dir so a LoadImage node can read it.
     Returns the stored name (subfolder-prefixed if any)."""
@@ -284,7 +317,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
 
@@ -301,6 +334,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/rankings':
             self._json_response(db.get_rankings())
             return
+        # Model roster: which installed models are benched (retired)
+        if self.path == '/model-roster':
+            self._json_response(_load_roster())
+            return
         # Tournament match history
         if self.path == '/history':
             self._json_response(db.get_history())
@@ -315,11 +352,30 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             limit = int(q.get('limit', ['2000'])[0])
             self._json_response(db.get_matches(limit))
             return
+        # Per-model tournament participation (Recent Tournaments profile strip).
+        # Checked before /stats/model so the longer prefix wins.
+        if self.path.startswith('/stats/model-tournaments'):
+            q = parse_qs(urlparse(self.path).query)
+            name = q.get('m', [''])[0]
+            self._json_response(db.get_model_tournaments(name))
+            return
         # Single-model drill-in: full ELO timeline, match log, H2H + factor splits
         if self.path.startswith('/stats/model'):
             q = parse_qs(urlparse(self.path).query)
             name = q.get('m', [''])[0]
             self._json_response(db.get_model_detail(name))
+            return
+        # Past tournaments: the list, and one bracket's matches + ELO history.
+        if self.path == '/tournaments':
+            self._json_response(db.get_tournaments())
+            return
+        if self.path.startswith('/tournament'):
+            q = parse_qs(urlparse(self.path).query)
+            tid = q.get('id', [''])[0]
+            if not tid:
+                self._json_response({'error': 'id required'}, 400)
+            else:
+                self._json_response(db.get_tournament(tid))
             return
         # Training Lab: browse captured turns with their reward labels
         if self.path.startswith('/trajectory/list'):
@@ -496,7 +552,20 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/lab/identity':
             self._handle_identity()
             return
+        # Retire / reactivate a model (bench it from competition, weights kept)
+        if self.path == '/model-roster':
+            self._handle_roster()
+            return
         super().do_POST()
+
+    def do_DELETE(self):
+        # Uninstall: delete model weights from disk via Ollama. Proxied so all
+        # Ollama traffic stays on one path. ELO/history in biome.db is untouched.
+        if self.path.startswith('/ollama/'):
+            self._proxy_ollama(self.path[8:], method='DELETE')
+            return
+        self.send_response(405)
+        self.end_headers()
 
     def _json_response(self, data, status=200):
         self.send_response(status)
@@ -662,6 +731,20 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         _save_identity(key, body.get('label', ''), body.get('archetype', ''), body.get('motif', ''))
         self._json_response({'ok': True, 'key': key})
 
+    def _handle_roster(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        model = (body.get('model') or '').strip()
+        if not model:
+            self._json_response({'error': 'model required'}, 400)
+            return
+        data = _save_roster_entry(model, bool(body.get('retired')))
+        self._json_response({'ok': True, 'retired': data['retired']})
+
     def _handle_reset(self):
         """Archive the current database to a timestamped backup, then start fresh."""
         self._json_response(db.reset())
@@ -691,14 +774,16 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode())
 
-    def _proxy_ollama(self, path, is_post=False):
+    def _proxy_ollama(self, path, is_post=False, method=None):
         url = f'http://localhost:11434/{path}'
+        if method is None:
+            method = 'POST' if is_post else 'GET'
 
         try:
-            if is_post:
+            if method in ('POST', 'DELETE'):
                 content_length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(content_length) if content_length else b''
-                req = urllib.request.Request(url, data=body, method='POST')
+                req = urllib.request.Request(url, data=body, method=method)
                 req.add_header('Content-Type', self.headers.get('Content-Type', 'application/json'))
             else:
                 req = urllib.request.Request(url)

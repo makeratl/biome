@@ -336,9 +336,14 @@ detects them and raises token budgets so they can use the richer Raw vision.
 
 ## Rankings, Champions & Fighter Cards
 
-Every AI match is rated. The **server is the source of truth for ELO**
-(K-factor 32, base 1000) — results POST to `server.py`, which updates ratings,
-records the match, and returns the rank deltas the client animates.
+Every AI match is rated — **Solo and Watch games feed the same live ELO ladder
+as Tournament play**, one continuous rating history across all modes. The
+**server is the source of truth for ELO** (K-factor 32, base 1000) — results POST
+to `server.py`, which updates ratings, records the match, and returns the rank
+deltas the client animates as rank-change drama (promotions, throne takeovers,
+upsets get their own celebration). A ranked game ends on a single-match
+dashboard: the score-over-time timeline and each model's ELO-before → ELO-after
+move.
 
 The **Hall of Champions** ranks every model that's played: a top-3 podium plus
 standings sliced by size, family, and local-vs-cloud. Each model carries a
@@ -358,9 +363,17 @@ tonight's opponent.
 
 Pick **Tournament** to run a bracket:
 
-1. Choose the field size (8 / 16 / 32) and a **format** — *Seeded* (best ELO =
-   top seed), *Champions* (ranked models only), *David vs Goliath* (smallest vs
-   largest), or *Open Draw*.
+1. Choose the field size (**8 / 16 / 32**) and a **format**:
+
+   | Format | Field & draw |
+   |--------|--------------|
+   | **Qualifier** | New/under-played models earn their place — least-tested drawn against solid mid-table vets (never the champ) for a winnable shot |
+   | **Seeded** *(default)* | Top models by rating, classic 1-v-N seeding — favourites kept apart until late |
+   | **Champions** | Proven (ranked) models only; seeded so the best meet last |
+   | **David vs Goliath** | Strongest drawn straight against weakest — round one is all mismatch |
+   | **Open Draw** | Random field, random pairings — anything can happen |
+   | **Home Turf** | Local models only (no cloud contenders), seeded by rating |
+
 2. Pick **Standard** (classic) or **Lightning** (10-round matches — faster
    brackets).
 3. Quarter-Finals → Semi-Finals → Final play out sequentially.
@@ -370,6 +383,11 @@ live (running scores + round counter), up-next, and pending. Between bouts an
 ESPN-style broadcast carousel rotates recaps, dossiers, and leaderboard
 snapshots, and the final match gets a full champion-crowning fanfare. Models are
 warmed up concurrently with the intro so no turn budget is lost to cold loads.
+
+Every bracket is **kept**: a finished tournament can be re-opened later as a
+full-screen replay — the mirrored bracket graphic with any one competitor's path
+traced in gold, plus per-match ELO cards and a rating-progression chart. Open it
+from a fighter's dossier (Recent Tournaments) or the championship screen.
 
 <p align="center">
   <img src="screenshots/tournament-ondeck.png" alt="On-deck matchup card with model creature avatars and ELO" width="42%">
@@ -409,7 +427,8 @@ biome/
 ├── index.html              # Game shell (loads js/game.js as a module)
 ├── style.css               # All styling
 ├── server.py               # HTTP server: static files + Ollama proxy + ELO/trajectory backend
-├── db.py / traj.py         # ELO persistence + training-data export
+├── db.py                   # SQLite (biome.db) ELO/tournament history — rating_events time-series
+├── traj.py                 # Training-data trajectory export
 └── js/
     ├── game.js             # Orchestrator: grid/sim/turns, UI, AI loop, round/tournament drama
     ├── config.js           # All tunable constants (grid, terrain, species, scoring, rounds)
@@ -419,9 +438,12 @@ biome/
     ├── biosphere.js        # Animated health orb
     ├── game-dynamics.js    # Balance-slider system (multipliers over baseline config)
     ├── codex.js            # In-game Field Guide
-    ├── tournament.js       # TournamentManager — bracket, match execution, live state
+    ├── tournament.js       # TournamentManager — match execution, live state, drama
     ├── tournament-format.js# Field sizing, seeding, format definitions
-    ├── rankings.js         # ELO fetch/render (server holds the math)
+    ├── bracket-tree.js     # Mirrored bracket graphic (one source for live + historical)
+    ├── tournament-viewer.js# Full-screen historical/championship tournament view
+    ├── match-dashboard.js  # Post-game detail — score timelines + ELO-progression charts
+    ├── rankings.js         # ELO fetch/render + tournament-history APIs (server holds the math)
     ├── leaderboard.js      # Hall of Champions
     ├── player-card.js      # Fighter dossier modal
     ├── model-identity.js   # Model-family taxonomy → creature + hue
@@ -444,8 +466,12 @@ plus three jobs:
 1. **CORS proxy** — `/ollama/*` → `http://localhost:11434/*`; model pulls stream
    NDJSON so install progress is live.
 2. **ELO backend** — match results POST to `/tournament-result`; the server
-   computes ratings (K=32, base 1000) and is the single source of truth.
-   `/rankings`, `/history`, `/stats/model`, and `/reset-rankings` round it out.
+   computes ratings (K=32, base 1000) and is the single source of truth. History
+   persists in **`biome.db`** (SQLite via `db.py`, migrated once from the old
+   `tournament_log.json`), with a `rating_events` row per player per match — the
+   time-series every dashboard chart reads. `/rankings`, `/history`,
+   `/stats/model`, `/stats/model-tournaments`, `/tournaments`, `/tournament?id=`,
+   `/roster`, and `/reset-rankings` round it out.
 3. **Training capture** — append-only `/trajectory/*` logs, plus an avatar
    generation bridge for baking model portraits.
 

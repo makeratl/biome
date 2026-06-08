@@ -12,7 +12,29 @@
 // fresh-install model sitting at base ELO from claiming a seat it hasn't earned.
 export const MIN_GAMES_FOR_CHAMPION = 3;
 
+// Qualifier field: how many of the `size` seats go to proven veterans (the rest
+// to the least-explored models). A quarter of the draw — 8→2, 16→4, 32→8 — so
+// every round-1 slate can pit a rookie against a real benchmark.
+function qualifierBenchmarkCount(size) {
+    return Math.max(1, Math.floor(size / 4));
+}
+
+// Least-explored first: never-played models, then fewest games, then lowest ELO.
+// This is the inverse of the champions ordering — it surfaces the models the
+// ladder knows least about so they get introduced and evaluated.
+const byLeastExplored = (a, b) => (a.games - b.games) || (a.elo - b.elo);
+
+// Listed in the order the picker shows them: the rated ladder by field
+// selectivity (rookies → all → elite), then the two spectacle draws, then the
+// local-only scope. The UI button order in index.html mirrors this.
 export const FORMATS = {
+    qualifier: {
+        key: 'qualifier',
+        label: 'Qualifier',
+        field: 'qualifier',
+        seed: 'qualifier',
+        blurb: 'New & under-played models earn their place — least-tested models drawn against solid mid-table veterans (never the champion) for a real, winnable shot at the ladder.',
+    },
     seeded: {
         key: 'seeded',
         label: 'Seeded',
@@ -41,6 +63,17 @@ export const FORMATS = {
         seed: 'random',
         blurb: 'Random field, random pairings. Anything can happen.',
     },
+    // Home Turf scopes the pool to local models (no cloud contenders) and then
+    // runs a standard seeded bracket. localOnly is a POOL filter applied by the
+    // caller before buildField — it's orthogonal to the field/seed strategy.
+    locals: {
+        key: 'locals',
+        label: 'Home Turf',
+        field: 'topElo',
+        seed: 'seeded',
+        localOnly: true,
+        blurb: 'Local models only — no cloud contenders. Your machine’s own roster, seeded by rating.',
+    },
 };
 
 export const DEFAULT_FORMAT = 'seeded';
@@ -62,6 +95,28 @@ function selectField(pool, size, strategy, rng) {
         // by rating so a young leaderboard still fields a full draw.
         const rest = pool.filter(p => !proven.includes(p)).sort(byEloDesc);
         return [...proven, ...rest].slice(0, size);
+    }
+
+    if (strategy === 'qualifier') {
+        // Mostly under-explored models, with a few proven veterans seated as
+        // calibration benchmarks. Beating a ranked vet is real ELO, so a rookie
+        // can actually climb into the ladder — not just shuffle around base.
+        // The benchmarks come from the MIDDLE of the proven ladder, not the top:
+        // a qualifier introduces new models against solid, beatable competition,
+        // never the reigning champion. Centering on the median also degrades
+        // gracefully on a small ladder (and naturally excludes the #1 seed).
+        const benchmarks = qualifierBenchmarkCount(size);
+        const proven = pool.filter(p => p.games >= MIN_GAMES_FOR_CHAMPION).sort(byEloDesc);
+        const mid = Math.max(0, Math.floor((proven.length - benchmarks) / 2));
+        const vets = proven.slice(mid, mid + benchmarks).map(p => ({ ...p, _role: 'vet' }));
+        const used = new Set(vets.map(v => v.name));
+        const rookies = pool
+            .filter(p => !used.has(p.name))
+            .sort(byLeastExplored)
+            .slice(0, size - vets.length)
+            .map(p => ({ ...p, _role: 'rookie' }));
+        // Fresh install with no proven models degrades gracefully to all-rookies.
+        return [...vets, ...rookies];
     }
 
     if (strategy === 'spread') {
@@ -87,6 +142,19 @@ function orderSeeds(selected, strategy, rng) {
 
     if (strategy === 'random') {
         return shuffle([...selected], rng);
+    }
+
+    if (strategy === 'qualifier') {
+        // Draw each benchmark veteran straight against a rookie (the strongest
+        // rookies get the toughest tests); pair leftover rookies among themselves.
+        const vets = selected.filter(p => p._role === 'vet');
+        const rookies = selected.filter(p => p._role !== 'vet').sort((a, b) => b.elo - a.elo);
+        const out = [];
+        const pairs = Math.min(vets.length, rookies.length);
+        for (let i = 0; i < pairs; i++) out.push(rookies[i], vets[i]);
+        for (let i = pairs; i < rookies.length; i++) out.push(rookies[i]);
+        for (let i = pairs; i < vets.length; i++) out.push(vets[i]);
+        return out;
     }
 
     if (strategy === 'davidGoliath') {
