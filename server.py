@@ -78,8 +78,46 @@ def _heartbeat_append(record):
 # Ephemeral, in-memory only — no DB. Lock-guarded (ThreadingHTTPServer).
 _LIVE_LOCK = threading.Lock()
 _LIVE = {'snapshot': None, 'board': None, 'board_ct': 'image/webp',
-         'board_rev': 0, 'updated': 0.0, 'done': False}
+         'board_rev': 0, 'updated': 0.0, 'done': False,
+         # Cached terrain from the last board KEYFRAME (full board). The driver
+         # sends terrain once per match then organisms-only; we splice this back in
+         # so every served snapshot carries a complete board (robust to late joiners).
+         'terrain': None}
 LIVE_STALE_S = 75   # no push in this long ⇒ driver gone ⇒ treat as idle
+
+
+def _splice_board_terrain(snap):
+    """Terrain travels once per match (a 'full' board keyframe), organisms every
+    push. Cache the keyframe's terrain and splice it into organism-only boards so
+    every STORED/served snapshot is terrain-complete — a late joiner or a poll
+    between keyframes still gets a full board. Mutates snap['board'] in place.
+    Call under _LIVE_LOCK."""
+    board = snap.get('board') if isinstance(snap, dict) else None
+    if not isinstance(board, dict):
+        return
+    cells = board.get('cells')
+    if not isinstance(cells, list):
+        return
+    if board.get('full'):
+        # Keyframe: cache terrain keyed by (col, row).
+        _LIVE['terrain'] = {(c['c'], c['r']): c['t'] for c in cells
+                            if isinstance(c, dict) and 't' in c}
+        return
+    terr = _LIVE.get('terrain')
+    if not terr:
+        return   # no keyframe seen yet — serve the organisms-only board as-is
+    # Organisms-only push: rebuild a complete board = cached terrain + live organisms.
+    org = {(c['c'], c['r']): c['o'] for c in cells
+           if isinstance(c, dict) and 'o' in c and 'c' in c and 'r' in c}
+    merged = []
+    for (cc, rr), t in terr.items():
+        cell = {'c': cc, 'r': rr, 't': t}
+        o = org.get((cc, rr))
+        if o:
+            cell['o'] = o
+        merged.append(cell)
+    board['cells'] = merged
+    board['full'] = True
 
 # --- Public exposure: trust by source IP, not a global flag ---
 # This server is meant to sit behind a single port-forward (WAN :8765 → box),
@@ -804,6 +842,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             self._json_response({'error': 'Invalid JSON'}, 400)
             return
         with _LIVE_LOCK:
+            _splice_board_terrain(snap)
             _LIVE['snapshot'] = snap
             _LIVE['updated'] = time.time()
             _LIVE['done'] = bool(snap.get('done'))

@@ -301,6 +301,7 @@ export class TournamentManager {
         // dossiers / leaderboard / tournament details / fun facts). Rendered once
         // the board is revealed.
         this._renderMatchFlanks(match);   // once per match (not per-turn) — not a freeze surface
+        this._boardKeyframeSent = false;  // resend the terrain keyframe at this match's first live push
         this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
@@ -621,7 +622,7 @@ export class TournamentManager {
             // Board-as-state: the live board travels in the snapshot so the
             // spectator draws it locally (shared organism-art), replacing the
             // canvas read-back + WebP push. Only while a match is live.
-            board: (isLive && this.game?.grid) ? serializeBoard(this.game.grid) : null,
+            board: (isLive && this.game?.grid) ? this._serializeLiveBoard() : null,
             done,
         };
     }
@@ -633,6 +634,18 @@ export class TournamentManager {
     // boundaries now. See docs/headless-broadcast-design.md.
     _pushLiveSnapshot() {
         try { this._live.pushSnapshot(this._buildLiveSnapshot()); } catch (_) { /* never break the match */ }
+    }
+
+    // Terrain is static per match, so serialize it ONCE (the keyframe) and send
+    // organisms-only thereafter. The server caches the keyframe's terrain and
+    // splices it back into every served snapshot, so spectators always get a
+    // complete board (robust to late joiners) while the per-turn serialize stays
+    // light — only occupied cells, not the whole grid. Reset per match in _runMatch.
+    _serializeLiveBoard() {
+        const keyframe = !this._boardKeyframeSent;
+        const board = serializeBoard(this.game.grid, { includeTerrain: keyframe });
+        if (keyframe && board) this._boardKeyframeSent = true;
+        return board;
     }
 
     // Mini bracket = a live-broadcast strip: a hero card (now playing / up next /
