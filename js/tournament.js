@@ -146,14 +146,13 @@ export class TournamentManager {
         // champion screen restores 'full' for the celebration. Dial to 'plain'
         // to keep video but drop only the bounce machinery.
         setAvatarVideoMode('still');
-        // Broadcast LIVE. The per-turn freeze surface — the heavy synchronous
-        // _renderLiveBracket innerHTML repaint — is off the per-turn path (the tick is
-        // now the cheap _pushLiveSnapshot, board-as-state), and the 1.8s WebP board
-        // read-back loop is retired (the board travels in the snapshot). What remains
-        // on the live path is the cheap JSON push per turn plus infrequent
-        // match-boundary bracket repaints + once-per-match flank carousels — none of
-        // it the per-turn heavy work that stalled the loop. (Targeted retire + verify.)
-        this._broadcastOff = false;
+        // Broadcast is LIVE (the _broadcastOff kill-switch is gone). The per-turn
+        // freeze surface — the heavy synchronous _renderLiveBracket innerHTML repaint
+        // — is off the per-turn path (the tick is the cheap _pushLiveSnapshot,
+        // board-as-state), and the 1.8s WebP board read-back loop is retired (the
+        // board travels in the snapshot). What remains live is the cheap JSON push per
+        // turn + infrequent match-boundary bracket repaints + once-per-match flanks —
+        // verified freeze-free (a full tournament, zero heartbeat gaps >2.5s).
 
         // Run every match in round-major order; each winner feeds the next round.
         // Works for any power-of-two field (8 / 16 / 32) since the bracket is a
@@ -165,13 +164,11 @@ export class TournamentManager {
             this._logMatchMemory('end', match);
         }
 
-        this._broadcastOff = false;   // matches done — restore the bracket for the champion screen
         setAvatarVideoMode('full');   // matches done — restore full flourish for the champion screen
         this._showChampion(this._finalMatch().winner);
         this.running = false;
         // Final push: flag the feed done so the spectator flips to the
         // standings/last-champion idle state immediately, not after a stale-out.
-        this._live.stopBoardLoop();
         this._live.pushSnapshot(this._buildLiveSnapshot({ done: true }));
         // Tournament finished — bracket stays available so user can review
         // results, but the LIVE indicator stops pulsing.
@@ -303,7 +300,7 @@ export class TournamentManager {
         // Broadcast flanks: two lockstep carousels frame the board (last bout /
         // dossiers / leaderboard / tournament details / fun facts). Rendered once
         // the board is revealed.
-        if (!this._broadcastOff) this._renderMatchFlanks(match);   // broadcast valve: skip flank carousels during the test
+        this._renderMatchFlanks(match);   // once per match (not per-turn) — not a freeze surface
         this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
@@ -329,7 +326,6 @@ export class TournamentManager {
         const scores = await Promise.race([promise, guard.promise]);
         clearTimeout(guard.id);   // match resolved (or timed out) — cancel the net
         this.game._onTournamentTick = null;
-        this._live.stopBoardLoop();
 
         // Record result — capture score history before it gets cleared on next reset
         match.scores = scores;
@@ -632,9 +628,9 @@ export class TournamentManager {
 
     // Cheap, async, fire-and-forget snapshot push for the spectator relay — JSON
     // only (bracket + scores + board-as-state), no synchronous DOM repaint and no
-    // canvas read-back. This is the safe per-turn broadcast path; the heavy local
-    // bracket repaint (_renderLiveBracket) and flank carousels stay parked behind
-    // _broadcastOff. Wired to _onTournamentTick. See docs/headless-broadcast-design.md.
+    // canvas read-back. This is the per-turn broadcast path (wired to
+    // _onTournamentTick); the heavy _renderLiveBracket repaint runs only at match
+    // boundaries now. See docs/headless-broadcast-design.md.
     _pushLiveSnapshot() {
         try { this._live.pushSnapshot(this._buildLiveSnapshot()); } catch (_) { /* never break the match */ }
     }
@@ -644,13 +640,10 @@ export class TournamentManager {
     // whole 7-match tree into a row of nodes. Tap the header ⛶ to zoom to full.
     _renderLiveBracket() {
         if (!this.bracket) return;
-        // Broadcast valve: during live matches, skip the live-bracket repaint +
-        // spectator relay entirely. Two separate freezes localized here (the
-        // innerHTML repaint and the snapshot push) with no infinite loop in the JS
-        // — i.e. a pathological synchronous reflow of the heavy broadcast DOM. This
-        // silences it during play to confirm the subsystem; the bracket still
-        // renders at match boundaries (when _broadcastOff is cleared). Reversible.
-        if (this._broadcastOff) return;
+        // This is the heavy one — a full innerHTML reflow of the broadcast bracket
+        // DOM. It used to fire every turn and was the freeze; it now runs only at
+        // match boundaries (match start / round-end / champion), where an infrequent
+        // repaint is a brief hitch, not a stall. The per-turn path is _pushLiveSnapshot.
         breadcrumbSync('lbn.start', { idx: this._currentMatchIdx });
 
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
