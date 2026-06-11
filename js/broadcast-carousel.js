@@ -11,6 +11,7 @@
 // matchup (or hiding the flank) can't leave a half-finished flip on screen.
 
 import { teardownClips } from './model-avatar.js';
+import { breadcrumbSync } from './heartbeat.js';
 
 const FLIP_MS = 300;
 
@@ -71,7 +72,12 @@ export class BroadcastCarousel {
 
     async _show(i, flip, gen) {
         let payload = null;
+        // Tripwire: a freeze inside a panel's synchronous render() leaves
+        // 'carousel.render' (with the panel id) as the last crumb, naming the exact
+        // culprit panel. (renderer-SIGILL→hang hunt.)
+        breadcrumbSync('carousel.render', { id: this.panels[i]?.id });
         try { payload = this.panels[i].render(); } catch (_) { payload = null; }
+        breadcrumbSync('carousel.rendered', { id: this.panels[i]?.id });
         if (gen !== this.gen) return;
         if (!payload) payload = { html: `<div class="mf-empty">—</div>` };
 

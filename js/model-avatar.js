@@ -29,6 +29,19 @@ export function loadManifest(bust = false) {
 // Warm the caches early so the first badge/card paint finds them ready.
 export function preloadAvatars() { loadManifest(); loadVideoManifest(); }
 
+// ---- avatar video policy (GPU-load valve) ----
+// Concurrent <video> decode plus the bounce frame-capture/canvas-RAF loops are
+// the prime suspect in the tournament renderer SIGILL: the crash forensics showed
+// a flat ~10 MB JS heap (not OOM) dying mid-match with 6 videos live — a GPU-side
+// death, not a JS one. This lets the host dial avatars down to shed that load.
+// The spectator runs in its own process and leaves it at 'full'.
+//   'full'  — native looping video + ping-pong bounce (richest, heaviest)
+//   'plain' — native looping video, but NO bounce frame-capture/canvas RAF
+//   'still' — no <video> at all; baked PNG / procedural portrait only (lightest)
+let videoMode = 'full';
+export function setAvatarVideoMode(mode) { videoMode = mode; }
+export function getAvatarVideoMode() { return videoMode; }
+
 // ---- avatar animation clips (victory/defeat/… emotions) ----
 // Generated in the lab (lab/avatars.html → server → ComfyUI WAN i2v) and tracked
 // in videos/manifest.json, shape { <category>: { <avatarKey>: path } }. The game
@@ -65,6 +78,17 @@ export async function applyAvatarVideo(el, modelName, { category = 'victory', lo
     if (!el) return;
     if (!modelName) { clearAvatar(el); return; }
     await applyAvatar(el, modelName);                  // still portrait underneath
+    // GPU-load valve: in 'still' mode stop at the portrait — no <video> decode,
+    // no bounce capture loop. Tear down any clip already mounted here so flipping
+    // the mode at match start actually sheds the load. See setAvatarVideoMode.
+    if (videoMode === 'still') {
+        const existing = el.querySelector('video.avatar-clip');
+        if (existing) { teardownBounce(existing); existing.pause?.(); existing.remove(); }
+        el.querySelector('canvas.avatar-clip-canvas')?.remove();
+        return;
+    }
+    // 'plain' keeps native video but drops the expensive bounce machinery.
+    const useBounce = bounce && videoMode === 'full';
     el.dataset.model = modelName;
     const manifest = await loadVideoManifest();
     if (el.dataset.model !== modelName) return;        // slot reassigned under us
@@ -78,9 +102,9 @@ export async function applyAvatarVideo(el, modelName, { category = 'victory', lo
         el.appendChild(vid);
     }
     // Bounce overrides native looping (it drives the loop itself).
-    vid.loop = loop && !bounce;
+    vid.loop = loop && !useBounce;
     if (vid.getAttribute('src') !== url) vid.src = url;
-    setBounce(vid, bounce);
+    setBounce(vid, useBounce);
     vid.play?.().catch(() => { /* autoplay may be deferred; first frame still shows */ });
 }
 

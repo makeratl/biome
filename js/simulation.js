@@ -116,6 +116,7 @@ export class Simulation {
     _stepHerbivores() {
         const grid = this.grid;
         const moves = [];
+        const births = [];
         const cells = this._shuffledCells();
 
         for (const cell of cells) {
@@ -177,7 +178,7 @@ export class Simulation {
                         const birthCell = neighbors[Math.floor(Math.random() * neighbors.length)];
                         const offspring = createOrganism(herb.species, herb.player, birthCell.col, birthCell.row);
                         offspring.energy = template.reproduceCost * 0.6;
-                        birthCell.organisms.push(offspring);
+                        births.push({ cell: birthCell, org: offspring });
                         this._tally(herb.player, 'herbBorn');
                     }
                 }
@@ -194,11 +195,19 @@ export class Simulation {
                 org.row = to.row;
             }
         }
+
+        // Add this step's newborns AFTER the pass so they don't act — or breed
+        // again — the same step. Pushing offspring mid-loop let ones born into
+        // not-yet-visited cells be processed (and reproduce) in the SAME step, a
+        // geometric population blowup that hung the sim. _stepPlants always
+        // deferred; this brings herbivores in line. (renderer-SIGILL→hang hunt.)
+        for (const { cell, org } of births) cell.organisms.push(org);
     }
 
     _stepPredators() {
         const grid = this.grid;
         const moves = [];
+        const births = [];
         const cells = this._shuffledCells();
 
         for (const cell of cells) {
@@ -265,7 +274,7 @@ export class Simulation {
                         const birthCell = neighbors[Math.floor(Math.random() * neighbors.length)];
                         const offspring = createOrganism(pred.species, pred.player, birthCell.col, birthCell.row);
                         offspring.energy = template.reproduceCost * 0.5;
-                        birthCell.organisms.push(offspring);
+                        births.push({ cell: birthCell, org: offspring });
                         this._tally(pred.player, 'predBorn');
                     }
                 }
@@ -281,6 +290,10 @@ export class Simulation {
                 org.row = to.row;
             }
         }
+
+        // Defer newborns to next step (see _stepHerbivores) — prevents same-step
+        // predator breeding cascades from blowing up the population in one pass.
+        for (const { cell, org } of births) cell.organisms.push(org);
     }
 
     _shuffledCells() {

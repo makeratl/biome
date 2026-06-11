@@ -38,6 +38,8 @@ import { buildSingleMatchDashboard, paintDashboard } from './match-dashboard.js'
 
 preloadAvatars();   // warm avatars/manifest.json so the first badge/card paint is instant
 import { playSound, setMuted, isMuted } from './sound.js';
+import { startHeartbeat, setHeartbeatContext, breadcrumb, breadcrumbSync } from './heartbeat.js';
+import { serializeBoard, buildFrame, emitStateFrame } from './state-frame.js';
 
 // Callout tones that represent a leaderboard surprise. These get a larger
 // entrance animation and a longer hold so the moment reads as a celebration.
@@ -45,6 +47,11 @@ const RANK_DRAMA_TONES = new Set(['throne', 'promote', 'upset']);
 
 class Game {
     constructor() {
+        // Out-of-process crash forensics: ship vitals to the server every second
+        // so a renderer SIGILL (which wipes the in-page console) still leaves its
+        // last moment on disk. Always on — the crash can happen anywhere, not just
+        // mid-match. See js/heartbeat.js / dev-logs/heartbeat.log.
+        startHeartbeat();
         this.canvas = document.getElementById('game-canvas');
         this.seed = Math.floor(Math.random() * 100000);
         // Apply the player's persisted Game Dynamics overrides onto CONFIG before
@@ -1109,6 +1116,7 @@ class Game {
             this._updateCensus();
             this._log(aiVsAi ? 'Both AI turns complete — simulating...' : 'All placements revealed!');
             this._updateTurnUI();
+            this._onTournamentTick?.();   // spectator: flip the cockpit to "resolving"
             // Snapshot census BEFORE simulation, to compute deltas for recap
             this._preSimSnapshot = this._snapshotCensus();
             // Clear highlights after a longer pause in AI vs AI so spectator can study
@@ -1140,6 +1148,9 @@ class Game {
         }
 
         this._updateTurnUI();
+        // Spectator: push a snapshot the instant the phase flips so the thinking
+        // cockpit (who's deciding, the move clock) updates live, not just at round-end.
+        if (phase === PHASE.PLAYER_1_TURN || phase === PHASE.PLAYER_2_TURN) this._onTournamentTick?.();
     }
 
     async _runRoundEndSequence() {
@@ -1243,7 +1254,31 @@ class Game {
         this._log(`P${player} placed ${template.name} at (${cell.col}, ${cell.row})`);
     }
 
+    // Emit a StateFrame for any subscribed view (board-as-state). Additive: runs
+    // ALONGSIDE the existing canvas rendering during Phase 1 of the headless split.
+    // Full board (terrain+organisms) at match-start; organism deltas otherwise.
+    // Never throws into the engine — emit is downstream, not load-bearing.
+    // See docs/headless-broadcast-design.md.
+    _emitBoardFrame(kind = 'turn') {
+        try {
+            const board = serializeBoard(this.grid, { includeTerrain: kind === 'match-start' });
+            const sc = this.simulation?.finalScore?.();
+            emitStateFrame(buildFrame({
+                kind,
+                board,
+                scores: sc ? { 1: sc[1].finalScore, 2: sc[2].finalScore } : null,
+                match: {
+                    round: this.turns?.round,
+                    totalRounds: this.turns?.totalRounds,
+                    phase: this.turns?.phase,
+                    currentPlayer: this.turns?.currentPlayer,
+                },
+            }));
+        } catch (_) { /* emit must never break the engine */ }
+    }
+
     async _runSimulation() {
+        breadcrumbSync('sim.run', { round: this.turns.round });
         this.simulating = true;
         const steps = CONFIG.SIM.STEPS_PER_TURN;
 
@@ -1256,6 +1291,7 @@ class Game {
         for (let i = 0; i < steps; i++) {
             this.simulation.step();
             this.renderer.render();
+            this._emitBoardFrame('sim-step');   // board-as-state, alongside the canvas render
             this._updateCensus();
             await this._sleep(CONFIG.SIM.ANIMATION_STEP_MS);
         }
@@ -2609,6 +2645,7 @@ class Game {
             const watchdog = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('turn watchdog tripped')), ai.timeoutMs() + 15_000));
             const result = await Promise.race([ai.takeTurn(), watchdog]);
+            breadcrumbSync('game.postturn', { player: playerNum });
 
             // Move resolved — stop the clock and drop the thinking state.
             this._stopThinkingCountdown(playerNum);
@@ -2640,6 +2677,17 @@ class Game {
             } else if (bEl) {
                 bEl.textContent = '';
             }
+            // Mirror the freshly-spoken line to the spectator feed and push it live
+            // (the tick repaints the live bracket + relays the snapshot). Persists
+            // through the next "thinking" gap so the quote stays up between turns.
+            breadcrumbSync('game.tick', { player: playerNum, degraded: !!result.degraded });
+            if (this._liveBanter && !result.degraded && result.banter) {
+                this._liveBanter[playerNum] = result.banter;
+                this._onTournamentTick?.();
+            } else if (this._liveBanter && result.degraded) {
+                this._liveBanter[playerNum] = bEl ? bEl.textContent : '';
+                this._onTournamentTick?.();
+            }
             // Status stays as rank/place — no temporary overwrite
 
             // Log banter to action log too
@@ -2652,6 +2700,7 @@ class Game {
                 this._logStyled(`P${playerNum} strategy: ${result.reasoning}`, 'strategy');
             }
 
+            breadcrumbSync('game.actionlog', { player: playerNum });
             // Log individual actions
             const okActions = result.actions.filter(a => a.ok);
             const species = {};
@@ -2662,7 +2711,9 @@ class Game {
             const summary = Object.entries(species).map(([s, n]) => `${n}× ${s}`).join(', ');
             if (summary) this._log(`P${playerNum} placed: ${summary}`);
 
+            breadcrumbSync('game.render', { player: playerNum, placed: okActions.length });
             this.renderer.render();
+            this._emitBoardFrame('turn');   // board-as-state after this turn's placements
 
             // Burst + sound staggered for each successful placement
             for (let i = 0; i < okActions.length; i++) {
@@ -2715,6 +2766,7 @@ class Game {
         if (ai && avatarEl) applyAvatarVideo(avatarEl, ai.model, { category: 'idle', loop: true });
         if (this._turnEnded) return;
         this._turnEnded = true;
+        breadcrumbSync('game.endturn', { player: playerNum });
         this.turns.endTurn();
     }
 
@@ -2724,6 +2776,11 @@ class Game {
     _startThinkingCountdown(playerNum, totalMs) {
         this._cdTimers = this._cdTimers || {};
         this._stopThinkingCountdown(playerNum);
+        // Expose the deadline for the spectator feed (the snapshot reads remaining
+        // time from this; the page ticks it down locally so cross-machine clock
+        // skew never matters). Set before the early-return so the clock surfaces
+        // even when the in-game countdown DOM isn't present.
+        this._moveClock = { player: playerNum, deadline: Date.now() + totalMs, totalMs };
         const el = document.getElementById(`aic-countdown-p${playerNum}`);
         if (!el) return;
         const numEl = el.querySelector('.aic-cd-num');
@@ -2739,6 +2796,7 @@ class Game {
         };
         tick();
         this._cdTimers[playerNum] = setInterval(tick, 250);
+        this._onTournamentTick?.();   // spectator: the move clock is now ticking — push it
     }
 
     _stopThinkingCountdown(playerNum) {
@@ -2746,6 +2804,7 @@ class Game {
             clearInterval(this._cdTimers[playerNum]);
             delete this._cdTimers[playerNum];
         }
+        if (this._moveClock?.player === playerNum) this._moveClock = null;
         const el = document.getElementById(`aic-countdown-p${playerNum}`);
         if (el) el.classList.remove('urgent');
     }
@@ -2780,6 +2839,7 @@ class Game {
         if (resident) return;
 
         setLoading(true);
+        this._onTournamentTick?.();   // spectator: surface "warming up…" for this cold model
         entry.timer = setInterval(async () => {
             if (entry.token !== this._loadWatch[playerNum]?.token) { clearInterval(entry.timer); return; }
             if (await isModelResident(model)) finish();
@@ -2787,6 +2847,7 @@ class Game {
     }
 
     _stopModelLoadWatch(playerNum) {
+        const wasLoading = !!this._loadWatch?.[playerNum];
         const entry = this._loadWatch?.[playerNum];
         if (entry?.timer) clearInterval(entry.timer);
         if (this._loadWatch) delete this._loadWatch[playerNum];
@@ -2794,6 +2855,7 @@ class Game {
         if (el) el.classList.remove('model-loading');
         const label = el?.querySelector('.aic-cd-label');
         if (label) label.textContent = 'deciding…';
+        if (wasLoading) this._onTournamentTick?.();   // spectator: warming up → deciding
     }
 
     // A concise character name for system-voice lines (family label when known,
@@ -4882,6 +4944,8 @@ class Game {
         this._matchResolve = null;
         this._matchupOdds = null;
         this._scoreHistory = [];
+        this._liveBanter = {};   // latest spoken line per player, for the spectator feed
+        this._moveClock = null;  // { player, deadline, totalMs } while an AI is thinking
         this.simulating = false;
         // Fresh capture identity per match; disabled until an AI is assigned
         // (setAI re-enables). Human-vs-human matches never capture.
@@ -4893,10 +4957,20 @@ class Game {
         // Show both player cards + reserve their gutters before any grid rebuild
         // so the board fits between them (mirrors _startMatch).
         this._setMatchCardsActive(true);
-        // Rebuild the grid if a world spec is given (tournament map size / hex
-        // zoom can differ); otherwise just clear the existing grid in place.
-        if (world) {
-            this._buildBoardCore(this._resolveWorld(world));
+        // Rebuild the grid only when the resolved board dimensions actually
+        // change. The tournament passes a world spec every match, but its map
+        // size / hex zoom are constant across the bracket — so without this gate
+        // we'd allocate a fresh HexGrid + Renderer + Simulation every match for
+        // an identical board, churning heap + GPU memory over a long tournament
+        // (a suspect in the host-side renderer SIGILL). Same-dims → clear in
+        // place and reuse the existing engine; only a genuine size change rebuilds.
+        const dims = world ? this._resolveWorld(world) : null;
+        const sameDims = dims && this.grid
+            && this.grid.cols === dims.cols
+            && this.grid.rows === dims.rows
+            && this.grid.hexSize === dims.hexSize;
+        if (dims && !sameDims) {
+            this._buildBoardCore(dims);
         } else {
             this.grid.forEach(cell => { cell.organisms = []; });
         }
@@ -4929,6 +5003,7 @@ class Game {
         this.renderer.clearFog();
         this.renderer.clearHighlightRound();
         this.renderer.render();
+        this._emitBoardFrame('match-start');   // full board (terrain+organisms) for fresh viewers
         this._updateWorldInfo();
         this._setConsoleVisible(true);   // tournament matches need the console too
         this._updateCensus();

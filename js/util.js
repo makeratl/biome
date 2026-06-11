@@ -28,12 +28,26 @@ export function extractJSON(str) {
         try { return JSON.parse(fenced[1].trim()); } catch {}
     }
 
-    // Right-to-left brace scan — get the model's final JSON output
-    const opens = [...str.matchAll(/\{/g)].map(m => m.index).reverse();
+    // Right-to-left brace scan — get the model's final JSON output.
+    //
+    // Bounded on purpose. The naive form ("try every '{', scan forward to its
+    // match") is O(opens × len): when nothing parses it degrades to len² work,
+    // run synchronously on the main thread. Large cloud reasoning models (Cogito,
+    // Minimax, …) emit tens of thousands of '{' in their chain-of-thought, and
+    // this runs on that raw `thinking` blob (see ai.js) — enough to freeze the tab
+    // for minutes. The action JSON we want is small and at the END of the output,
+    // so we only try the last MAX_OPENS open-braces and cap each forward scan at
+    // MAX_SPAN. That keeps a pathological input to a brief bounded cost instead of
+    // a hang, while still finding the trailing object in every normal case.
+    const MAX_OPENS = 500;       // only the last N '{' — the real object is at the tail
+    const MAX_SPAN = 100000;     // a real action object is tiny; bound the forward scan
+    const allOpens = [...str.matchAll(/\{/g)].map(m => m.index);
+    const opens = allOpens.slice(-MAX_OPENS).reverse();
     for (const start of opens) {
         // Find the matching closing brace by tracking depth
         let depth = 0;
-        for (let i = start; i < str.length; i++) {
+        const end = Math.min(str.length, start + MAX_SPAN);
+        for (let i = start; i < end; i++) {
             if (str[i] === '{') depth++;
             else if (str[i] === '}') depth--;
             if (depth === 0) {

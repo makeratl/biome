@@ -4,12 +4,15 @@
 import { postResult, fetchRankings, expectedScore } from './rankings.js';
 import { CONFIG } from './config.js';
 import { resolveModel } from './model-identity.js';
-import { applyAvatar, applyAvatarVideo } from './model-avatar.js';
+import { applyAvatar, applyAvatarVideo, setAvatarVideoMode } from './model-avatar.js';
 import { listResidentModels } from './ai.js';
 import { shortId } from './util.js';
 import { BroadcastCarousel } from './broadcast-carousel.js';
 import { renderBracketTree } from './bracket-tree.js';
 import { openTournamentViewer } from './tournament-viewer.js';
+import { LivePublisher } from './live-publish.js';
+import { setHeartbeatContext, breadcrumbSync } from './heartbeat.js';
+import { serializeBoard } from './state-frame.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -18,6 +21,7 @@ export class TournamentManager {
         this.running = false;
         this.tournamentId = shortId(8);
         this._currentMatchIdx = null; // index in this.bracket of the match inside _runMatch
+        this._live = new LivePublisher(); // pushes live feed to the spectator relay
         this._setupStatsToggle();
     }
 
@@ -135,16 +139,39 @@ export class TournamentManager {
         this._show('t-bracket');
         await this._sleep(4000);
 
+        // Shed GPU load during live matches: drop avatars to still portraits so
+        // the broadcast flanks + AI cards don't run 5–6 concurrent <video> decode
+        // + bounce loops on top of the game canvas + board encode. Prime suspect
+        // in the mid-match renderer SIGILL (flat JS heap → GPU-side death). The
+        // champion screen restores 'full' for the celebration. Dial to 'plain'
+        // to keep video but drop only the bounce machinery.
+        setAvatarVideoMode('still');
+        // Broadcast PARKED pending a rethink. Confirmed: the live-broadcast machinery
+        // (per-turn bracket repaint + board-image encode + dual carousels) does heavy
+        // synchronous DOM/canvas work on the game's own main thread during live play,
+        // and intermittently stalls it — the freeze scatters across all three, so it's
+        // architectural, not a single bad line. Off = the game runs clean to a champion;
+        // the spectator updates at match boundaries. Re-enable only after the redesign.
+        this._broadcastOff = true;
+
         // Run every match in round-major order; each winner feeds the next round.
         // Works for any power-of-two field (8 / 16 / 32) since the bracket is a
         // generated tree, not a fixed 7-match list.
         for (const match of this.bracket) {
+            this._logMatchMemory('start', match);
             await this._runMatch(match);
             this._propagateWinner(match);
+            this._logMatchMemory('end', match);
         }
 
+        this._broadcastOff = false;   // matches done — restore the bracket for the champion screen
+        setAvatarVideoMode('full');   // matches done — restore full flourish for the champion screen
         this._showChampion(this._finalMatch().winner);
         this.running = false;
+        // Final push: flag the feed done so the spectator flips to the
+        // standings/last-champion idle state immediately, not after a stale-out.
+        this._live.stopBoardLoop();
+        this._live.pushSnapshot(this._buildLiveSnapshot({ done: true }));
         // Tournament finished — bracket stays available so user can review
         // results, but the LIVE indicator stops pulsing.
         this.game.setBracketAvailable({
@@ -211,6 +238,36 @@ export class TournamentManager {
         return `Round of ${participants} — Match ${slot + 1}`;
     }
 
+    // Match-boundary memory probe (Chrome-only; performance.memory is gated).
+    // Diagnostic for the long-tournament renderer SIGILL: a monotonic climb in
+    // usedJSHeapSize across matches points at a JS-heap leak (and the slope says
+    // matches-to-OOM); a flat heap while the tab still dies points at GPU/canvas
+    // memory instead. Filter the console with `[mem]`. No-op off Chrome.
+    _logMatchMemory(phase, match) {
+        if (phase === 'start') this._memMatchSeq = (this._memMatchSeq || 0) + 1;
+        // Stamp every heartbeat with where we are, so a crash line in
+        // heartbeat.log reads "...during match 14 (Semifinal 1), phase=end".
+        setHeartbeatContext({
+            match: this._memMatchSeq || null,
+            matchLabel: match?.label || '',
+            matchPhase: phase,
+            bracketSize: this.bracket?.length || null,
+        });
+        const m = performance.memory;
+        if (!m) return;
+        const MB = (b) => (b / 1048576).toFixed(1);
+        const used = +MB(m.usedJSHeapSize);
+        const limit = +MB(m.jsHeapSizeLimit);
+        const pct = ((m.usedJSHeapSize / m.jsHeapSizeLimit) * 100).toFixed(0);
+        const delta = this._memLastUsed != null ? (used - this._memLastUsed).toFixed(1) : '0.0';
+        this._memLastUsed = used;
+        console.log(
+            `[mem] match ${this._memMatchSeq || '?'} ${phase.padEnd(5)} ` +
+            `heap ${used}MB / ${limit}MB (${pct}%)  Δ${delta >= 0 ? '+' : ''}${delta}MB  ` +
+            `${match?.label || ''}`.trim()
+        );
+    }
+
     async _runMatch(match) {
         const isFinal = this._isFinal(match);
 
@@ -245,7 +302,7 @@ export class TournamentManager {
         // Broadcast flanks: two lockstep carousels frame the board (last bout /
         // dossiers / leaderboard / tournament details / fun facts). Rendered once
         // the board is revealed.
-        this._renderMatchFlanks(match);
+        if (!this._broadcastOff) this._renderMatchFlanks(match);   // broadcast valve: skip flank carousels during the test
         this.game.resetForMatch(this.totalRounds, this.world);
         this.game.setAI(1, match.p1);
         this.game.setAI(2, match.p2);
@@ -253,10 +310,15 @@ export class TournamentManager {
         // (_startMatch does this; the tournament path goes through resetForMatch
         // instead, so apply it here once both fighters are assigned).
         await this.game._applyPlayerPalettes();
-        // Repaint the bracket panel each round-end so the live card carries fresh scores + round counter
-        this.game._onTournamentTick = () => this._renderLiveBracket();
+        // Per-turn tick = the CHEAP async snapshot push only (spectator gets live
+        // scores + board-as-state). The heavy local bracket repaint is no longer on
+        // the per-turn path — it was the freeze surface — and runs only at match
+        // boundaries (the direct _renderLiveBracket calls in _runMatch).
+        this.game._onTournamentTick = () => this._pushLiveSnapshot();
         const promise = this.game.runFullGame();
         this.game.turns.startGame();
+        // Stream the live board to the spectator relay for the duration of the match.
+        if (!this._broadcastOff) this._live.startBoardLoop();   // broadcast valve: skip the board-push loop during the test
         // Match-level safety net. Per-turn watchdogs already keep any single AI turn
         // from hanging; this guards the rare freeze that isn't a turn (a stuck
         // round-end sequence, a wedged simulation) so the bracket always advances.
@@ -265,6 +327,7 @@ export class TournamentManager {
         const scores = await Promise.race([promise, guard.promise]);
         clearTimeout(guard.id);   // match resolved (or timed out) — cancel the net
         this.game._onTournamentTick = null;
+        this._live.stopBoardLoop();
 
         // Record result — capture score history before it gets cleared on next reset
         match.scores = scores;
@@ -504,11 +567,89 @@ export class TournamentManager {
         });
     }
 
+    // Move clock for the spectator: remaining-at-push so the page can tick it down
+    // locally (immune to clock skew between the two machines). Only while the AI
+    // whose turn it is is actually on the clock.
+    _liveClock(isLive) {
+        const mc = this.game._moveClock;
+        const cur = this.game.turns?.currentPlayer;
+        if (!isLive || !mc || mc.player !== cur) return null;
+        return { remainingMs: Math.max(0, mc.deadline - Date.now()), totalMs: mc.totalMs, player: mc.player };
+    }
+
+    // Serialize the live bracket state for the spectator relay. Mirrors what
+    // _renderLiveBracket computes for local render, but resolves statOf into a
+    // plain map (functions don't serialize) and keeps only renderer-read fields.
+    _buildLiveSnapshot({ done = false } = {}) {
+        if (!this.bracket) return null;
+        const liveIdx   = this._currentMatchIdx;
+        const isLive    = liveIdx != null && this.bracket[liveIdx] && !this.bracket[liveIdx].winner;
+        const liveRaw   = (isLive && this.game.simulation) ? this.game.simulation.finalScore() : null;
+        const liveRound = isLive ? (this.game.turns?.round ?? null) : null;
+        const slim = (s) => s ? { 1: { finalScore: s[1].finalScore }, 2: { finalScore: s[2].finalScore } } : null;
+
+        const stats = {}, seen = new Set();
+        for (const m of this.bracket) {
+            for (const p of [m.p1, m.p2, m.winner]) {
+                if (p && !seen.has(p)) { seen.add(p); stats[p] = this._statOf(p); }
+            }
+        }
+        const bracket = this.bracket.map(m => ({
+            id: m.id, round: m.round, slot: m.slot, label: m.label,
+            p1: m.p1, p2: m.p2, winner: m.winner, scores: slim(m.scores),
+        }));
+
+        return {
+            tournamentId: this.tournamentId,
+            bracket,
+            rounds: this.rounds.map(r => r.map(m => m.id)),  // round → match ids
+            stats,
+            currentMatchIdx: isLive ? liveIdx : null,
+            liveScores: slim(liveRaw),
+            liveRound,
+            banter: isLive ? { 1: this.game._liveBanter?.[1] || null, 2: this.game._liveBanter?.[2] || null } : null,
+            // Live turn state for the thinking cockpit: which phase, who's deciding,
+            // the move clock (remaining-at-push; spectator ticks it down locally),
+            // and per-player cold-model "warming up" flags.
+            phase: isLive ? (this.game.turns?.phase ?? null) : null,
+            currentPlayer: isLive ? (this.game.turns?.currentPlayer ?? null) : null,
+            clock: this._liveClock(isLive),
+            loading: isLive ? { 1: !!this.game._loadWatch?.[1], 2: !!this.game._loadWatch?.[2] } : null,
+            totalRounds: this.totalRounds,
+            modeLabel: this.mode === 'lightning' ? 'Lightning' : 'Standard',
+            formatLabel: this.format?.label || '',
+            champion: this._finalMatch()?.winner || null,
+            fieldSize: this.rounds[0].length * 2,
+            // Board-as-state: the live board travels in the snapshot so the
+            // spectator draws it locally (shared organism-art), replacing the
+            // canvas read-back + WebP push. Only while a match is live.
+            board: (isLive && this.game?.grid) ? serializeBoard(this.game.grid) : null,
+            done,
+        };
+    }
+
+    // Cheap, async, fire-and-forget snapshot push for the spectator relay — JSON
+    // only (bracket + scores + board-as-state), no synchronous DOM repaint and no
+    // canvas read-back. This is the safe per-turn broadcast path; the heavy local
+    // bracket repaint (_renderLiveBracket) and flank carousels stay parked behind
+    // _broadcastOff. Wired to _onTournamentTick. See docs/headless-broadcast-design.md.
+    _pushLiveSnapshot() {
+        try { this._live.pushSnapshot(this._buildLiveSnapshot()); } catch (_) { /* never break the match */ }
+    }
+
     // Mini bracket = a live-broadcast strip: a hero card (now playing / up next /
     // champion) over a one-line "up next" + a progress rail that collapses the
     // whole 7-match tree into a row of nodes. Tap the header ⛶ to zoom to full.
     _renderLiveBracket() {
         if (!this.bracket) return;
+        // Broadcast valve: during live matches, skip the live-bracket repaint +
+        // spectator relay entirely. Two separate freezes localized here (the
+        // innerHTML repaint and the snapshot push) with no infinite loop in the JS
+        // — i.e. a pathological synchronous reflow of the heavy broadcast DOM. This
+        // silences it during play to confirm the subsystem; the bracket still
+        // renders at match boundaries (when _broadcastOff is cleared). Reversible.
+        if (this._broadcastOff) return;
+        breadcrumbSync('lbn.start', { idx: this._currentMatchIdx });
 
         const modeLabel = this.mode === 'lightning' ? 'Lightning' : 'Standard';
         const liveIdx   = this._currentMatchIdx;
@@ -557,6 +698,13 @@ export class TournamentManager {
             live: this.running,
             title: `${modeLabel} Bracket`,
         });
+
+        // Mirror this repaint to the spectator relay — piggybacks on every bracket
+        // change (match start, round-end, match end, champion), so the public feed
+        // updates at exactly the moments the local bracket does.
+        breadcrumbSync('lbn.snap', {});
+        this._live.pushSnapshot(this._buildLiveSnapshot());
+        breadcrumbSync('lbn.done', {});
     }
 
     // Hero card for a live / up-next match.

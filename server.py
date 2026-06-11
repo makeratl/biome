@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP server with Ollama proxy for CORS bypass and tournament logging."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode, urlparse, parse_qs, unquote
 import urllib.request
 import urllib.error
 import json
@@ -11,6 +11,7 @@ import time
 import uuid
 import subprocess
 import threading
+import ipaddress
 
 import db
 import traj
@@ -42,6 +43,94 @@ def _traj_append(filename, record):
         return True
     except Exception:
         return False
+
+# --- Out-of-process heartbeat (renderer-crash forensics) ---
+# A renderer SIGILL ("Aw, Snap!") wipes the in-page console, so no in-browser log
+# can ever report the tab's own death. Instead the driving browser POSTs a tiny
+# vitals packet every second (heap, DOM node count, match #) to /heartbeat and we
+# append it here, flushing on every write (open→append→close). When the tab dies,
+# the LAST line on disk is the final moment before death; the gap where beats stop
+# marks WHEN, and the heap/DOM trend up to it marks WHY. Survives the crash because
+# it lives entirely outside the renderer. Tail with: tail -f dev-logs/heartbeat.log
+HEARTBEAT_DIR = os.path.join(BASE_DIR, 'dev-logs')
+HEARTBEAT_FILE = os.path.join(HEARTBEAT_DIR, 'heartbeat.log')
+_heartbeat_lock = threading.Lock()
+
+def _heartbeat_append(record):
+    try:
+        os.makedirs(HEARTBEAT_DIR, exist_ok=True)
+        record['server_ts'] = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+        line = json.dumps(record, separators=(',', ':')) + '\n'
+        with _heartbeat_lock:
+            with open(HEARTBEAT_FILE, 'a', encoding='utf-8') as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())   # force to disk so a hard crash can't lose the last beat
+        return True
+    except Exception:
+        return False
+
+# --- Live tournament relay (Spectator view) ---
+# The server is otherwise blind to in-progress tournaments — it only sees a match
+# once it's over (POST /tournament-result). The spectator page lives on a different
+# machine (public DNS), so browser-local channels are out: the driving browser
+# pushes a live snapshot + periodic board image here, and spectators poll it.
+# Ephemeral, in-memory only — no DB. Lock-guarded (ThreadingHTTPServer).
+_LIVE_LOCK = threading.Lock()
+_LIVE = {'snapshot': None, 'board': None, 'board_ct': 'image/webp',
+         'board_rev': 0, 'updated': 0.0, 'done': False}
+LIVE_STALE_S = 75   # no push in this long ⇒ driver gone ⇒ treat as idle
+
+# --- Public exposure: trust by source IP, not a global flag ---
+# This server is meant to sit behind a single port-forward (WAN :8765 → box),
+# so ONE process must serve anonymous spectators AND accept the live push from
+# the LAN driver. A process-global switch can't do both. Instead we trust by
+# source address: requests from loopback/private ranges (you, on the LAN) get
+# full access; everything from the open internet is restricted to a read-only
+# spectator allowlist — the Ollama proxy, /reset-rankings, the DB, and every
+# write are simply never reachable from the WAN.
+#
+# A home router's DNAT preserves the real client IP, so client_address cleanly
+# distinguishes LAN from WAN. BIOME_PUBLIC remains as an optional override that
+# forces read-only even for LAN clients (useful for testing the public face).
+PUBLIC_MODE = os.environ.get('BIOME_PUBLIC', '').lower() in ('1', 'true', 'yes')
+
+def _is_trusted_addr(host):
+    """True for loopback + RFC1918 private clients (the LAN driver)."""
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback or ip.is_private or ip.is_link_local
+    except ValueError:
+        return False
+
+# Exact GET endpoints a spectator needs (queries allowed via prefix match).
+_PUBLIC_GET_ENDPOINTS = (
+    '/tournament/live/board', '/tournament/live', '/tournament', '/tournaments',
+    '/rankings', '/stats/matches', '/stats/dashboard',
+)
+# Static asset path prefixes the spectator page pulls in (its JS/CSS/avatars).
+_PUBLIC_STATIC_PREFIXES = ('/js/', '/avatars/', '/assets/')
+# Exact files allowed even though the blanket .json/.db rule would block them —
+# the avatar/video manifests are harmless lookups the page needs.
+_PUBLIC_STATIC_FILES = ('/spectator.html', '/style.css', '/favicon.ico',
+                        '/avatars/manifest.json', '/videos/manifest.json')
+
+def _public_get_allowed(path):
+    # Decode + normalize FIRST so traversal can't sneak a sensitive file past
+    # the prefix match. '/js/../server.py' (or its %2e%2e-encoded form, which the
+    # static handler unquotes after this check) would otherwise pass '/js/' and
+    # resolve to source on disk. Match translate_path: unquote, then collapse
+    # '..' with normpath; refuse anything that still escapes root.
+    clean = unquote(path.split('?', 1)[0]).replace('\\', '/')
+    clean = os.path.normpath(clean)
+    if not clean.startswith('/') or '..' in clean.split('/'):
+        return False
+    if clean in _PUBLIC_STATIC_FILES:
+        return True
+    if any(clean.startswith(p) for p in _PUBLIC_STATIC_PREFIXES):
+        # ...but never data files that happen to sit under an allowed prefix.
+        return not clean.endswith(('.db', '.jsonl', '.json'))
+    return any(clean == e or clean.startswith(e) for e in _PUBLIC_GET_ENDPOINTS)
 
 def _load_manifest():
     try:
@@ -321,11 +410,37 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
 
+    # A request is restricted to the read-only spectator surface when it comes
+    # from outside the LAN (the open internet via the port-forward), or when
+    # BIOME_PUBLIC forces read-only everywhere. LAN/loopback clients — i.e. you,
+    # driving the tournament — are never restricted, so the live push works.
+    def _restricted(self):
+        if PUBLIC_MODE:
+            return True
+        return not _is_trusted_addr(self.client_address[0])
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.end_headers()
 
     def do_GET(self):
+        restricted = self._restricted()
+        # A WAN visitor at the root gets the spectator page — the public entry
+        # point — instead of the game UI (or a bare 403). LAN clients still get
+        # the game at /, since they're here to drive, not just watch.
+        if restricted and self.path.split('?', 1)[0] in ('/', '/index.html', '/index.htm'):
+            self.path = '/spectator.html'
+        # WAN (or forced-public) clients see only the spectator allowlist.
+        if restricted and not _public_get_allowed(self.path):
+            self.send_error(403, 'Forbidden')
+            return
+        # Live tournament relay (spectator view)
+        if self.path == '/tournament/live':
+            self._handle_live_get()
+            return
+        if self.path.startswith('/tournament/live/board'):
+            self._handle_live_board_get()
+            return
         # Proxy Ollama API calls
         if self.path.startswith('/ollama/'):
             self._proxy_ollama(self.path[8:])  # strip '/ollama/'
@@ -500,6 +615,17 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         return True
 
     def do_POST(self):
+        # Only the LAN driver may write (push the live feed, log results, etc.).
+        if self._restricted():
+            self.send_error(403, 'Forbidden')
+            return
+        # Live tournament relay: driving browser pushes snapshot + board image
+        if self.path == '/tournament/live':
+            self._handle_live_post()
+            return
+        if self.path == '/tournament/live/board':
+            self._handle_live_board_post()
+            return
         # Proxy Ollama API calls (including /api/pull for model installation)
         if self.path.startswith('/ollama/'):
             is_pull = '/api/pull' in self.path
@@ -507,6 +633,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 self._proxy_ollama_stream(self.path[8:], is_post=True)
             else:
                 self._proxy_ollama(self.path[8:], is_post=True)
+            return
+        # Out-of-process heartbeat / crash forensics (renderer SIGILL survivor)
+        if self.path == '/heartbeat':
+            self._handle_heartbeat()
             return
         # Tournament result logging
         if self.path == '/tournament-result':
@@ -559,6 +689,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         super().do_POST()
 
     def do_DELETE(self):
+        # Only the LAN driver may delete (model uninstall via the Ollama proxy).
+        if self._restricted():
+            self.send_error(403, 'Forbidden')
+            return
         # Uninstall: delete model weights from disk via Ollama. Proxied so all
         # Ollama traffic stays on one path. ELO/history in biome.db is untouched.
         if self.path.startswith('/ollama/'):
@@ -568,10 +702,15 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def _json_response(self, data, status=200):
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
+        except (BrokenPipeError, ConnectionResetError):
+            # Client vanished mid-write (tab closed, navigated, or crashed). The
+            # socket is gone — there's nothing to report and no one to report to.
+            pass
 
     def _handle_trajectory(self, filename):
         # Fire-and-forget from the client; we just append and ack. Never 500 into
@@ -585,6 +724,19 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         record.setdefault('server_ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
         ok = _traj_append(filename, record)
         self._json_response({'ok': ok})
+
+    def _handle_heartbeat(self):
+        # Fire-and-forget vitals from the driving browser. Must never disturb the
+        # game loop — a bad beat is dropped, not fatal. Ack tiny so the client's
+        # 1 Hz post is cheap.
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            record = json.loads(self.rfile.read(length)) if length else {}
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'ok': False}, 400)
+            return
+        _heartbeat_append(record)
+        self._json_response({'ok': True})
 
     def _handle_tournament_result(self):
         try:
@@ -641,6 +793,71 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             'result': out['result'],
             'rankings': out['rankings'],
         })
+
+    # --- Live tournament relay ---------------------------------------------
+    # Fire-and-forget from the driving browser; never 500 into the game loop.
+    def _handle_live_post(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            snap = json.loads(self.rfile.read(length)) if length else {}
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        with _LIVE_LOCK:
+            _LIVE['snapshot'] = snap
+            _LIVE['updated'] = time.time()
+            _LIVE['done'] = bool(snap.get('done'))
+        self._json_response({'ok': True})
+
+    def _handle_live_board_post(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            data = self.rfile.read(length) if length else b''
+        except (ValueError, OSError):
+            self._json_response({'error': 'bad body'}, 400)
+            return
+        if not data:
+            self._json_response({'error': 'empty'}, 400)
+            return
+        with _LIVE_LOCK:
+            _LIVE['board'] = data
+            _LIVE['board_ct'] = self.headers.get('Content-Type', 'image/webp')
+            _LIVE['board_rev'] += 1
+            _LIVE['updated'] = time.time()
+            rev = _LIVE['board_rev']
+        self._json_response({'ok': True, 'board_rev': rev})
+
+    def _handle_live_get(self):
+        with _LIVE_LOCK:
+            snap = _LIVE['snapshot']
+            updated = _LIVE['updated']
+            rev = _LIVE['board_rev']
+            done = _LIVE['done']
+        age = time.time() - updated if updated else None
+        active = snap is not None and not done and age is not None and age < LIVE_STALE_S
+        self._json_response({
+            'active': active,
+            'done': done,
+            'snapshot': snap if active else None,
+            'board_rev': rev,
+            'age_ms': round(age * 1000) if age is not None else None,
+        })
+
+    def _handle_live_board_get(self):
+        with _LIVE_LOCK:
+            data = _LIVE['board']
+            ct = _LIVE['board_ct']
+        if not data:
+            self.send_error(404, 'no board')
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', ct)
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _handle_comfy_generate(self):
         try:
@@ -768,11 +985,12 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 for line in response:
                     self.wfile.write(line)
                     self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # Client gave up (e.g. an AI-turn AbortController fired). Nothing to
+            # send back — the socket is already gone.
+            return
         except Exception as e:
-            self.send_response(502)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode())
+            self._send_proxy_error(e)
 
     def _proxy_ollama(self, path, is_post=False, method=None):
         url = f'http://localhost:11434/{path}'
@@ -796,11 +1014,23 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(response.read())
+        except (BrokenPipeError, ConnectionResetError):
+            # Client gave up (e.g. an AI-turn AbortController fired) before we
+            # finished writing the proxied response. The socket is gone — don't
+            # try to send an error body into a broken pipe.
+            return
         except Exception as e:
+            self._send_proxy_error(e)
+
+    def _send_proxy_error(self, e):
+        """Send a 502 for a failed proxy, but never raise if the client is gone."""
+        try:
             self.send_response(502)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode())
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def log_message(self, format, *args):
         pass  # suppress request logs

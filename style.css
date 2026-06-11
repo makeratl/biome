@@ -4614,6 +4614,12 @@ body.event-promote #game-over-overlay {
 .bracket-tree--rounds-5 .bt-score { font-size: 11.5px; min-width: 32px; }
 .bracket-tree--rounds-4 .bt-cell,
 .bracket-tree--rounds-5 .bt-cell { padding: 3px 22px; }
+/* A dense card is too narrow to hold a 4-digit ELO AND the score side by side —
+   the score is the headline on a live/finished match, so drop the secondary ELO
+   whenever a score is shown. Keeps everything inside the card (no spill-out). */
+.bracket-tree--rounds-4 .bt-side:has(.bt-score) .bt-elo,
+.bracket-tree--rounds-5 .bt-side:has(.bt-score) .bt-elo,
+.bracket-tree--rounds-6 .bt-side:has(.bt-score) .bt-elo { display: none; }
 /* A live card barely scales in a dense column so it can't overlap neighbours */
 .bracket-tree--rounds-4 .bt-live,
 .bracket-tree--rounds-5 .bt-live { transform: scale(1.02); }

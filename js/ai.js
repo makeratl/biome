@@ -3,6 +3,7 @@
 import { CONFIG } from './config.js';
 import { createOrganism } from './species.js';
 import { extractJSON } from './util.js';
+import { breadcrumb, breadcrumbSync } from './heartbeat.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
 import { getStrategy, bucketGeometry, cellBucket, parseBucketLabel } from './map-strategies.js';
 import { parseTier } from './model-identity.js';
@@ -572,6 +573,10 @@ export class AIPlayer {
         // Prefer content field; fall back to thinking field for models that
         // exhaust their token budget on chain-of-thought. extractJSON is the
         // shared 3-tier parser (direct → strip fences → right-to-left brace scan).
+        // Breadcrumb the sizes BEFORE parsing: if a giant CoT ever wedges the
+        // parser again, the last 'crumb' in heartbeat.log names this step and the
+        // input size (sendBeacon flushes even if the main thread then freezes).
+        breadcrumb('ai.parse', { model: this.model, contentLen: content.length, thinkingLen: thinking.length });
         const result = extractJSON(content) || extractJSON(thinking);
         if (!result) {
             throw new Error(`No valid JSON found in response (content:${content.length}b, thinking:${thinking.length}b)`);
@@ -690,12 +695,18 @@ export class AIPlayer {
     // ── Main entry point ───────────────────────────────────────
 
     async takeTurn() {
+        // Phase breadcrumbs (sendBeacon — survives a main-thread freeze). The hang
+        // is somewhere in here but NOT the parser (ai.parse came back clean), so we
+        // mark each synchronous phase: whichever crumb is LAST in heartbeat.log
+        // before the gap is the phase that wedged. See heartbeat.js / the freeze hunt.
+        breadcrumbSync('turn.start', { round: this.game.turns.round, player: this.player });
         const candidates = this._findCandidates();
         const enemy = this.player === 1 ? 2 : 1;
         // Snapshot the board as this turn begins — next turn diffs against it for
         // the "since your last turn" recap. Captured before any placements land.
         const startCensus = { mine: this._getCensus(this.player), enemy: this._getCensus(enemy) };
         const { system, user } = this._buildPrompt(candidates);
+        breadcrumbSync('turn.fetch', { player: this.player, candidates: candidates.length });
         const ap = this.game.turns.players[this.player].ap;
 
         console.log(`[AI] Round ${this.game.turns.round}, P${this.player}, ${ap} AP, ${candidates.length} candidates`);
@@ -741,6 +752,11 @@ export class AIPlayer {
 
         console.log('[AI] Response:', JSON.stringify(response));
 
+        // Sync breadcrumbs bracket every statement in the post-parse window — the
+        // freeze lives in here and sendBeacon dropped the proof, so each of these
+        // is GUARANTEED on disk before its statement runs. The last one in
+        // heartbeat.log before the gap is the exact line that wedged.
+        breadcrumbSync('turn.execute', { player: this.player, actions: response.actions?.length || 0 });
         const results = this._executeActions(response.actions, candidates);
 
         // Log successes and failures
@@ -753,15 +769,19 @@ export class AIPlayer {
         const leftover = this.game.turns.players[this.player].ap;
         if (leftover > 0) {
             console.log(`[AI] ${leftover} AP unspent — auto-filling with grass`);
+            breadcrumbSync('turn.topup', { player: this.player, leftover });
             const topUp = this._topUpWithGrass(candidates, results);
             results.push(...topUp);
         }
 
+        breadcrumbSync('turn.render', { player: this.player });
         this.game.renderer.render();
 
+        breadcrumbSync('turn.capture', { player: this.player });
         this._recordTurn(startCensus, response.reasoning, response.banter, results);
         this._captureTurn({ system, user, raw, parsed: response, results, startCensus, ap, fallbackReason: null });
 
+        breadcrumbSync('turn.return', { player: this.player });
         return {
             reasoning: response.reasoning || '',
             banter: response.banter || '',
