@@ -146,13 +146,14 @@ export class TournamentManager {
         // champion screen restores 'full' for the celebration. Dial to 'plain'
         // to keep video but drop only the bounce machinery.
         setAvatarVideoMode('still');
-        // Broadcast PARKED pending a rethink. Confirmed: the live-broadcast machinery
-        // (per-turn bracket repaint + board-image encode + dual carousels) does heavy
-        // synchronous DOM/canvas work on the game's own main thread during live play,
-        // and intermittently stalls it — the freeze scatters across all three, so it's
-        // architectural, not a single bad line. Off = the game runs clean to a champion;
-        // the spectator updates at match boundaries. Re-enable only after the redesign.
-        this._broadcastOff = true;
+        // Broadcast LIVE. The per-turn freeze surface — the heavy synchronous
+        // _renderLiveBracket innerHTML repaint — is off the per-turn path (the tick is
+        // now the cheap _pushLiveSnapshot, board-as-state), and the 1.8s WebP board
+        // read-back loop is retired (the board travels in the snapshot). What remains
+        // on the live path is the cheap JSON push per turn plus infrequent
+        // match-boundary bracket repaints + once-per-match flank carousels — none of
+        // it the per-turn heavy work that stalled the loop. (Targeted retire + verify.)
+        this._broadcastOff = false;
 
         // Run every match in round-major order; each winner feeds the next round.
         // Works for any power-of-two field (8 / 16 / 32) since the bracket is a
@@ -317,8 +318,9 @@ export class TournamentManager {
         this.game._onTournamentTick = () => this._pushLiveSnapshot();
         const promise = this.game.runFullGame();
         this.game.turns.startGame();
-        // Stream the live board to the spectator relay for the duration of the match.
-        if (!this._broadcastOff) this._live.startBoardLoop();   // broadcast valve: skip the board-push loop during the test
+        // WebP board loop RETIRED: the board travels as state in _pushLiveSnapshot
+        // (board-as-state), which the spectator draws itself via BoardFrameView. The
+        // 1.8s canvas read-back/encode was the heavy repeating freeze surface — gone.
         // Match-level safety net. Per-turn watchdogs already keep any single AI turn
         // from hanging; this guards the rare freeze that isn't a turn (a stuck
         // round-end sequence, a wedged simulation) so the bracket always advances.
