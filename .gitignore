@@ -18,6 +18,11 @@ dev-logs/
 
 nohup
 
+# biome.db is a live SQLite DB (ELO source of truth) — local runtime state.
+# Tracking it committed WAL-inconsistent bytes that read back as a malformed
+# image; db.py rebuilds/migrates it on boot. Keep it (and its sidecars) local.
+biome.db
+
 *.db-shm
 
 *.db-wal
