@@ -31,11 +31,22 @@ export function emitStateFrame(frame) {
 //   — used for the match-start frame, or any "full" frame).
 // includeTerrain:false → only occupied cells, organisms only (a light per-turn
 //   delta; the viewer keeps the cached terrain backdrop). Optimization for later.
-export function serializeBoard(grid, { includeTerrain = true } = {}) {
+export function serializeBoard(grid, { includeTerrain = true, fog = null } = {}) {
     if (!grid) return null;
+    // Fog of war is a CORRECTNESS invariant, not a render nicety: the emitted
+    // frame must never carry the opponent's current-round placements to a view
+    // that shouldn't see them. `fog` = { round, player } mirrors the renderer's
+    // isHidden predicate (renderer.js) EXACTLY, so the serialized board hides the
+    // same organisms the operator's own canvas hides this turn. Filtered here, at
+    // serialize time, because that's the only place _placedRound still exists (the
+    // [species, player, energy] tuple drops it). null fog = full board.
+    const hidden = fog
+        ? (o) => o._placedRound === fog.round && o.player === fog.player
+        : null;
     const cells = [];
     grid.forEach((cell) => {
-        const orgs = cell.organisms;
+        let orgs = cell.organisms;
+        if (hidden && orgs && orgs.length) orgs = orgs.filter((o) => !hidden(o));
         const occupied = orgs && orgs.length > 0;
         if (!includeTerrain && !occupied) return;     // delta: skip empty cells
         const entry = { c: cell.col, r: cell.row };

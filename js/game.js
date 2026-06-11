@@ -1261,7 +1261,11 @@ class Game {
     // See docs/headless-broadcast-design.md.
     _emitBoardFrame(kind = 'turn') {
         try {
-            const board = serializeBoard(this.grid, { includeTerrain: kind === 'match-start' });
+            // Pull the live fog straight from the renderer so the emitted board
+            // hides exactly what the operator's canvas hides this turn — never
+            // leaking an opponent's current-round placements (fog invariant).
+            const fog = this.renderer?.getFog?.() || null;
+            const board = serializeBoard(this.grid, { includeTerrain: kind === 'match-start', fog });
             const sc = this.simulation?.finalScore?.();
             emitStateFrame(buildFrame({
                 kind,

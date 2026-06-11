@@ -212,6 +212,13 @@ export class Renderer {
         return org._placedRound === this._fogRound && org.player === this._fogPlayer;
     }
 
+    // The active fog as plain data, for serializing a fog-correct StateFrame:
+    // { round, player } while fog is up, null when cleared. Single source of
+    // truth so an emitted board hides exactly what this canvas hides.
+    getFog() {
+        return this._fogRound >= 0 ? { round: this._fogRound, player: this._fogPlayer } : null;
+    }
+
     setHighlightRound(round) {
         this._highlightRound = round;
     }
