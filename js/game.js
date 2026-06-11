@@ -3626,10 +3626,13 @@ class Game {
 
     /** Resolve world settings → concrete { cols, rows, hexSize } for grid build.
      *  'auto' fits the viewport (fixed rows, fill width with cols); presets keep
-     *  fixed dimensions and scale the hex size to fill (slider overrides). */
-    _resolveWorld(world) {
+     *  fixed dimensions and scale the hex size to fill (slider overrides).
+     *  `viewport` ({ availW, availH }) lets a headless runner size the grid with
+     *  fixed dims instead of reading the DOM; the operator omits it and the live
+     *  viewport is measured as before. (Phase-1 headless-broadcast decoupling.) */
+    _resolveWorld(world, viewport = null) {
         const SQRT3 = Math.sqrt(3);
-        const { availW, availH } = this._availableBoard();
+        const { availW, availH } = viewport || this._availableBoard();
         if (world.mapSize === 'auto') {
             const rows = CONFIG.FIT.rows;
             // hex size that fills the available height for those rows
