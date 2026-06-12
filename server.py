@@ -13,6 +13,8 @@ import subprocess
 import threading
 import ipaddress
 import collections
+import signal
+import sys
 
 import db
 import traj
@@ -123,6 +125,184 @@ def _splice_board_terrain(snap):
         merged.append(cell)
     board['cells'] = merged
     board['full'] = True
+
+
+# ── Headless tournament scheduler ────────────────────────────────────────────
+# Runs scheduled/queued tournaments ONE AT A TIME by spawning the headless runner
+# (tools/run-tournament.mjs), which drives a dedicated Chromium through one
+# tournament. The browser game posts results to /tournament-result and feeds the
+# live relay exactly as a human-operated tab would, so the scheduler only manages
+# lifecycle — it never touches game logic. Control plane is LAN-only (do_POST is
+# IP-gated; GET /tournament/jobs is off the public allowlist).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SCHED_FILE = os.path.join(_HERE, 'tournament-schedule.json')
+RUNNER = os.path.join(_HERE, 'tools', 'run-tournament.mjs')
+_SCHED_LOCK = threading.Lock()
+_SCHED = {
+    'queue': [],     # pending jobs (dicts)
+    'running': None, # the job currently executing
+    'recent': collections.deque(maxlen=20),
+    'schedules': [], # persisted recurring/future specs
+    'proc': None,    # the running subprocess.Popen
+    'cancel': set(), # job ids asked to cancel
+}
+_job_seq = 0
+
+def _norm_cfg(body):
+    """Clamp/normalize a tournament config from an API body."""
+    fmts = {'seeded', 'qualifier', 'champions', 'davidGoliath', 'open', 'locals'}
+    fmt = str(body.get('format', 'seeded'))
+    if fmt not in fmts:
+        fmt = 'seeded'
+    size = int(body.get('size', 8))
+    size = 4 if size < 4 else (32 if size > 32 else size)
+    rounds = int(body.get('rounds', 10))
+    rounds = 1 if rounds < 1 else (50 if rounds > 50 else rounds)
+    return {'size': size, 'format': fmt, 'rounds': rounds,
+            'mapStrategy': str(body.get('mapStrategy', 'mediated'))}
+
+def _new_job(cfg, source='manual'):
+    global _job_seq
+    _job_seq += 1
+    return {'id': 'job-%d-%d' % (int(time.time()), _job_seq), 'status': 'queued',
+            'config': cfg, 'source': source, 'created': time.time(),
+            'started': None, 'finished': None, 'exit': None,
+            'champion': None, 'error': None}
+
+def _load_schedules():
+    try:
+        with open(SCHED_FILE) as f:
+            data = json.load(f)
+        with _SCHED_LOCK:
+            _SCHED['schedules'] = data.get('schedules', [])
+    except Exception:
+        pass
+
+def _save_schedules():
+    try:
+        with _SCHED_LOCK:
+            data = {'schedules': list(_SCHED['schedules'])}
+        with open(SCHED_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def _schedule_due(s, now):
+    """Has this recurring/future schedule come due since it last fired?"""
+    w = s.get('when', {})
+    last = s.get('last_fired') or 0
+    kind = w.get('kind')
+    if kind == 'interval':
+        return (now - last) >= max(1, int(w.get('hours', 6))) * 3600
+    if kind == 'daily':
+        try:
+            hh, mm = [int(x) for x in str(w.get('time', '09:00')).split(':')]
+        except Exception:
+            hh, mm = 9, 0
+        lt = time.localtime(now)
+        target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+        last_day = time.localtime(last).tm_yday if last else -1
+        return now >= target and last_day != lt.tm_yday
+    return False
+
+def _kill_proc(proc):
+    """Kill the runner AND its Chromium children (it's a session leader)."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+def _parse_runner_result(out):
+    for line in reversed((out or '').splitlines()):
+        if line.startswith('RESULT '):
+            try:
+                return json.loads(line[7:])
+            except Exception:
+                return {}
+    return {}
+
+def _run_job(job):
+    cfg = job['config']
+    # Generous backstop; the per-match watchdog (tournament.js) already force-resolves
+    # stuck matches, and the runner has its own --timeout — this is the outer reap.
+    timeout_s = cfg['rounds'] * cfg['size'] * 60 + 600
+    with _SCHED_LOCK:
+        job['status'] = 'running'
+        job['started'] = time.time()
+        _SCHED['running'] = job
+    cmd = ['node', RUNNER, '--size', str(cfg['size']), '--format', cfg['format'],
+           '--rounds', str(cfg['rounds']), '--map-strategy', cfg['mapStrategy'],
+           '--server', 'http://localhost:8765', '--timeout', str(timeout_s)]
+    proc = None
+    try:
+        proc = subprocess.Popen(cmd, cwd=_HERE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+        with _SCHED_LOCK:
+            _SCHED['proc'] = proc
+        t0 = time.time()
+        while proc.poll() is None:
+            if time.time() - t0 > timeout_s + 120:
+                _kill_proc(proc)
+                job['error'] = 'timed out'
+                break
+            if job['id'] in _SCHED['cancel']:
+                _kill_proc(proc)
+                job['error'] = 'cancelled'
+                break
+            time.sleep(2)
+        out = proc.stdout.read().decode('utf-8', 'replace') if proc.stdout else ''
+        result = _parse_runner_result(out)
+        job['exit'] = proc.returncode
+        job['champion'] = result.get('champion')
+        if proc.returncode == 0 and not job['error']:
+            job['status'] = 'done'
+        else:
+            job['status'] = 'failed'
+            if not job['error']:
+                job['error'] = result.get('error') or ('exit %s' % proc.returncode)
+    except Exception as e:
+        job['status'] = 'failed'
+        job['error'] = str(e)
+        if proc:
+            _kill_proc(proc)
+    finally:
+        job['finished'] = time.time()
+        with _SCHED_LOCK:
+            _SCHED['running'] = None
+            _SCHED['proc'] = None
+            _SCHED['cancel'].discard(job['id'])
+            _SCHED['recent'].appendleft(job)
+
+def _scheduler_tick():
+    now = time.time()
+    fired = False
+    with _SCHED_LOCK:
+        scheds = list(_SCHED['schedules'])
+    for s in scheds:
+        if _schedule_due(s, now):
+            with _SCHED_LOCK:
+                _SCHED['queue'].append(_new_job(s['config'], source=s['id']))
+                s['last_fired'] = now
+            fired = True
+    if fired:
+        _save_schedules()
+    with _SCHED_LOCK:
+        job = _SCHED['queue'].pop(0) if (_SCHED['running'] is None and _SCHED['queue']) else None
+    if job:
+        _run_job(job)   # blocks until this tournament finishes (we run one at a time)
+
+def _scheduler_loop():
+    _load_schedules()
+    while True:
+        try:
+            _scheduler_tick()
+        except Exception as e:
+            sys.stderr.write('[sched] tick error: %s\n' % e)
+        time.sleep(5)
+
 
 # --- Public exposure: trust by source IP, not a global flag ---
 # This server is meant to sit behind a single port-forward (WAN :8765 → box),
@@ -487,6 +667,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path.startswith('/tournament/live/board'):
             self._handle_live_board_get()
             return
+        # Scheduler control plane (LAN-only — kept off _PUBLIC_GET_ENDPOINTS).
+        if self.path.startswith('/tournament/jobs'):
+            self._handle_jobs_get()
+            return
         # Proxy Ollama API calls
         if self.path.startswith('/ollama/'):
             self._proxy_ollama(self.path[8:])  # strip '/ollama/'
@@ -675,6 +859,13 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament/live/board':
             self._handle_live_board_post()
             return
+        # Scheduler control plane (LAN-only via the do_POST 403 gate above).
+        if self.path == '/tournament/schedule':
+            self._handle_schedule_post()
+            return
+        if self.path == '/tournament/jobs/cancel':
+            self._handle_jobs_cancel_post()
+            return
         # Proxy Ollama API calls (including /api/pull for model installation)
         if self.path.startswith('/ollama/'):
             is_pull = '/api/pull' in self.path
@@ -760,6 +951,61 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             # Client vanished mid-write (tab closed, navigated, or crashed). The
             # socket is gone — there's nothing to report and no one to report to.
             pass
+
+    def _read_json_body(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            return json.loads(self.rfile.read(length)) if length else {}
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    # ── tournament scheduler control plane (LAN-only) ──────────────────────
+    def _handle_schedule_post(self):
+        body = self._read_json_body()
+        if body is None:
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        cfg = _norm_cfg(body)
+        when = body.get('when') or {'kind': 'now'}
+        if when.get('kind') == 'now':
+            job = _new_job(cfg, source='manual')
+            with _SCHED_LOCK:
+                _SCHED['queue'].append(job)
+            self._json_response({'ok': True, 'job': job['id']})
+        else:
+            sid = 'sched-%d' % int(time.time() * 1000)
+            with _SCHED_LOCK:
+                _SCHED['schedules'].append({'id': sid, 'config': cfg, 'when': when,
+                                            'last_fired': time.time()})
+            _save_schedules()
+            self._json_response({'ok': True, 'schedule': sid})
+
+    def _handle_jobs_get(self):
+        with _SCHED_LOCK:
+            out = {'running': _SCHED['running'], 'queue': list(_SCHED['queue']),
+                   'recent': list(_SCHED['recent']), 'schedules': list(_SCHED['schedules'])}
+        self._json_response(out)
+
+    def _handle_jobs_cancel_post(self):
+        body = self._read_json_body()
+        if body is None:
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        jid = body.get('id')
+        removed = False
+        with _SCHED_LOCK:
+            n = len(_SCHED['queue'])
+            _SCHED['queue'] = [j for j in _SCHED['queue'] if j['id'] != jid]
+            removed = len(_SCHED['queue']) < n
+            if _SCHED['running'] and _SCHED['running']['id'] == jid:
+                _SCHED['cancel'].add(jid)
+                removed = True
+            ns = len(_SCHED['schedules'])
+            _SCHED['schedules'] = [s for s in _SCHED['schedules'] if s['id'] != jid]
+            if len(_SCHED['schedules']) < ns:
+                removed = True
+        _save_schedules()
+        self._json_response({'ok': removed})
 
     def _handle_trajectory(self, filename):
         # Fire-and-forget from the client; we just append and ack. Never 500 into
@@ -1119,6 +1365,9 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     db.init_db()
+    # Headless tournament scheduler — runs queued/scheduled tournaments one at a
+    # time by spawning the runner. Daemon so it dies with the server.
+    threading.Thread(target=_scheduler_loop, daemon=True).start()
     server = ThreadingHTTPServer(('', 8765), NoCacheHandler)
     print('Serving on http://localhost:8765')
     server.serve_forever()

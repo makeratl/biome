@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biome · Control Room</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Control room — scoped layout; inherits the dark palette from style.css. */
+        .adm { max-width: 920px; margin: 0 auto; padding: 24px 18px 60px; color: #cdd6e4; }
+        .adm-top { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px; }
+        .adm-title { font-size: 22px; font-weight: 800; letter-spacing: .14em; color: #7ee0c8; }
+        .adm-sub { font-size: 13px; color: #6b7688; }
+        .adm-link { margin-left: auto; font-size: 13px; color: #7aa2ff; text-decoration: none; }
+        .adm-card { background: rgba(20,26,38,.7); border: 1px solid rgba(120,140,170,.16);
+            border-radius: 12px; padding: 18px 18px 20px; margin-bottom: 18px; }
+        .adm-card h2 { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+            color: #8a98ad; margin: 0 0 14px; }
+        .adm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+        .adm-field { display: flex; flex-direction: column; gap: 5px; }
+        .adm-field label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #6b7688; }
+        .adm-field select, .adm-field input { background: rgba(10,14,22,.9); color: #dfe7f2;
+            border: 1px solid rgba(120,140,170,.22); border-radius: 7px; padding: 8px 10px; font-size: 14px; }
+        .adm-when { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 14px; font-size: 14px; }
+        .adm-when label { display: inline-flex; align-items: center; gap: 6px; color: #aab6c8; }
+        .adm-when input[type=number] { width: 56px; }
+        .adm-go { margin-top: 16px; background: linear-gradient(180deg,#2ea98a,#1f7d66); color: #eafff8;
+            border: none; border-radius: 8px; padding: 11px 22px; font-size: 14px; font-weight: 700;
+            letter-spacing: .04em; cursor: pointer; }
+        .adm-go:hover { filter: brightness(1.08); }
+        .adm-msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+        .adm-row { display: flex; align-items: center; gap: 12px; padding: 9px 4px;
+            border-top: 1px solid rgba(120,140,170,.1); font-size: 14px; }
+        .adm-row:first-child { border-top: none; }
+        .adm-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: .05em; }
+        .tag-running { background: rgba(46,169,138,.2); color: #5fe0bc; }
+        .tag-queued { background: rgba(122,162,255,.18); color: #9bb6ff; }
+        .tag-done { background: rgba(120,200,140,.16); color: #84d29a; }
+        .tag-failed { background: rgba(230,110,110,.18); color: #ff9b9b; }
+        .tag-sched { background: rgba(190,160,255,.16); color: #c5aaff; }
+        .adm-cfg { color: #8a98ad; font-size: 13px; }
+        .adm-spacer { flex: 1; }
+        .adm-cancel { background: rgba(230,110,110,.14); color: #ff9b9b; border: 1px solid rgba(230,110,110,.3);
+            border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+        .adm-cancel:hover { background: rgba(230,110,110,.24); }
+        .adm-empty { color: #56607240; color: #5b6678; font-size: 13px; font-style: italic; padding: 6px 4px; }
+        .adm-prog { color: #7ee0c8; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="adm">
+        <div class="adm-top">
+            <span class="adm-title">BIOME · CONTROL ROOM</span>
+            <span class="adm-sub">schedule &amp; manage headless tournaments</span>
+            <a class="adm-link" href="/spectator.html">▶ watch live</a>
+        </div>
+
+        <div class="adm-card">
+            <h2>New tournament</h2>
+            <div class="adm-grid">
+                <div class="adm-field">
+                    <label>Field size</label>
+                    <select id="f-size"><option>4</option><option>8</option><option>16</option><option>32</option></select>
+                </div>
+                <div class="adm-field">
+                    <label>Format</label>
+                    <select id="f-format"></select>
+                </div>
+                <div class="adm-field">
+                    <label>Rounds</label>
+                    <input id="f-rounds" type="number" min="1" max="50" value="5">
+                </div>
+                <div class="adm-field">
+                    <label>Board strategy</label>
+                    <select id="f-map">
+                        <option value="mediated">Standard</option>
+                        <option value="ascii">ASCII</option>
+                        <option value="raw">Raw</option>
+                    </select>
+                </div>
+            </div>
+            <div class="adm-when">
+                <label><input type="radio" name="when" value="now" checked> Run now</label>
+                <label><input type="radio" name="when" value="interval"> Every <input id="f-hours" type="number" min="1" max="168" value="6"> hours</label>
+                <label><input type="radio" name="when" value="daily"> Daily at <input id="f-time" type="time" value="09:00"></label>
+            </div>
+            <button class="adm-go" id="f-go">Schedule</button>
+            <div class="adm-msg" id="f-msg"></div>
+        </div>
+
+        <div class="adm-card">
+            <h2>Running &amp; queued</h2>
+            <div id="adm-active"></div>
+        </div>
+
+        <div class="adm-card">
+            <h2>Schedules</h2>
+            <div id="adm-schedules"></div>
+        </div>
+
+        <div class="adm-card">
+            <h2>Recent</h2>
+            <div id="adm-recent"></div>
+        </div>
+    </div>
+    <script type="module" src="js/admin.js"></script>
+</body>
+</html>

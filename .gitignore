@@ -5,6 +5,7 @@ node_modules/
 __pycache__/
 tournament_log.json
 model-roster.json
+tournament-schedule.json
 *.bak
 
 *.mbtree
