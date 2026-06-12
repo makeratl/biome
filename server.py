@@ -12,6 +12,7 @@ import uuid
 import subprocess
 import threading
 import ipaddress
+import collections
 
 import db
 import traj
@@ -82,7 +83,11 @@ _LIVE = {'snapshot': None, 'board': None, 'board_ct': 'image/webp',
          # Cached terrain from the last board KEYFRAME (full board). The driver
          # sends terrain once per match then organisms-only; we splice this back in
          # so every served snapshot carries a complete board (robust to late joiners).
-         'terrain': None}
+         'terrain': None,
+         # Per-step growth stream: a small ring of recent { seq, board } frames the
+         # driver pushes each simulation step, drained by spectators (since-seq) to
+         # ANIMATE the 2s growth cycle. Bounded — a slow spectator just resyncs to latest.
+         'frames': collections.deque(maxlen=64), 'frame_seq': 0}
 LIVE_STALE_S = 75   # no push in this long ⇒ driver gone ⇒ treat as idle
 
 
@@ -143,7 +148,7 @@ def _is_trusted_addr(host):
 
 # Exact GET endpoints a spectator needs (queries allowed via prefix match).
 _PUBLIC_GET_ENDPOINTS = (
-    '/tournament/live/board', '/tournament/live', '/tournament', '/tournaments',
+    '/tournament/live/frames', '/tournament/live/board', '/tournament/live', '/tournament', '/tournaments',
     '/rankings', '/stats/matches', '/stats/dashboard',
 )
 # Static asset path prefixes the spectator page pulls in (its JS/CSS/avatars).
@@ -476,6 +481,9 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament/live':
             self._handle_live_get()
             return
+        if self.path.startswith('/tournament/live/frames'):
+            self._handle_live_frames_get()
+            return
         if self.path.startswith('/tournament/live/board'):
             self._handle_live_board_get()
             return
@@ -660,6 +668,9 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         # Live tournament relay: driving browser pushes snapshot + board image
         if self.path == '/tournament/live':
             self._handle_live_post()
+            return
+        if self.path == '/tournament/live/frames':
+            self._handle_live_frames_post()
             return
         if self.path == '/tournament/live/board':
             self._handle_live_board_post()
@@ -847,6 +858,38 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             _LIVE['updated'] = time.time()
             _LIVE['done'] = bool(snap.get('done'))
         self._json_response({'ok': True})
+
+    # Per-step growth frame from the driver — append to the ring. Lightweight
+    # { seq, board }; spectators drain newer-than-since to animate the sim.
+    def _handle_live_frames_post(self):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            frame = json.loads(self.rfile.read(length)) if length else {}
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        seq = frame.get('seq')
+        if not isinstance(seq, int):
+            self._json_response({'error': 'no seq'}, 400)
+            return
+        with _LIVE_LOCK:
+            _LIVE['frames'].append({'seq': seq, 'board': frame.get('board')})
+            if seq > _LIVE['frame_seq']:
+                _LIVE['frame_seq'] = seq
+            _LIVE['updated'] = time.time()
+        self._json_response({'ok': True})
+
+    # Spectator drains frames with seq > `since`; `latest` lets a joiner skip the
+    # backlog and resync to the live edge.
+    def _handle_live_frames_get(self):
+        try:
+            since = int(parse_qs(urlparse(self.path).query).get('since', ['0'])[0])
+        except (ValueError, TypeError):
+            since = 0
+        with _LIVE_LOCK:
+            frames = [f for f in _LIVE['frames'] if f['seq'] > since]
+            latest = _LIVE['frame_seq']
+        self._json_response({'frames': frames, 'latest': latest})
 
     def _handle_live_board_post(self):
         try:

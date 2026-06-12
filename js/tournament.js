@@ -12,7 +12,7 @@ import { renderBracketTree } from './bracket-tree.js';
 import { openTournamentViewer } from './tournament-viewer.js';
 import { LivePublisher } from './live-publish.js';
 import { setHeartbeatContext, breadcrumbSync } from './heartbeat.js';
-import { serializeBoard } from './state-frame.js';
+import { serializeBoard, onStateFrame } from './state-frame.js';
 
 export class TournamentManager {
     constructor(game) {
@@ -314,6 +314,13 @@ export class TournamentManager {
         // the per-turn path — it was the freeze surface — and runs only at match
         // boundaries (the direct _renderLiveBracket calls in _runMatch).
         this.game._onTournamentTick = () => this._pushLiveSnapshot();
+        // Per-step growth stream: the engine already emits a 'sim-step' board frame
+        // each simulation step (game.js _emitBoardFrame); relay those to the server's
+        // ring buffer so the spectator can ANIMATE the 2s growth cycle instead of
+        // jumping. Fire-and-forget; torn down with the tick below.
+        const offFrames = onStateFrame((f) => {
+            if (f.kind === 'sim-step') this._live.pushFrame(f);
+        });
         const promise = this.game.runFullGame();
         this.game.turns.startGame();
         // WebP board loop RETIRED: the board travels as state in _pushLiveSnapshot
@@ -327,6 +334,7 @@ export class TournamentManager {
         const scores = await Promise.race([promise, guard.promise]);
         clearTimeout(guard.id);   // match resolved (or timed out) — cancel the net
         this.game._onTournamentTick = null;
+        offFrames();   // stop relaying per-step frames for this match
 
         // Record result — capture score history before it gets cleared on next reset
         match.scores = scores;

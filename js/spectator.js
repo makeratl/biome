@@ -12,6 +12,8 @@ import { resolveModel, paramLabel } from './model-identity.js';
 import { preloadAvatars, applyAvatar, applyAvatarVideo, teardownClips } from './model-avatar.js';
 import { fetchTournament, reconstructBracket } from './rankings.js';
 import { BoardFrameView } from './board-frame-view.js';
+import { FramePlayer } from './frame-player.js';
+import { CONFIG } from './config.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CHART_TOP = 10;   // ELO chart shows the leaders; the field is in the standings
@@ -19,6 +21,9 @@ const CHART_TOP = 10;   // ELO chart shows the leaders; the field is in the stan
 const POLL_MS = 1500;          // live feed cadence
 const IDLE_REFRESH_MS = 12000; // how often to re-pull standings while idle
 const TICKER_MS = 6000;        // recent-results refresh
+const FRAMES_POLL_MS = 300;    // per-step growth stream cadence (board animation)
+const STEP_MS = CONFIG.SIM?.ANIMATION_STEP_MS || 100;  // playback pace per sim step
+const FRAME_RESYNC_AHEAD = 30; // this far behind ⇒ skip the backlog, resync to the live edge
 
 const $ = (id) => document.getElementById(id);
 const short = (m) => (m || '—').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
@@ -52,6 +57,9 @@ let seenTournamentId = null; // reset the seen-set when a new tournament begins
 let celebrating = false;     // an event scene is currently playing
 const eventQueue = [];       // pending celebrations (match win / champion)
 const boardImg = new Image(); // preloader so swaps don't flicker
+let _framePlayer = null;     // per-step growth playback engine (board animation)
+let _frameSince = 0;         // highest sim-step seq we've enqueued (drain cursor)
+let _framesTimer = null;     // the frame-stream poll interval
 
 // ── poll loop ────────────────────────────────────────────────
 async function poll() {
@@ -202,12 +210,20 @@ function renderLive(data) {
     // New match → forget the prior bout's taunts so the first lines slam fresh.
     if (s.currentMatchIdx !== lastHeroMatch) {
         lastBanter = { 1: null, 2: null }; lastSpoken = null; lastHeroMatch = s.currentMatchIdx;
+        _framePlayer?.reset();   // drop the prior match's queued growth frames
     }
     renderHero(s, statOf);
-    // Prefer board-as-state (drawn locally from the snapshot via shared
-    // organism-art); fall back to the pushed WebP image if a frame has no board.
-    if (s.board) renderBoardFromState(s.board);
-    else swapBoard(data.board_rev);
+    // During SIMULATING the per-step frame stream owns the board (animated growth);
+    // otherwise draw the snapshot board (placements, pre/post-sim). The snapshot is
+    // authoritative at phase boundaries, correcting any stream drift.
+    startFrameStream();
+    if (s.phase === 'SIMULATING') {
+        // board is driven by pollFrames → FramePlayer; leave the frozen snapshot alone
+    } else if (s.board) {
+        renderBoardFromState(s.board);
+    } else {
+        swapBoard(data.board_rev);
+    }
 }
 
 // Draw the live board locally from the serialized board in the snapshot — no image
@@ -227,6 +243,50 @@ function renderBoardFromState(board) {
         _boardView = new BoardFrameView(canvas);
     }
     _boardView.render({ board });
+}
+
+// ── per-step growth stream ───────────────────────────────────
+// The engine emits a board frame each simulation step; we drain them (since-seq)
+// and play them through a FramePlayer onto the SAME _boardView the snapshot uses,
+// so the board ANIMATES the 2s growth cycle instead of jumping. Terrain is already
+// cached on _boardView from the snapshot's keyframe board, so the organism-only
+// deltas paint correctly. We deliberately do NOT coalesce — every step should show;
+// if we fall far behind (hidden tab / slow device) we skip the backlog and resync.
+function ensureFramePlayer() {
+    if (_framePlayer) return _framePlayer;
+    _framePlayer = new FramePlayer();
+    _framePlayer.on('sim-step', async (f) => {
+        if (_boardView && f.board) _boardView.render({ board: f.board });
+        await sleep(STEP_MS);   // the awaited hold IS the playback pacing
+    });
+    return _framePlayer;
+}
+
+async function pollFrames() {
+    try {
+        const res = await fetch(`/tournament/live/frames?since=${_frameSince}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const latest = data.latest || 0;
+        if (latest - _frameSince > FRAME_RESYNC_AHEAD) {  // way behind → jump to the live edge
+            _frameSince = latest;
+            ensureFramePlayer().reset();
+            return;
+        }
+        const player = ensureFramePlayer();
+        for (const f of (data.frames || [])) {
+            player.push({ kind: 'sim-step', seq: f.seq, board: f.board });
+            if (f.seq > _frameSince) _frameSince = f.seq;
+        }
+    } catch { /* ignore — board holds the last frame */ }
+}
+
+function startFrameStream() {
+    if (!_framesTimer) _framesTimer = setInterval(pollFrames, FRAMES_POLL_MS);
+}
+function stopFrameStream() {
+    if (_framesTimer) { clearInterval(_framesTimer); _framesTimer = null; }
+    if (_framePlayer) _framePlayer.reset();
 }
 
 // ── Fighter cockpit ──────────────────────────────────────────
@@ -603,6 +663,7 @@ async function renderIdle() {
         mode = 'idle';
         stopCamera();
         stopCutaway();
+        stopFrameStream();   // no live match → stop draining growth frames
         const body = $('spec-body');
         body.classList.remove('live');
         body.classList.add('idle');
