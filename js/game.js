@@ -19,6 +19,7 @@ import { trophicRead } from './trophic.js';
 import { setCaptureEnabled, isCaptureEnabled, newMatchUid, captureRound } from './capture.js';
 import { MEDAL, liveTier } from './medal.js';
 import { DYNAMICS_SCHEMA, PRESETS, applyDynamics, loadDynamics, saveDynamics, resetDynamics, settingValue, activePreset } from './game-dynamics.js';
+import { bedrockEnabled, setBedrockEnabled, listBedrockModels, fetchBedrockUsage } from './bedrock-client.js';
 
 // Models excluded from tournaments: embeddings, vision / vision-language, and
 // code specialists. They can't follow the game's JSON action protocol or aren't
@@ -528,6 +529,18 @@ class Game {
         if (modal) modal.style.display = 'none';
     }
 
+    // The model pool the game competes over: always local Ollama, plus the
+    // curated Bedrock models when the "use AWS Bedrock models" toggle is on
+    // (off by default). One source of truth for every model-list site — the
+    // opponent dropdowns, the tournament field, the demo loop. Bedrock entries
+    // carry a `bedrock:` name prefix that routes inference + tier downstream.
+    async _listModels() {
+        const local = await listOllamaModels();
+        if (!bedrockEnabled()) return local;
+        const bedrock = await listBedrockModels();
+        return bedrock.length ? [...bedrock, ...local] : local;
+    }
+
     // ── Settings panel (global, tabbed) — Game Dynamics tab ──────
     _initSettingsPanel() {
         const modal = document.getElementById('settings-modal');
@@ -544,13 +557,62 @@ class Game {
         }
         this._buildSettingsDynamics();
         this._renderSettingsValues();
+        this._initBedrockSettings();
     }
 
     _openSettingsModal() {
         const modal = document.getElementById('settings-modal');
         if (!modal) return;
         this._renderSettingsValues();   // reflect any external/default state
+        this._renderBedrockSettings();  // refresh availability + running cost
         modal.style.display = 'flex';
+    }
+
+    // ── Bedrock provider toggle (MODELS tab) — off by default ──────
+    _initBedrockSettings() {
+        const cb = document.getElementById('settings-bedrock-toggle');
+        if (!cb) return;
+        cb.checked = bedrockEnabled();
+        cb.addEventListener('change', () => {
+            setBedrockEnabled(cb.checked);
+            this._renderBedrockSettings();
+        });
+        this._renderBedrockSettings();
+    }
+
+    // Reflect server availability + toggle state + running session cost. The
+    // checkbox is disabled (with a hint) when the server reports no Bedrock
+    // models — i.e. no AWS credentials in .env.local.
+    async _renderBedrockSettings() {
+        const cb = document.getElementById('settings-bedrock-toggle');
+        if (!cb) return;
+        const status = document.getElementById('settings-bedrock-status');
+        const list = document.getElementById('settings-bedrock-models');
+        const cost = document.getElementById('settings-bedrock-cost');
+        const models = await listBedrockModels();
+        const available = models.length > 0;
+        const on = bedrockEnabled();
+        cb.disabled = !available;
+        if (status) {
+            status.textContent = available
+                ? 'On: these hosted models join the pool and compete alongside your local models. Pay-per-token — cost is logged, never capped.'
+                : 'Unavailable — add AWS keys to .env.local and restart the server.';
+        }
+        if (list) {
+            list.innerHTML = (on && available)
+                ? models.map(m => `<span class="settings-bedrock-chip ${m.klass || ''}">${m.label || m.name}</span>`).join('')
+                : '';
+        }
+        if (cost) {
+            if (on && available) {
+                const u = await fetchBedrockUsage();
+                cost.textContent = (u && u.calls)
+                    ? `Session estimate: $${u.costUsd.toFixed(4)} over ${u.calls} call(s) · ${u.inputTokens}+${u.outputTokens} tokens.`
+                    : 'Session estimate: $0.0000 — no Bedrock calls yet.';
+            } else {
+                cost.textContent = '';
+            }
+        }
     }
 
     _closeSettingsModal() {
@@ -2950,7 +3012,7 @@ class Game {
         const selects = pickerIds.map(id => document.getElementById(id)).filter(Boolean);
         if (selects.length === 0) return;
 
-        this._installedModels = await listOllamaModels();
+        this._installedModels = await this._listModels();
         this._retired = await fetchRoster();
         await this._loadModelMeta();   // ranking + record + form, for the cards
 
@@ -4518,7 +4580,7 @@ class Game {
     // Ollama like any Watch match; if it's down, we explain rather than hang.
     async _startDemo() {
         if (!this._installedModels || this._installedModels.length === 0) {
-            try { this._installedModels = await listOllamaModels(); }
+            try { this._installedModels = await this._listModels(); }
             catch (_) { this._installedModels = []; }
         }
         if (!this._installedModels || this._installedModels.length === 0) {
@@ -4697,7 +4759,7 @@ class Game {
         if (!activeDiv || !recommendedDiv) return;
 
         statusDiv.textContent = 'Checking models…';
-        this._installedModels = await listOllamaModels();
+        this._installedModels = await this._listModels();
         this._retired = await fetchRoster();
         await this._loadModelMeta();   // ranking + record + form for the cards
         const installedBaseNames = new Set(this._installedModels.map(m => m.name.split(':')[0]));
@@ -5037,7 +5099,7 @@ class Game {
         const world = { ...this._worldSettings() };
         const mode = world.rounds <= CONFIG.GAME.LIGHTNING_ROUNDS ? 'lightning' : 'standard';
 
-        const models = await listOllamaModels();
+        const models = await this._listModels();
         this._installedModels = models;
         const eligible = this._eligibleModelNames(models);
 

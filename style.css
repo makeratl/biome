@@ -533,6 +533,18 @@ body {
 }
 .settings-foot-note { font-size: 10px; color: #6e6e92; line-height: 1.4; }
 
+/* MODELS tab — AWS Bedrock provider toggle */
+.settings-bedrock-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; color: #c9c9e6; margin: 6px 0 8px; }
+.settings-bedrock-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.settings-bedrock-toggle input:disabled { cursor: not-allowed; }
+.settings-bedrock-toggle:has(input:disabled) { color: #6e6e92; cursor: not-allowed; }
+.settings-bedrock-models { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.settings-bedrock-chip { font-size: 10px; padding: 3px 8px; border-radius: 10px;
+    border: 1px solid #34344e; color: #b8b8d8; background: #1c1c2c; }
+.settings-bedrock-chip.premium { border-color: #7a5a2e; color: #e6c79a; background: #2a2014; }
+.settings-bedrock-chip.open { border-color: #2e5a4a; color: #9ad9c0; background: #142a22; }
+
 /* Placeholder until Phase 2 (panel-section was the old wrapper) */
 .panel-section {
     background: transparent;
@@ -4608,18 +4620,21 @@ body.event-promote #game-over-overlay {
 .bracket-tree--rounds-5 .bt-badge { width: 20px; height: 20px; font-size: 8px; }
 .bracket-tree--rounds-4 .bt-name,
 .bracket-tree--rounds-5 .bt-name { font-size: 11.5px; }
+.bracket-tree--rounds-4 .bt-seedno,
+.bracket-tree--rounds-5 .bt-seedno { font-size: 9px; min-width: 11px; }
 .bracket-tree--rounds-4 .bt-elo,
 .bracket-tree--rounds-5 .bt-elo { font-size: 9px; }
 .bracket-tree--rounds-4 .bt-score,
 .bracket-tree--rounds-5 .bt-score { font-size: 11.5px; min-width: 32px; }
 .bracket-tree--rounds-4 .bt-cell,
 .bracket-tree--rounds-5 .bt-cell { padding: 3px 22px; }
-/* A dense card is too narrow to hold a 4-digit ELO AND the score side by side —
-   the score is the headline on a live/finished match, so drop the secondary ELO
-   whenever a score is shown. Keeps everything inside the card (no spill-out). */
-.bracket-tree--rounds-4 .bt-side:has(.bt-score) .bt-elo,
-.bracket-tree--rounds-5 .bt-side:has(.bt-score) .bt-elo,
-.bracket-tree--rounds-6 .bt-side:has(.bt-score) .bt-elo { display: none; }
+/* On a dense card the seed (now an inline number) is the pre-match ranking and the
+   score is the result headline — the secondary ELO is redundant here (it lives on
+   the hero card + tale-of-the-tape) and squeezes the name back into truncation.
+   Drop it so the row is a clean avatar · seed · name · score. */
+.bracket-tree--rounds-4 .bt-elo,
+.bracket-tree--rounds-5 .bt-elo,
+.bracket-tree--rounds-6 .bt-elo { display: none; }
 /* A live card barely scales in a dense column so it can't overlap neighbours */
 .bracket-tree--rounds-4 .bt-live,
 .bracket-tree--rounds-5 .bt-live { transform: scale(1.02); }
@@ -5805,18 +5820,18 @@ body.event-promote #game-over-overlay {
 .bt-badge-empty { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.3); }
 .bt-badge-lg { width: 40px; height: 40px; font-size: 15px; }
 .bt-badge-sm { width: 20px; height: 20px; font-size: 8px; }
-.bt-badge-seed {
-    position: absolute;
-    bottom: -3px; right: -4px;
-    min-width: 13px; height: 13px;
-    padding: 0 2px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 8px; font-weight: 800;
-    color: #0a0e1a;
-    background: hsl(45, 95%, 66%);
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+/* Seed as a readable inline number in the row (replaces the old pip welded onto
+   the portrait). Muted by default; top-3 seeds tint gold for a quick favourite read. */
+.bt-seedno {
+    flex: 0 0 auto;
+    min-width: 14px;
+    text-align: center;
+    font-size: 10px; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.34);
 }
+.bt-seedno-top { color: hsl(45, 95%, 66%); }
+.bt-side.bt-lose .bt-seedno { color: rgba(255, 255, 255, 0.22); }
 
 /* ── Mini bracket strip (now/next + progress rail) ── */
 .lbn { display: flex; flex-direction: column; gap: 9px; }

@@ -18,8 +18,39 @@ import sys
 
 import db
 import traj
+import bedrock
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_dotenv_local():
+    """Bootstrap secrets from .env.local into the environment (without clobbering
+    anything already set). Plain KEY=VALUE lines; '#' comments and blanks skipped.
+    This is how AWS Bedrock credentials reach bedrock.py — they never touch the
+    browser, only the server process. No-op when the file is absent."""
+    path = os.path.join(BASE_DIR, '.env.local')
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, val = line.split('=', 1)
+                key = key.strip()
+                val = val.strip()
+                # Quoted value: keep contents verbatim (may legitimately hold '#').
+                # Unquoted: trim a trailing ' # inline comment', like python-dotenv.
+                if len(val) >= 2 and val[0] in '"\'' and val[-1] == val[0]:
+                    val = val[1:-1]
+                else:
+                    val = re.split(r'\s+#', val, 1)[0].strip()
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except OSError:
+        pass
+
+
+_load_dotenv_local()
 
 # --- Avatar generation (ComfyUI bridge) ---
 COMFY_URL = 'http://localhost:8188'
@@ -330,6 +361,10 @@ def _is_trusted_addr(host):
 _PUBLIC_GET_ENDPOINTS = (
     '/tournament/live/frames', '/tournament/live/board', '/tournament/live', '/tournament', '/tournaments',
     '/rankings', '/stats/matches', '/stats/dashboard',
+    # Per-fighter dossier the spectator opens on a pod/portrait tap. The '/stats/model'
+    # prefix also covers '/stats/model-tournaments'. Read-only stats, same nature as
+    # the rankings/dashboard already public here.
+    '/stats/model',
 )
 # Static asset path prefixes the spectator page pulls in (its JS/CSS/avatars).
 _PUBLIC_STATIC_PREFIXES = ('/js/', '/avatars/', '/assets/')
@@ -675,6 +710,14 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path.startswith('/ollama/'):
             self._proxy_ollama(self.path[8:])  # strip '/ollama/'
             return
+        # Bedrock (optional, off by default client-side): the curated model list
+        # and the running session cost estimate. Empty list when unconfigured.
+        if self.path == '/bedrock/models':
+            self._json_response(bedrock.list_models())
+            return
+        if self.path == '/bedrock/usage':
+            self._json_response(bedrock.usage())
+            return
         # Tournament rankings
         if self.path == '/rankings':
             self._json_response(db.get_rankings())
@@ -873,6 +916,11 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 self._proxy_ollama_stream(self.path[8:], is_post=True)
             else:
                 self._proxy_ollama(self.path[8:], is_post=True)
+            return
+        # Bedrock inference: same chat body as Ollama in, Ollama-shaped reply out
+        # (SigV4-signed Converse under the hood). LAN-only via the 403 gate above.
+        if self.path == '/bedrock/chat':
+            self._handle_bedrock_chat()
             return
         # Out-of-process heartbeat / crash forensics (renderer SIGILL survivor)
         if self.path == '/heartbeat':
@@ -1350,6 +1398,17 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._send_proxy_error(e)
 
+    def _handle_bedrock_chat(self):
+        """Relay an Ollama-shaped /api/chat body to Bedrock Converse and return the
+        translated reply. Errors come back as {'error': ...} with the upstream
+        status, mirroring the Ollama proxy's failure contract."""
+        body = self._read_json_body()
+        if body is None:
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        reply, status = bedrock.chat(body)
+        self._json_response(reply, status)
+
     def _send_proxy_error(self, e):
         """Send a 502 for a failed proxy, but never raise if the client is gone."""
         try:
@@ -1368,6 +1427,11 @@ if __name__ == '__main__':
     # Headless tournament scheduler — runs queued/scheduled tournaments one at a
     # time by spawning the runner. Daemon so it dies with the server.
     threading.Thread(target=_scheduler_loop, daemon=True).start()
+    if bedrock.available():
+        print(f'Bedrock: available ({bedrock.region()}) — '
+              f'{len(bedrock.MODELS)} models, off by default')
+    else:
+        print('Bedrock: not configured (no AWS credentials in .env.local)')
     server = ThreadingHTTPServer(('', 8765), NoCacheHandler)
     print('Serving on http://localhost:8765')
     server.serve_forever()

@@ -30,6 +30,13 @@ export const MODEL_FAMILIES = [
         promptMotif: 'a noble antlered stag, deep cobalt-blue hide, broad branching antlers like a crown',
     },
     {
+        id: 'claude', label: 'Claude', vendor: 'Anthropic',
+        match: /claude|anthropic|sonnet|haiku|opus|fable/i,
+        palette: { hue: 26, sat: 58, light: 54, accentHue: 14 },
+        archetype: 'bear',
+        promptMotif: 'a steady, thoughtful bear with warm terracotta-and-amber fur, deliberate and watchful, quietly powerful',
+    },
+    {
         id: 'gemma', label: 'Gemma', vendor: 'Google', match: /gemma/i,
         palette: { hue: 185, sat: 72, light: 52, accentHue: 165 },
         archetype: 'dragonfly',
@@ -192,9 +199,15 @@ function baseName(name) {
 
 // Parse a model name into a size tier. Cloud always wins (a hosted giant), then
 // explicit parameter counts (`14b`), then word sizes (`medium`), else mid.
+// Bedrock models carry the `bedrock:` routing prefix — remote/hosted, no local
+// footprint, so they behave like cloud models (no warming, cloud token budget).
+export function isBedrockModel(name) {
+    return /^bedrock:/i.test(name || '');
+}
+
 export function parseTier(name) {
     const lower = (name || '').toLowerCase();
-    if (/cloud/.test(lower)) return 'cloud';
+    if (isBedrockModel(name) || /cloud/.test(lower)) return 'cloud';
 
     const tag = lower.includes(':') ? lower.split(':').slice(1).join(':') : '';
     const search = tag || lower;

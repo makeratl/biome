@@ -10,10 +10,12 @@
 import { renderBracketTree } from './bracket-tree.js';
 import { resolveModel, paramLabel } from './model-identity.js';
 import { preloadAvatars, applyAvatar, applyAvatarVideo, teardownClips } from './model-avatar.js';
-import { fetchTournament, reconstructBracket } from './rankings.js';
+import { fetchTournament, reconstructBracket, expectedScore } from './rankings.js';
 import { BoardFrameView } from './board-frame-view.js';
 import { FramePlayer } from './frame-player.js';
 import { CONFIG } from './config.js';
+import { telemetryHTML, renderTelemetry, teardownBiosphere } from './spectator-telemetry.js';
+import { openPlayerCard } from './player-card.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CHART_TOP = 10;   // ELO chart shows the leaders; the field is in the standings
@@ -60,6 +62,9 @@ const boardImg = new Image(); // preloader so swaps don't flicker
 let _framePlayer = null;     // per-step growth playback engine (board animation)
 let _frameSince = 0;         // highest sim-step seq we've enqueued (drain cursor)
 let _framesTimer = null;     // the frame-stream poll interval
+let lastVersusKey = null;    // intro / NEXT-UP card identity — rebuild (reload clips) only on change
+let kickoffShownFor = null;  // tournamentId we've fired the full-screen "fight card" entry for
+let lastSnap = null;         // latest live snapshot — read by the fighter-dossier click handler
 
 // ── poll loop ────────────────────────────────────────────────
 async function poll() {
@@ -97,6 +102,7 @@ function ensureLiveScaffold() {
         <div class="panel board-panel">
             <div class="panel-label">Live board</div>
             <div class="board-wrap" id="spec-board"><span class="board-empty">waiting for board…</span></div>
+            ${telemetryHTML()}
         </div>
         <div class="panel bracket-panel">
             <div class="panel-label">Bracket</div>
@@ -105,8 +111,40 @@ function ensureLiveScaffold() {
         </div>`;
     lastBoardRev = -1;
     lastBracketSig = null;
+    wireCardClicks();
     startCamera();
     startCutaway();
+}
+
+// ── Fighter dossier on tap ───────────────────────────────────
+// A spectator can tap any fighter (cockpit pod, intro/NEXT-UP portrait) to open
+// the same gamified player-card modal the manual game shows. It's the viewer's
+// own overlay — the broadcast keeps streaming underneath. Delegated on the two
+// persistent panels so it survives every per-match cockpit/card rebuild.
+function oppForEl(el, model) {
+    const card = el.closest('.si-card');
+    if (card) {   // intro / NEXT-UP card → the other portrait in the same card
+        const others = [...card.querySelectorAll('.si-portrait[data-model]')].map(a => a.dataset.model);
+        return others.find(x => x && x !== model) || null;
+    }
+    const m = (lastSnap && lastSnap.currentMatchIdx != null) ? lastSnap.bracket?.[lastSnap.currentMatchIdx] : null;
+    return m ? (m.p1 === model ? m.p2 : (m.p2 === model ? m.p1 : null)) : null;
+}
+function openCardFromEl(el) {
+    const model = el?.dataset?.model;
+    if (!model) return;
+    const st = (lastSnap?.stats || {})[model] || {};
+    openPlayerCard({
+        model,
+        prettyName: short(model),
+        ranking: { model, elo: st.elo, wins: st.wins, losses: st.losses, rank: st.rank ?? st.seed },
+        opponent: (() => { const o = oppForEl(el, model); return o ? { model: o } : null; })(),
+    });
+}
+function wireCardClicks() {
+    const onClick = (e) => { const el = e.target.closest('[data-model]'); if (el) openCardFromEl(el); };
+    $('spec-hero')?.addEventListener('click', onClick);   // cockpit pods
+    $('spec-board')?.addEventListener('click', onClick);  // intro / NEXT-UP portraits
 }
 
 // ── Broadcast camera ─────────────────────────────────────────
@@ -184,34 +222,31 @@ function bracketSignature(s) {
 function renderLive(data) {
     ensureLiveScaffold();
     const s = data.snapshot;
+    lastSnap = s;      // the fighter-dossier click handler reads stats/opponent from here
     detectEvents(s);   // fire match-win / champion scenes on newly decided matches
     $('spec-sub').textContent = `${s.modeLabel || 'Standard'}${s.formatLabel ? ' · ' + s.formatLabel : ''} · ${s.totalRounds} rounds`;
 
-    // Rebuild the renderer's inputs from the serialized snapshot.
-    const byId = {};
-    s.bracket.forEach(m => { byId[m.id] = m; });
-    const rounds = (s.rounds || []).map(r => r.map(id => byId[id]).filter(Boolean));
     const statOf = (m) => s.stats?.[m] || null;
+    renderBracketMaybe(s, statOf);   // keep the tree fresh across every live sub-state
 
-    const sig = bracketSignature(s);
-    if (sig !== lastBracketSig) {
-        lastBracketSig = sig;
-        renderBracketTree($('spec-bracket'), {
-            rounds, bracket: s.bracket, statOf,
-            currentMatchIdx: s.currentMatchIdx,
-            liveScores: s.liveScores, liveRound: s.liveRound,
-            totalRounds: s.totalRounds, modeLabel: s.modeLabel, formatLabel: s.formatLabel,
-            highlight: s.champion || null,
-        });
-        // Re-anchor the camera to the fresh DOM without a jump; the cycle animates from here.
-        requestAnimationFrame(() => positionCamera(false));
-    }
+    // Two ceremony sub-states ride the live feed: the pre-match INTRO (host is
+    // warming the model / playing its VS reveal, no board yet) and the between-match
+    // INTERMISSION (a match just resolved, the next is being set up). Both fill the
+    // board panel with a versus card instead of the dead "waiting for board…".
+    const inIntro = s.phase === 'INTRO' && s.intro;
+    const inIntermission = !inIntro && s.currentMatchIdx == null && !s.champion && !s.done;
 
-    // New match → forget the prior bout's taunts so the first lines slam fresh.
+    // New match (or sub-state) → forget the prior bout's taunts so the first lines
+    // slam fresh, and drop any queued growth frames.
     if (s.currentMatchIdx !== lastHeroMatch) {
         lastBanter = { 1: null, 2: null }; lastSpoken = null; lastHeroMatch = s.currentMatchIdx;
-        _framePlayer?.reset();   // drop the prior match's queued growth frames
+        _framePlayer?.reset();
     }
+
+    if (inIntro)        { maybeKickoff(s); renderHero(s, statOf); renderIntro(s); return; }
+    if (inIntermission) { renderHero(s, statOf); renderIntermission(s); return; }
+
+    lastVersusKey = null;   // back to a live board → next ceremony rebuilds its card
     renderHero(s, statOf);
     // During SIMULATING the per-step frame stream owns the board (animated growth);
     // otherwise draw the snapshot board (placements, pre/post-sim). The snapshot is
@@ -226,6 +261,135 @@ function renderLive(data) {
     }
 }
 
+// Sig-gated bracket render — extracted so every live sub-state (live match, intro,
+// intermission) keeps the tree current without resetting the broadcast camera.
+function renderBracketMaybe(s, statOf) {
+    const byId = {};
+    s.bracket.forEach(m => { byId[m.id] = m; });
+    const rounds = (s.rounds || []).map(r => r.map(id => byId[id]).filter(Boolean));
+    const sig = bracketSignature(s);
+    if (sig === lastBracketSig) return;
+    lastBracketSig = sig;
+    renderBracketTree($('spec-bracket'), {
+        rounds, bracket: s.bracket, statOf,
+        currentMatchIdx: s.currentMatchIdx,
+        liveScores: s.liveScores, liveRound: s.liveRound,
+        totalRounds: s.totalRounds, modeLabel: s.modeLabel, formatLabel: s.formatLabel,
+        highlight: s.champion || null,
+    });
+    // Re-anchor the camera to the fresh DOM without a jump; the cycle animates from here.
+    requestAnimationFrame(() => positionCamera(false));
+}
+
+// ── Pre-match VS-intro & NEXT-UP intermission ────────────────
+// A broadcast pre-fight show in the board panel: both portraits (intro/idle clips),
+// a win-odds bar, the tale-of-the-tape stats, and a warming-status line while the
+// host loads the cold model. Built ONCE per fighter pairing (clips are expensive),
+// then only the warming flag updates per poll.
+const elo1k = (st) => (st && st.elo != null) ? Math.round(st.elo) : null;
+
+function buildVersusCard(s, p1, p2, { kind, label, round }) {
+    const a = s.stats?.[p1] || {}, b = s.stats?.[p2] || {};
+    const e1 = a.elo ?? 1000, e2 = b.elo ?? 1000;
+    const p1win = Math.round(expectedScore(e1, e2) * 100);
+    const h = h2hRecord(p1, p2);
+    const kicker = kind === 'nextup' ? 'NEXT UP' : (round != null ? `${label || 'Match'}` : (label || 'Match'));
+    const sub = kind === 'nextup' ? 'on deck' : 'entering the arena';
+    const stat = (lbl, v1, v2, lead) => `
+        <div class="si-row">
+            <span class="si-v ${lead === 1 ? 'si-lead' : ''}">${v1}</span>
+            <span class="si-lbl">${lbl}</span>
+            <span class="si-v si-v2 ${lead === 2 ? 'si-lead' : ''}">${v2}</span>
+        </div>`;
+    const cmp = (x, y) => (x == null || y == null) ? 0 : x > y ? 1 : y > x ? 2 : 0;
+    const e1s = elo1k(a), e2s = elo1k(b);
+    // Full-frame portrait panel (the 256² clip fills it — no circle crop), with a
+    // rank chip and an overlaid nameplate, fighting-game character-select style.
+    const portrait = (side, model, st, eStr) => {
+        const rk = st.rank ?? st.seed;
+        return `
+            <div class="si-fighter si-f${side}">
+                <div class="si-portrait" id="si-ava${side}" data-model="${model}" style="--bh:${hueOf(model)}" title="View fighter stats">
+                    ${rk != null ? `<span class="si-rank${rk <= 3 ? ' top3' : ''}">#${rk}</span>` : ''}
+                    <span class="si-portrait-init">${initialsOf(model)}</span>
+                    <div class="si-plate"><span class="si-name">${short(model)}</span>${eStr != null ? `<span class="si-elo">ELO ${eStr}</span>` : ''}</div>
+                </div>
+            </div>`;
+    };
+    return `
+      <div class="si-card si-${kind}">
+        <div class="si-head"><span class="si-kicker">${escHtml(kicker)}</span><span class="si-sub">${sub}</span></div>
+        <div class="si-fighters">
+            ${portrait(1, p1, a, e1s)}
+            <div class="si-vs"><span>VS</span></div>
+            ${portrait(2, p2, b, e2s)}
+        </div>
+        <div class="si-odds"><i style="width:${p1win}%"></i><b style="width:${100 - p1win}%"></b>
+            <span class="si-odds-num si-odds-1">${p1win}%</span><span class="si-odds-num si-odds-2">${100 - p1win}%</span></div>
+        <div class="si-tape">
+            ${stat('SEED', a.seed ? '#' + a.seed : '—', b.seed ? '#' + b.seed : '—', cmp(b.seed, a.seed))}
+            ${stat('RECORD', `${a.wins || 0}-${a.losses || 0}`, `${b.wins || 0}-${b.losses || 0}`, cmp(a.wins, b.wins))}
+            ${h ? stat('H2H', h.aw, h.bw, cmp(h.aw, h.bw)) : ''}
+        </div>
+        <div class="si-note" id="si-note"></div>
+      </div>`;
+}
+
+function mountVersusClips(wrap, p1, p2, category) {
+    applyAvatarVideo($('si-ava1'), p1, { category, loop: true }).catch(() => {});
+    applyAvatarVideo($('si-ava2'), p2, { category, loop: true }).catch(() => {});
+    paintAvatars(wrap);   // still-portrait fallback for any model without a clip
+}
+
+function renderIntro(s) {
+    const wrap = $('spec-board');
+    if (!wrap) return;
+    const it = s.intro;
+    const key = `intro:${s.currentMatchIdx}:${it.p1}:${it.p2}`;
+    if (key !== lastVersusKey) {
+        lastVersusKey = key;
+        teardownClips(wrap);
+        wrap.innerHTML = buildVersusCard(s, it.p1, it.p2, { kind: 'intro', label: it.label, round: it.round });
+        mountVersusClips(wrap, it.p1, it.p2, 'intro');
+    }
+    // Dynamic per-poll bits: the warming shimmer + status line.
+    const card = wrap.querySelector('.si-card');
+    card?.classList.toggle('warming', !!it.warming);
+    const note = $('si-note');
+    if (note) note.textContent = it.warming ? `Warming up ${it.warmLabel || 'models'}…` : 'Stepping into the arena…';
+}
+
+function nextPendingMatch(s) {
+    return (s.bracket || []).find(m => m.p1 && m.p2 && !m.winner) || null;
+}
+
+function renderIntermission(s) {
+    const wrap = $('spec-board');
+    if (!wrap) return;
+    const m = nextPendingMatch(s);
+    if (!m) { lastVersusKey = null; wrap.innerHTML = '<span class="board-empty">tournament wrapping up…</span>'; return; }
+    const key = `nextup:${m.id}:${m.p1}:${m.p2}`;
+    if (key !== lastVersusKey) {
+        lastVersusKey = key;
+        teardownClips(wrap);
+        wrap.innerHTML = buildVersusCard(s, m.p1, m.p2, { kind: 'nextup', label: m.label, round: m.round });
+        mountVersusClips(wrap, m.p1, m.p2, 'idle');
+    }
+    const note = $('si-note');
+    if (note) note.textContent = m.label ? `${m.label} is on deck` : 'next match on deck';
+}
+
+// Full-screen "fight card" the first time a tournament goes live — the kickoff
+// moment. Fires once per tournamentId; a spectator joining mid-bracket (matches
+// already decided) skips it, mirroring detectEvents' silent-seed rule.
+function maybeKickoff(s) {
+    if (s.tournamentId === kickoffShownFor) return;
+    kickoffShownFor = s.tournamentId;
+    if ((s.bracket || []).some(m => m.winner)) return;   // joined mid-tournament — no kickoff
+    eventQueue.push({ type: 'kickoff', s });
+    drainEvents();
+}
+
 // Draw the live board locally from the serialized board in the snapshot — no image
 // fetch, no host-side canvas read-back. Reuses the game's organism-art via
 // BoardFrameView. See docs/headless-broadcast-design.md.
@@ -235,14 +399,18 @@ function renderBoardFromState(board) {
     if (!wrap) return;
     let canvas = wrap.querySelector('canvas.spec-board-canvas');
     if (!canvas) {
+        teardownClips(wrap);   // shed any intro/next-up portrait clips before we clear them
         wrap.innerHTML = '';
         canvas = document.createElement('canvas');
-        canvas.className = 'spec-board-canvas';
+        // First board after the intro: genesis reveal (fade/scale-in) instead of a pop.
+        canvas.className = 'spec-board-canvas board-genesis';
         canvas.id = 'board-img';            // inherit the board image's sizing CSS
+        canvas.addEventListener('animationend', () => canvas.classList.remove('board-genesis'), { once: true });
         wrap.appendChild(canvas);
         _boardView = new BoardFrameView(canvas);
     }
     _boardView.render({ board });
+    renderTelemetry(board);
 }
 
 // ── per-step growth stream ───────────────────────────────────
@@ -256,7 +424,7 @@ function ensureFramePlayer() {
     if (_framePlayer) return _framePlayer;
     _framePlayer = new FramePlayer();
     _framePlayer.on('sim-step', async (f) => {
-        if (_boardView && f.board) _boardView.render({ board: f.board });
+        if (_boardView && f.board) { _boardView.render({ board: f.board }); renderTelemetry(f.board); }
         await sleep(STEP_MS);   // the awaited hold IS the playback pacing
     });
     return _framePlayer;
@@ -299,7 +467,7 @@ const RING_C = 2 * Math.PI * 45;   // circumference of the r=45 clock ring
 function podHTML(side, model) {
     let r; try { r = resolveModel(model); } catch { r = { hue: 210, initials: '?' }; }
     return `
-        <div class="pod pod-p${side}" id="ck-p${side}">
+        <div class="pod pod-p${side} pod-clickable" id="ck-p${side}" data-model="${model || ''}" title="View fighter stats">
             <div class="pod-avwrap">
                 <svg class="clock-ring" viewBox="0 0 100 100" aria-hidden="true">
                     <circle class="cr-track" cx="50" cy="50" r="45"></circle>
@@ -307,6 +475,7 @@ function podHTML(side, model) {
                 </svg>
                 <div class="pod-avatar" id="ck-av${side}" style="--bh:${r.hue}">${r.initials || ''}</div>
                 <div class="clock-num" id="ck-num${side}"></div>
+                <div class="pod-rank" id="ck-rk${side}"></div>
             </div>
             <div class="pod-name">${short(model)}</div>
             <div class="pod-elo" id="ck-elo${side}"></div>
@@ -328,14 +497,31 @@ function buildCockpit(m, s, statOf) {
         <div id="ck-banter"></div>`;
     applyAvatar($('ck-av1'), m.p1);   // portrait (procedural hue+initials fallback)
     applyAvatar($('ck-av2'), m.p2);
+    podClip = { 1: null, 2: null };   // fresh pods → still portraits; clips re-mount on demand
     const elo = (side, model) => { const st = statOf(model); const e = $(`ck-elo${side}`); if (e) e.textContent = st?.elo != null ? `ELO ${Math.round(st.elo)}` : ''; };
+    const rank = (side, model) => { const st = statOf(model); const e = $(`ck-rk${side}`); const r = st?.rank ?? st?.seed; if (e) { e.textContent = r != null ? `#${r}` : ''; e.classList.toggle('top3', r != null && r <= 3); } };
     elo(1, m.p1); elo(2, m.p2);
+    rank(1, m.p1); rank(2, m.p2);
+}
+
+// Bring the pod portrait to life: the model on the clock plays its "thinking"
+// clip (motion = who's working); everyone else falls back to the still. Track the
+// mounted category so we don't re-mount (and restart) the clip every poll.
+let podClip = { 1: null, 2: null };
+function setPodClip(side, model, category) {
+    if (podClip[side] === category) return;
+    podClip[side] = category;
+    const el = $(`ck-av${side}`);
+    if (!el) return;
+    if (!category) { teardownClips(el); return; }   // reveal the still portrait underneath
+    applyAvatarVideo(el, model, { category, loop: true }).catch(() => {});
 }
 
 function phaseTag(s, m) {
     const round = `R${s.liveRound ?? 1}/${s.totalRounds}`;
     let ph = '';
-    if (s.phase === 'SIMULATING') ph = '<span class="ck-ph ck-ph-sim">RESOLVING ECOSYSTEM</span>';
+    if (s.phase === 'INTRO') ph = `<span class="ck-ph ck-ph-sim">${s.intro?.warming ? 'WARMING UP' : 'ENTERING ARENA'}</span>`;
+    else if (s.phase === 'SIMULATING') ph = '<span class="ck-ph ck-ph-sim">RESOLVING ECOSYSTEM</span>';
     else if (s.currentPlayer === 1) ph = `<span class="ck-ph ck-ph-p1">P1 ${s.loading?.[1] ? 'WARMING UP' : 'DECIDING'}</span>`;
     else if (s.currentPlayer === 2) ph = `<span class="ck-ph ck-ph-p2">P2 ${s.loading?.[2] ? 'WARMING UP' : 'DECIDING'}</span>`;
     return `<span class="ck-live"><span class="spec-dot"></span>LIVE</span> <span class="ck-meta">${m.label || 'Match'} · ${round}</span> ${ph}`;
@@ -364,14 +550,30 @@ function updateCockpit(s, m) {
         if (st) st.innerHTML = active
             ? `${s.loading?.[p] ? 'WARMING UP' : 'DECIDING'}<span class="dots"><i></i><i></i><i></i></span>`
             : '';
+        // The thinker animates (only once it's actually deciding, not cold-loading);
+        // everyone else rests on the still portrait.
+        setPodClip(p, p === 1 ? m.p1 : m.p2, (active && !s.loading?.[p]) ? 'thinking' : null);
     }
     const tag = $('ck-tag'); if (tag) tag.innerHTML = phaseTag(s, m);
     document.querySelector('.board-panel')?.classList.toggle('resolving', sim);
 
-    // Move clock: store remaining-at-receipt; the local tick decrements it.
-    clockState = (s.clock && s.currentPlayer)
-        ? { remainingMs: s.clock.remainingMs, totalMs: s.clock.totalMs, player: s.currentPlayer, receivedAt: performance.now() }
-        : null;
+    // Move clock: anchor an absolute end-time ONCE per turn and let the local tick
+    // count toward it. The relay resends a FROZEN remainingMs — the snapshot is only
+    // rebuilt on phase pushes, not during the wait — so re-anchoring on every poll
+    // would reset the countdown and flip the displayed second back up (30→29→30).
+    // A turn is keyed by match+round+player; only that changing re-anchors. A
+    // transient clock:null mid-turn (a phase push between the sparse clock updates)
+    // keeps the existing anchor so the countdown doesn't stutter back to full.
+    if (sim || !s.currentPlayer) {
+        clockState = null;
+    } else {
+        const turnKey = `${s.currentMatchIdx}:${s.liveRound}:${s.currentPlayer}`;
+        if (s.clock && (!clockState || clockState.turnKey !== turnKey)) {
+            clockState = { endsAt: performance.now() + s.clock.remainingMs, totalMs: s.clock.totalMs, player: s.currentPlayer, turnKey };
+        } else if (clockState && clockState.turnKey !== turnKey) {
+            clockState = null;   // new turn, clock not armed yet (warming up) → no countdown shown
+        }
+    }
     tickClock();   // set the ring immediately so it doesn't wait for the next interval
 
     const bh = $('ck-banter'); if (bh) bh.innerHTML = renderBanter(s.banter, m);
@@ -387,7 +589,7 @@ function tickClock() {
         const num = $(`ck-num${p}`), pod = $(`ck-p${p}`);
         if (!ring) continue;
         if (clockState && clockState.player === p) {
-            const remaining = Math.max(0, clockState.remainingMs - (performance.now() - clockState.receivedAt));
+            const remaining = Math.max(0, clockState.endsAt - performance.now());
             setRing(ring, clockState.totalMs ? remaining / clockState.totalMs : 0);
             if (num) num.textContent = `${Math.ceil(remaining / 1000)}`;
             pod?.classList.toggle('urgent', remaining <= 10000);
@@ -543,6 +745,7 @@ async function drainEvents() {
     celebrating = true;
     try {
         if (ev.type === 'champion') await celebrateChampion(ev.m, ev.s);
+        else if (ev.type === 'kickoff') await celebrateKickoff(ev.s);
         else await celebrateMatch(ev.m, ev.s);
     } catch { /* a failed scene must never wedge the queue */ }
     celebrating = false;
@@ -612,6 +815,29 @@ async function celebrateChampion(m, s) {
     await hideScene(host);
 }
 
+// Full-screen kickoff card — "tournament begins". Names the field + format and
+// flashes the opening pairing, then dissolves into the live feed (the in-panel
+// intro is already rendering underneath, so it's a crossfade, not a cut).
+async function celebrateKickoff(s) {
+    const host = $('spec-event');
+    if (!host) return;
+    const m = nextPendingMatch(s);
+    const field = s.fieldSize ? `${s.fieldSize}-model` : '';
+    const fmt = [s.modeLabel, s.formatLabel].filter(Boolean).join(' · ');
+    host.innerHTML = `
+        <div class="se-stage event-stage se-kickoff">
+            <div class="se-kicker">${escHtml([field, fmt].filter(Boolean).join(' · '))}</div>
+            <div class="se-name">Tournament Begins</div>
+            ${m ? `<div class="se-defeats">${short(m.p1)} <s style="text-decoration:none;opacity:.5">vs</s> ${short(m.p2)}</div>` : ''}
+            <div class="se-score">${s.totalRounds || ''} ROUNDS</div>
+        </div>`;
+    showScene(host);
+    const stage = host.querySelector('.se-stage');
+    [500, 1400].forEach(t => setTimeout(() => burstSparks(stage, 174), t));
+    await sleep(3600);
+    await hideScene(host);
+}
+
 // Spark volley reusing the shared .fx-burst / .fx-ring / .spark CSS. Hue is in
 // degrees (the CSS reads --tier-h); position jitters so repeated volleys spread.
 function burstSparks(host, hueDeg, big = false) {
@@ -664,6 +890,7 @@ async function renderIdle() {
         stopCamera();
         stopCutaway();
         stopFrameStream();   // no live match → stop draining growth frames
+        teardownBiosphere(); // drop the orb's rAF/observer before the body is rebuilt
         const body = $('spec-body');
         body.classList.remove('live');
         body.classList.add('idle');

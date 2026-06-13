@@ -413,6 +413,9 @@
                 <button class="hc-tab active" data-settings-tab="dynamics" role="tab" aria-selected="true">
                     <span class="hc-tab-icon">🎛</span><span>GAME DYNAMICS</span>
                 </button>
+                <button class="hc-tab" data-settings-tab="models" role="tab" aria-selected="false">
+                    <span class="hc-tab-icon">☁</span><span>MODELS</span>
+                </button>
             </div>
             <div class="hc-view settings-view" data-settings-view="dynamics">
                 <div class="settings-presets">
@@ -423,6 +426,18 @@
                 <div class="settings-foot">
                     <button id="btn-settings-reset" class="settings-reset">↺ Reset to baseline</button>
                     <span class="settings-foot-note">Baseline is the shipped balance. Changes save automatically and apply to every match.</span>
+                </div>
+            </div>
+            <div class="hc-view settings-view hc-view-hidden" data-settings-view="models">
+                <div class="settings-presets">
+                    <div class="hc-section-label">AWS Bedrock — premium &amp; open-weight</div>
+                    <label class="settings-bedrock-toggle">
+                        <input type="checkbox" id="settings-bedrock-toggle">
+                        <span>Use AWS Bedrock models</span>
+                    </label>
+                    <p class="settings-foot-note" id="settings-bedrock-status"></p>
+                    <div id="settings-bedrock-models" class="settings-bedrock-models"></div>
+                    <p class="settings-foot-note" id="settings-bedrock-cost"></p>
                 </div>
             </div>
         </div>

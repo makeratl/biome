@@ -70,17 +70,26 @@ export class TournamentManager {
         const seedMap = {};
         ranked.forEach((x, i) => { seedMap[x.key] = i + 1; });
 
-        this._pStats = { norm, lookup, seedMap };
+        // Global ladder rank — every rated model, not just this field. The pod chip
+        // shows this (a competitor's standing on the whole board), distinct from the
+        // within-bracket seed used for tournament ordering.
+        const rankMap = {};
+        Object.entries(lookup)
+            .filter(([, s]) => s.elo != null)
+            .sort((a, b) => b[1].elo - a[1].elo)
+            .forEach(([k], i) => { rankMap[k] = i + 1; });
+
+        this._pStats = { norm, lookup, seedMap, rankMap };
         return this._pStats;
     }
 
-    // Resolve a model's seed / ELO / record (null-safe when stats not loaded).
+    // Resolve a model's seed / global rank / ELO / record (null-safe when stats not loaded).
     _statOf(model) {
         const S = this._pStats;
         if (!model || !S) return null;
         const k = S.norm(model);
         const base = S.lookup[k] || {};
-        return { elo: base.elo ?? null, wins: base.wins ?? 0, losses: base.losses ?? 0, seed: S.seedMap[k] ?? null };
+        return { elo: base.elo ?? null, wins: base.wins ?? 0, losses: base.losses ?? 0, seed: S.seedMap[k] ?? null, rank: S.rankMap[k] ?? null };
     }
 
     _hideExpandedBracket() {
@@ -278,7 +287,20 @@ export class TournamentManager {
         // which holds with the "warming" shimmer until the models are resident so
         // cold load never eats a player's turn budget or strands an idle board.
         const warm = this.game._warmMatch([match.p1, match.p2]);
-        warm.promise?.then(() => this._renderResidentReadout?.());
+        // Broadcast the pre-match ceremony to spectators. The host's VS reveal +
+        // warming hold is otherwise invisible — the board doesn't exist yet (built
+        // in resetForMatch below), so the spectator would just sit on "waiting for
+        // board…". _introState rides the snapshot as phase:'INTRO' until the board
+        // goes live; we push once now and again when warming clears.
+        this._introState = {
+            p1: match.p1, p2: match.p2, label: match.label,
+            isFinal, round: match.round, warming: !!warm.hasLocal, warmLabel: warm.label,
+        };
+        this._pushLiveSnapshot();
+        warm.promise?.then(() => {
+            this._renderResidentReadout?.();
+            if (this._introState) { this._introState.warming = false; this._pushLiveSnapshot(); }
+        });
         await this.game._showMatchIntro({
             p1: { model: match.p1 },
             p2: { model: match.p2 },
@@ -296,6 +318,7 @@ export class TournamentManager {
         });
 
         // Run game
+        this._introState = null;   // intro over — board takes the broadcast from here
         this._hideAll();
         // Broadcast flanks: two lockstep carousels frame the board (last bout /
         // dossiers / leaderboard / tournament details / fun facts). Rendered once
@@ -368,6 +391,10 @@ export class TournamentManager {
         // Update live bracket — the result is visible while the result-screen overlay is up
         this._currentMatchIdx = null;
         this._renderLiveBracket();
+        // Push the intermission state so the spectator shows a NEXT-UP card instead
+        // of a lingering GAME_OVER board (or flickering back to the idle dashboard)
+        // during the host's result screen.
+        this._pushLiveSnapshot();
 
         // Result screen
         const loser  = match.winner === match.p1 ? match.p2 : match.p1;
@@ -606,6 +633,11 @@ export class TournamentManager {
             p1: m.p1, p2: m.p2, winner: m.winner, scores: slim(m.scores),
         }));
 
+        // Pre-match ceremony: while the host plays the VS intro + warms the cold
+        // model, the board doesn't exist yet. Ride that window as phase:'INTRO' so
+        // the spectator renders its own VS reveal instead of an empty board.
+        const intro = this._introState || null;
+
         return {
             tournamentId: this.tournamentId,
             bracket,
@@ -614,14 +646,16 @@ export class TournamentManager {
             currentMatchIdx: isLive ? liveIdx : null,
             liveScores: slim(liveRaw),
             liveRound,
-            banter: isLive ? { 1: this.game._liveBanter?.[1] || null, 2: this.game._liveBanter?.[2] || null } : null,
+            banter: (isLive && !intro) ? { 1: this.game._liveBanter?.[1] || null, 2: this.game._liveBanter?.[2] || null } : null,
             // Live turn state for the thinking cockpit: which phase, who's deciding,
             // the move clock (remaining-at-push; spectator ticks it down locally),
-            // and per-player cold-model "warming up" flags.
-            phase: isLive ? (this.game.turns?.phase ?? null) : null,
-            currentPlayer: isLive ? (this.game.turns?.currentPlayer ?? null) : null,
-            clock: this._liveClock(isLive),
+            // and per-player cold-model "warming up" flags. During INTRO there's no
+            // turn yet, so phase/clock/currentPlayer are forced quiet.
+            phase: intro ? 'INTRO' : (isLive ? (this.game.turns?.phase ?? null) : null),
+            currentPlayer: intro ? null : (isLive ? (this.game.turns?.currentPlayer ?? null) : null),
+            clock: intro ? null : this._liveClock(isLive),
             loading: isLive ? { 1: !!this.game._loadWatch?.[1], 2: !!this.game._loadWatch?.[2] } : null,
+            intro,
             totalRounds: this.totalRounds,
             modeLabel: this.mode === 'lightning' ? 'Lightning' : 'Standard',
             formatLabel: this.format?.label || '',
@@ -629,8 +663,9 @@ export class TournamentManager {
             fieldSize: this.rounds[0].length * 2,
             // Board-as-state: the live board travels in the snapshot so the
             // spectator draws it locally (shared organism-art), replacing the
-            // canvas read-back + WebP push. Only while a match is live.
-            board: (isLive && this.game?.grid) ? this._serializeLiveBoard() : null,
+            // canvas read-back + WebP push. Only while a match is live (not during
+            // the INTRO window — the prior match's grid would be stale).
+            board: (!intro && isLive && this.game?.grid) ? this._serializeLiveBoard() : null,
             done,
         };
     }

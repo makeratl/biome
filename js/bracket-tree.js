@@ -27,13 +27,14 @@ function roundTitle(participants) {
 
 // Hex model badge — carries data-model so paintAvatars can drop in the baked
 // portrait after render; until then it shows the brand-hue gradient + initials.
+// The seed is rendered as a separate inline number in the row (bt-seedno), NOT a
+// pip over the portrait — a sub-9px number on a 20px avatar was unreadable.
 function badge(model, opts = {}, initials) {
     const sizeCls = opts.size ? ` bt-badge-${opts.size}` : '';
-    const seedPip = opts.seed != null ? `<span class="bt-badge-seed">${opts.seed}</span>` : '';
     if (!model) return `<span class="bt-badge bt-badge-empty${sizeCls}">·</span>`;
     const ini = initials ? initials(model) : short(model).slice(0, 2).toUpperCase();
     const slotCls = opts.slot === 1 ? ' bt-badge-p1' : opts.slot === 2 ? ' bt-badge-p2' : '';
-    return `<span class="bt-badge${slotCls}${sizeCls}" data-model="${model}" style="--bh:${modelHue(model)}">${ini}${seedPip}</span>`;
+    return `<span class="bt-badge${slotCls}${sizeCls}" data-model="${model}" style="--bh:${modelHue(model)}">${ini}</span>`;
 }
 
 function bracketSide(m, isP1, state, ctx, o) {
@@ -58,11 +59,14 @@ function bracketSide(m, isP1, state, ctx, o) {
     if (o.highlight && player === o.highlight) cls.push('bt-side-mine');
 
     const slot = state === 'live' ? (isP1 ? 1 : 2) : undefined;
+    const seedEl = stat?.seed != null
+        ? `<span class="bt-seedno${stat.seed <= 3 ? ' bt-seedno-top' : ''}">${stat.seed}</span>` : '';
     const elo = stat?.elo != null ? `<span class="bt-elo">${Math.round(stat.elo)}</span>` : '';
     const scoreEl = score != null ? `<span class="bt-score">${score.toLocaleString()}</span>` : '';
 
     return `<div class="${cls.join(' ')}">
-        ${badge(player, { slot, seed: stat?.seed }, o.initials)}
+        ${badge(player, { slot }, o.initials)}
+        ${seedEl}
         <span class="bt-name">${player ? short(player) : '—'}</span>
         ${elo}
         ${scoreEl}

@@ -6,7 +6,7 @@ import { extractJSON } from './util.js';
 import { breadcrumb, breadcrumbSync } from './heartbeat.js';
 import { buildTurnPrompt, matchSizeLabel } from './prompt.js';
 import { getStrategy, bucketGeometry, cellBucket, parseBucketLabel } from './map-strategies.js';
-import { parseTier } from './model-identity.js';
+import { parseTier, isBedrockModel } from './model-identity.js';
 import { trophicRead } from './trophic.js';
 import { captureTurn, isCaptureEnabled } from './capture.js';
 
@@ -524,7 +524,11 @@ export class AIPlayer {
     }
 
     async _callOllama(system, user, signal) {
-        const url = `${this.ollamaUrl}/api/chat`;
+        // Bedrock models route to the server's SigV4 Converse bridge, which
+        // returns the same /api/chat shape — only the endpoint differs. The
+        // Ollama-only body fields below (format/think/keep_alive) are ignored
+        // server-side for Bedrock.
+        const url = isBedrockModel(this.model) ? '/bedrock/chat' : `${this.ollamaUrl}/api/chat`;
         // Token budget scales with the model's size tier (config.MODEL_BUDGETS):
         // big/cloud models get headroom for the raw board view + free-placement
         // reasoning, small models stay lean. numPredict covers thinking overhead
@@ -1061,7 +1065,7 @@ export async function setModelRetired(modelName, retired) {
 // (done_reason "load"), so awaiting this moves cold-load time out of the
 // per-turn budget. Accepts an AbortSignal so a restart can cancel an in-flight warm.
 export async function warmModel(model, { keepAlive = MATCH_KEEP_ALIVE, signal } = {}) {
-    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    if (!model || isCloudModel(model) || isBedrockModel(model)) return { ok: true, skipped: true };
     try {
         const resp = await fetch('/ollama/api/generate', {
             method: 'POST',
@@ -1078,7 +1082,7 @@ export async function warmModel(model, { keepAlive = MATCH_KEEP_ALIVE, signal } 
 
 // Evict a model from memory immediately (keep_alive:0). Best-effort.
 export async function unloadModel(model) {
-    if (!model || isCloudModel(model)) return { ok: true, skipped: true };
+    if (!model || isCloudModel(model) || isBedrockModel(model)) return { ok: true, skipped: true };
     try {
         await fetch('/ollama/api/generate', {
             method: 'POST',
