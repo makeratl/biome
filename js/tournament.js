@@ -402,7 +402,7 @@ export class TournamentManager {
         const lScore = match.winner === match.p1 ? scores[2].finalScore : scores[1].finalScore;
 
         document.getElementById('t-result-label').textContent  = match.label.toUpperCase() + ' — RESULT';
-        document.getElementById('t-result-winner').textContent = this._short(match.winner);
+        document.getElementById('t-result-winner').textContent = this._display(match.winner);
 
         // Rank movement is shown as a badge inside the card (winner side), not as
         // a separate floating callout — so the result reads as one coherent card.
@@ -453,8 +453,8 @@ export class TournamentManager {
         const wPct = Math.round(wScore / total * 100);
         const scoresEl = document.getElementById('t-result-scores');
         scoresEl.innerHTML =
-            `<div class="rs-row rs-win" style="--fill:${wPct}%"><span class="rs-name">${this._short(match.winner)}</span><span class="rs-score" data-to="${wScore}">0</span></div>
-             <div class="rs-row rs-lose" style="--fill:${100 - wPct}%"><span class="rs-name">${this._short(loser)}</span><span class="rs-score" data-to="${lScore}">0</span></div>`;
+            `<div class="rs-row rs-win" style="--fill:${wPct}%"><span class="rs-name">${this._display(match.winner)}</span><span class="rs-score" data-to="${wScore}">0</span></div>
+             <div class="rs-row rs-lose" style="--fill:${100 - wPct}%"><span class="rs-name">${this._display(loser)}</span><span class="rs-score" data-to="${lScore}">0</span></div>`;
         document.getElementById('t-result-next').textContent =
             isFinal ? 'Revealing the Champion...' : 'Bracket updating...';
 
@@ -543,7 +543,7 @@ export class TournamentManager {
     }
 
     _showChampion(winner) {
-        document.getElementById('t-champ-name').textContent = this._short(winner);
+        document.getElementById('t-champ-name').textContent = this._display(winner);
         const champAva = document.getElementById('t-champ-avatar');
         if (champAva) { applyAvatarVideo(champAva, winner, { category: 'champion', loop: true }); champAva.classList.add('show'); }
         const wins = this.bracket.filter(m => m.winner === winner);
@@ -731,7 +731,7 @@ export class TournamentManager {
         if (isLive && upNextId !== -1) {
             const u = this.bracket[upNextId];
             nextLine = `<div class="lbn-next"><span class="lbn-next-tag">UP NEXT</span>
-                <b>${this._short(u.p1)}</b><span class="lbn-next-vs">vs</span><b>${this._short(u.p2)}</b></div>`;
+                <b>${this._display(u.p1)}</b><span class="lbn-next-vs">vs</span><b>${this._display(u.p2)}</b></div>`;
         }
 
         const done = this.bracket.filter(m => m.winner).length;
@@ -783,7 +783,7 @@ export class TournamentManager {
             const sc  = score != null ? `<span class="lbn-score">${score.toLocaleString()}</span>` : '';
             return `<div class="${cls.join(' ')}">
                 ${this._badge(player, { slot, seed: st?.seed })}
-                <span class="lbn-name">${player ? this._short(player) : '—'}</span>
+                <span class="lbn-name">${player ? this._display(player) : '—'}</span>
                 ${elo}${sc}
             </div>`;
         };
@@ -814,7 +814,7 @@ export class TournamentManager {
             <div class="lbn-champ-row">
                 ${this._badge(fin.winner, { size: 'lg' })}
                 <div class="lbn-champ-meta">
-                    <div class="lbn-champ-name">${this._short(fin.winner)}</div>
+                    <div class="lbn-champ-name">${this._display(fin.winner)}</div>
                     <div class="lbn-champ-sub">${elo}<span class="lbn-champ-wins">${wins} wins</span></div>
                 </div>
             </div>
@@ -905,6 +905,12 @@ export class TournamentManager {
             .split('/').pop()
             .replace(/-cloud$/, '')
             .replace(/-latest$/, '');
+    }
+
+    // Visible label only — strips the biome- prefix off distilled models so brackets
+    // read "qwen2.5-7b-c1". NOT for keying: _short stays the ELO/leaderboard match key.
+    _display(model) {
+        return this._short(model).replace(/^biome-/, '');
     }
 
     // Per-model brand hue from the shared taxonomy, so each competitor keeps one

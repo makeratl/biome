@@ -129,12 +129,14 @@ export function teardownBiosphere() {
     if (_biosphere) { _biosphere.destroy(); _biosphere = null; }
 }
 
-// Drive the whole band from one board (snapshot or per-step frame).
-export function renderTelemetry(board) {
+// Drive the whole band from one board (snapshot or per-step frame). The caller may
+// pass a pre-computed census (the pod roster reads the same one) to avoid
+// deserializing the board twice per frame.
+export function renderTelemetry(board, census) {
     const band = $('spec-telemetry');
     if (!band || !board) return;
-    const census = censusFromBoard(board);
+    const c = census || censusFromBoard(board);
     band.hidden = false;
-    updateEcoBars(census);
-    ensureBiosphere()?.update(census);
+    updateEcoBars(c);
+    ensureBiosphere()?.update(c);
 }

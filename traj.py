@@ -23,6 +23,7 @@ Pure stdlib so it runs both inside the server and standalone for inspection:
     python3 traj.py export     # write training-data/dataset.jsonl + manifest.json
 """
 
+import hashlib
 import json
 import os
 import time
@@ -40,6 +41,19 @@ REWARD = {
     'w_trophic': 0.20,    # this round moved the player toward a balanced pyramid
     'margin_scale': 1000.0,   # score-margin delta that maps to a full +0.5 swing
 }
+
+# ── training tiers ───────────────────────────────────────────────────────────
+# Which medals a training set draws from. Named to match the Training Lab
+# dashboard's SET_TIERS (js: champion/contender/player). The export only ever
+# imitates these; manual stars still force a turn in regardless of tier.
+# Quality note: silver = a 2-signal move on the LOSING side, bronze = a single
+# signal — both noisier teachers than gold, exposed deliberately as experiments.
+TIERS = {
+    'champion':  ('gold',),
+    'contender': ('gold', 'silver'),
+    'player':    ('gold', 'silver', 'bronze'),
+}
+DEFAULT_TIER = 'champion'
 
 
 def classify_medal(real, won_match, margin_grew, trophic_improved):
@@ -239,12 +253,16 @@ def summarize(turn, lbl):
 
 
 def build_dataset(filters=None, manual=None):
-    """Build SFT rows for GOLD turns (+manual stars). Returns (rows, manifest).
+    """Build SFT rows for a training TIER (+manual stars). Returns (rows, manifest).
 
+    `filters['tier']` (champion|contender|player, default champion) picks which
+    medals are imitated — champion=gold only, contender=+silver, player=+bronze.
     `manual` is an optional {turn_uid: 'gold'|'reject'} override map from the
     curate UI: a star forces inclusion (if it has an answer), a reject removes it.
     """
     filters = filters or {}
+    tier = filters.get('tier') or DEFAULT_TIER
+    allowed = set(TIERS.get(tier, TIERS[DEFAULT_TIER]))
     manual = manual if manual is not None else load_labels()
     turns, rounds_idx, outcomes_idx = load()
     rows = []
@@ -255,7 +273,7 @@ def build_dataset(filters=None, manual=None):
             continue
         lbl = score_turn(t, rounds_idx, outcomes_idx)
         decision = manual.get(t.get('turn_uid'))
-        include = (lbl['gold'] or decision == 'gold') and decision != 'reject'
+        include = ((lbl['medal'] in allowed) or decision == 'gold') and decision != 'reject'
         if not include:
             continue
         # Must have a verbatim answer to imitate.
@@ -288,28 +306,68 @@ def build_dataset(filters=None, manual=None):
         if t.get('seed') is not None:
             seeds.add(t.get('seed'))
 
+    # Canonical content fingerprint: stable across re-exports + row order / file
+    # formatting (sorted turn_uids + shape). Two runs with the same gold set get the
+    # same fingerprint → lets cross-family runs PROVE they trained on identical data.
+    uids = sorted(r['meta'].get('turn_uid') or '' for r in rows)
+    canon = '\n'.join(uids) + f'|rows={len(rows)}|seeds={len(seeds)}|teachers={len(src_models)}'
+    fingerprint = hashlib.sha256(canon.encode('utf-8')).hexdigest()
+
     manifest = {
         'created': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'rows': len(rows),
+        'tier': tier,
+        'medals': sorted(allowed),
         'reward': REWARD,
         'filters': filters,
         'source_models': src_models,
+        'teacher_count': len(src_models),
         'distinct_seeds': len(seeds),
+        'fingerprint': fingerprint,
     }
     return rows, manifest
 
 
-def write_dataset(filters=None, manual=None):
+def write_dataset(filters=None, manual=None, out_path=None):
+    """Write the SFT rows to dataset.jsonl + a manifest sidecar. `out_path` lets a
+    training run keep its own dataset (e.g. training-data/runs/<tag>/dataset.jsonl)
+    instead of clobbering the shared training-data/dataset.jsonl."""
     rows, manifest = build_dataset(filters, manual)
-    os.makedirs(TRAINING_DIR, exist_ok=True)
-    ds_path = os.path.join(TRAINING_DIR, 'dataset.jsonl')
+    ds_path = out_path or os.path.join(TRAINING_DIR, 'dataset.jsonl')
+    os.makedirs(os.path.dirname(ds_path), exist_ok=True)
     with open(ds_path, 'w', encoding='utf-8') as f:
         for r in rows:
             f.write(json.dumps(r, separators=(',', ':')) + '\n')
-    with open(os.path.join(TRAINING_DIR, 'manifest.json'), 'w', encoding='utf-8') as f:
+    # Byte-exact hash of the written file (complements the canonical fingerprint).
+    with open(ds_path, 'rb') as f:
+        manifest['file_sha256'] = hashlib.sha256(f.read()).hexdigest()
+    # Manifest sits beside the dataset (shared one keeps its canonical name).
+    mf_path = (os.path.join(os.path.dirname(ds_path), 'manifest.json')
+               if out_path else os.path.join(TRAINING_DIR, 'manifest.json'))
+    with open(mf_path, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2)
     manifest['dataset_path'] = ds_path
     return manifest
+
+
+def dataset_counts_by_tier():
+    """Row counts each tier would export right now — champion ⊆ contender ⊆ player —
+    honoring manual stars/rejects. Mirrors build_dataset's include rule exactly in a
+    single pass (the logs are large; don't reload per tier). Drives the Train tab."""
+    manual = load_labels()
+    turns, rounds_idx, outcomes_idx = load()
+    counts = {t: 0 for t in TIERS}
+    for t in turns:
+        decision = manual.get(t.get('turn_uid'))
+        if decision == 'reject':
+            continue
+        if not (t.get('response_raw') or {}).get('content'):
+            continue
+        lbl = score_turn(t, rounds_idx, outcomes_idx)
+        for tier, allowed in TIERS.items():
+            if (lbl['medal'] in allowed) or decision == 'gold':
+                counts[tier] += 1
+    return counts
 
 
 def stats():

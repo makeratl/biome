@@ -14,7 +14,8 @@ import { fetchTournament, reconstructBracket, expectedScore } from './rankings.j
 import { BoardFrameView } from './board-frame-view.js';
 import { FramePlayer } from './frame-player.js';
 import { CONFIG } from './config.js';
-import { telemetryHTML, renderTelemetry, teardownBiosphere } from './spectator-telemetry.js';
+import { telemetryHTML, renderTelemetry, censusFromBoard, teardownBiosphere } from './spectator-telemetry.js';
+import { buildBiomeRosters, updateBiomeRosters } from './biome-roster.js';
 import { openPlayerCard } from './player-card.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -43,6 +44,7 @@ let lastIdleAt = 0;
 let lastTickerAt = 0;
 let lastBanter = { 1: null, 2: null }; // cached per-side text → slam only on change
 let lastSpoken = null;       // side (1|2) that fired the most recent taunt
+const banterTimers = { 1: null, 2: null }; // per-side auto-remove timers (one-shot, not poll-driven)
 let lastHeroMatch = null;    // detect match change to reset the banter cache
 let camTimer = null;         // broadcast-camera cycle
 let camState = 'overview';   // 'overview' (wide) | 'focus' (push in on the live match)
@@ -101,7 +103,10 @@ function ensureLiveScaffold() {
         <div class="panel hero-card hero" id="spec-hero"></div>
         <div class="panel board-panel">
             <div class="panel-label">Live board</div>
-            <div class="board-wrap" id="spec-board"><span class="board-empty">waiting for board…</span></div>
+            <div class="board-stage">
+                <div class="board-wrap" id="spec-board"><span class="board-empty">waiting for board…</span></div>
+                <div class="board-taunts" id="board-taunts" aria-hidden="true"></div>
+            </div>
             ${telemetryHTML()}
         </div>
         <div class="panel bracket-panel">
@@ -239,7 +244,7 @@ function renderLive(data) {
     // New match (or sub-state) → forget the prior bout's taunts so the first lines
     // slam fresh, and drop any queued growth frames.
     if (s.currentMatchIdx !== lastHeroMatch) {
-        lastBanter = { 1: null, 2: null }; lastSpoken = null; lastHeroMatch = s.currentMatchIdx;
+        resetBanter(); lastHeroMatch = s.currentMatchIdx;
         _framePlayer?.reset();
     }
 
@@ -341,9 +346,17 @@ function mountVersusClips(wrap, p1, p2, category) {
     paintAvatars(wrap);   // still-portrait fallback for any model without a clip
 }
 
+// No live board yet → drop the prior match's telemetry census so the warm-up
+// screen doesn't read another bout's numbers. The band re-shows when a board renders.
+function clearLiveTelemetry() {
+    const band = $('spec-telemetry'); if (band) band.hidden = true;
+    resetBanter();
+}
+
 function renderIntro(s) {
     const wrap = $('spec-board');
     if (!wrap) return;
+    clearLiveTelemetry();
     const it = s.intro;
     const key = `intro:${s.currentMatchIdx}:${it.p1}:${it.p2}`;
     if (key !== lastVersusKey) {
@@ -366,6 +379,7 @@ function nextPendingMatch(s) {
 function renderIntermission(s) {
     const wrap = $('spec-board');
     if (!wrap) return;
+    clearLiveTelemetry();
     const m = nextPendingMatch(s);
     if (!m) { lastVersusKey = null; wrap.innerHTML = '<span class="board-empty">tournament wrapping up…</span>'; return; }
     const key = `nextup:${m.id}:${m.p1}:${m.p2}`;
@@ -410,7 +424,9 @@ function renderBoardFromState(board) {
         _boardView = new BoardFrameView(canvas);
     }
     _boardView.render({ board });
-    renderTelemetry(board);
+    const census = censusFromBoard(board);
+    renderTelemetry(board, census);
+    updateBiomeRosters(census);   // live species counts in each pod's roster strip
 }
 
 // ── per-step growth stream ───────────────────────────────────
@@ -424,7 +440,12 @@ function ensureFramePlayer() {
     if (_framePlayer) return _framePlayer;
     _framePlayer = new FramePlayer();
     _framePlayer.on('sim-step', async (f) => {
-        if (_boardView && f.board) { _boardView.render({ board: f.board }); renderTelemetry(f.board); }
+        if (_boardView && f.board) {
+            _boardView.render({ board: f.board });
+            const census = censusFromBoard(f.board);
+            renderTelemetry(f.board, census);
+            updateBiomeRosters(census);   // animate the pod roster counts alongside the board
+        }
         await sleep(STEP_MS);   // the awaited hold IS the playback pacing
     });
     return _framePlayer;
@@ -481,6 +502,7 @@ function podHTML(side, model) {
             <div class="pod-elo" id="ck-elo${side}"></div>
             <div class="pod-score" id="ck-sc${side}">—</div>
             <div class="pod-state" id="ck-st${side}"></div>
+            <div class="aic-roster pod-roster" id="aic-roster-p${side}"></div>
         </div>`;
 }
 
@@ -493,12 +515,14 @@ function buildCockpit(m, s, statOf) {
             <div class="cockpit-vs">VS</div>
             ${podHTML(2, m.p2)}
         </div>
-        <div class="hero-bar"><i id="ck-bar"></i></div>
-        <div id="ck-banter"></div>`;
+        <div class="hero-bar"><i id="ck-bar"></i></div>`;
     applyAvatar($('ck-av1'), m.p1);   // portrait (procedural hue+initials fallback)
     applyAvatar($('ck-av2'), m.p2);
+    buildBiomeRosters();              // the species legend + live counts inside each pod (paints all 12 icons)
     podClip = { 1: null, 2: null };   // fresh pods → still portraits; clips re-mount on demand
-    const elo = (side, model) => { const st = statOf(model); const e = $(`ck-elo${side}`); if (e) e.textContent = st?.elo != null ? `ELO ${Math.round(st.elo)}` : ''; };
+    // No ELO yet (model not on the ladder) → "Unranked", so the line keeps its
+    // height and the two pods stay vertically balanced instead of one collapsing.
+    const elo = (side, model) => { const st = statOf(model); const e = $(`ck-elo${side}`); if (e) e.textContent = st?.elo != null ? `ELO ${Math.round(st.elo)}` : 'Unranked'; };
     const rank = (side, model) => { const st = statOf(model); const e = $(`ck-rk${side}`); const r = st?.rank ?? st?.seed; if (e) { e.textContent = r != null ? `#${r}` : ''; e.classList.toggle('top3', r != null && r <= 3); } };
     elo(1, m.p1); elo(2, m.p2);
     rank(1, m.p1); rank(2, m.p2);
@@ -528,13 +552,17 @@ function phaseTag(s, m) {
 }
 
 function updateCockpit(s, m) {
-    const ls = s.liveScores;
+    // While warming up a new match the snapshot can still carry the PRIOR match's
+    // liveScores (the publish side hasn't reset them yet) — show "—", not stale
+    // numbers from another bout. The match hasn't produced a score until it runs.
+    const warming = s.phase === 'INTRO';
+    const ls = warming ? null : s.liveScores;
     const s1 = ls ? ls[1].finalScore : null, s2 = ls ? ls[2].finalScore : null;
     const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
     set('ck-sc1', s1 != null ? s1.toLocaleString() : '—');
     set('ck-sc2', s2 != null ? s2.toLocaleString() : '—');
     const total = (s1 || 0) + (s2 || 0) || 1;
-    const bar = $('ck-bar'); if (bar) bar.style.width = `${Math.round((s1 || 0) / total * 100)}%`;
+    const bar = $('ck-bar'); if (bar) bar.style.width = (s1 == null && s2 == null) ? '50%' : `${Math.round((s1 || 0) / total * 100)}%`;
     $('ck-p1')?.classList.toggle('lead', s1 != null && s2 != null && s1 > s2);
     $('ck-p2')?.classList.toggle('lead', s1 != null && s2 != null && s2 > s1);
 
@@ -576,7 +604,9 @@ function updateCockpit(s, m) {
     }
     tickClock();   // set the ring immediately so it doesn't wait for the next interval
 
-    const bh = $('ck-banter'); if (bh) bh.innerHTML = renderBanter(s.banter, m);
+    // Trash-talk floats onto the board as fighting-game corner callouts (P1 lower-
+    // left, P2 lower-right), not stacked in the hero card — keeps the cockpit short.
+    applyBanter(s, m);
 }
 
 function setRing(ring, frac) { ring.style.strokeDashoffset = `${RING_C * (1 - clamp(frac, 0, 1))}`; }
@@ -610,6 +640,7 @@ function renderHero(s, statOf) {
     const hero = $('spec-hero');
     if (!m) {
         heroMatch = null; clockState = null; activePlayer = null;
+        clearLiveTelemetry();
         document.querySelector('.board-panel')?.classList.remove('resolving');
         hero.innerHTML = s.champion
             ? `<div class="hero-tag">★ CHAMPION</div><div class="hero-fighters"><div class="hero-side"><div class="hero-name">${short(s.champion)}</div></div></div>`
@@ -681,34 +712,52 @@ function startCutaway() {
 }
 function stopCutaway() { if (tapeTimer) { clearInterval(tapeTimer); tapeTimer = null; } $('spec-tape')?.classList.remove('show'); }
 
-// Live trash-talk as fighting-game corner callouts. Each fighter's latest line
-// slams in from its side; the most-recent speaker's bubble stays lit. The slam
-// only fires when the TEXT actually changes — otherwise the 1.5s poll re-render
-// would re-trigger it every tick and strobe. lastBanter caches per-side text;
-// lastSpoken tracks who fired most recently (reset on match change in renderLive).
-function renderBanter(banter, m) {
-    if (!banter) return '';
-    const esc = (t) => String(t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-    // pass 1: which sides are newly spoken? (updates the "latest speaker")
-    const fresh = {};
+// Live trash-talk as fighting-game corner callouts on the board.
+//
+// Lifecycle, per side: when a model says something GENUINELY NEW its bubble slams in
+// at full opacity (review time), the CSS life-animation eases it down to faint so the
+// board underneath isn't lost, and a one-shot timer removes it when the line has had
+// its run. That's the whole story — the DOM is touched ONLY when banter[side] changes,
+// NEVER on the steady 1.5s poll. (The earlier turn-key version re-derived "fresh" each
+// poll and re-inserted the same unchanged line, which strobed the bubble in and out.)
+//
+// The snapshot keeps each side's latest line populated across turns, so equality
+// against lastBanter is the one true "is this new?" gate. lastSpoken tracks the latest
+// speaker for the lit "latest" style.
+const TAUNT_LIFE_MS = 16000;   // how long a callout lingers before it's removed (CSS fades within it)
+
+function tauntBubble(who, text, side) {
+    return `<div class="taunt taunt-p${side} taunt-latest">
+        <span class="taunt-who">${short(who)}</span>
+        <span class="taunt-say">${escHtml(text)}</span>
+    </div>`;
+}
+
+// Wipe all on-board dialogue + its timers — on match change and whenever we leave the
+// live board (intro / intermission / standing by).
+function resetBanter() {
+    clearTimeout(banterTimers[1]); clearTimeout(banterTimers[2]);
+    banterTimers[1] = banterTimers[2] = null;
+    lastBanter = { 1: null, 2: null };
+    lastSpoken = null;
+    const host = $('board-taunts'); if (host) host.innerHTML = '';
+}
+
+function applyBanter(s, m) {
+    const host = $('board-taunts');
+    if (!host) return;
+    const banter = s.banter || {};
     for (const side of [1, 2]) {
         const text = banter[side];
-        if (text && text !== lastBanter[side]) { fresh[side] = true; lastBanter[side] = text; lastSpoken = side; }
+        if (!text || text === lastBanter[side]) continue;   // only a genuinely new line moves the DOM
+        lastBanter[side] = text;
+        lastSpoken = side;
+        clearTimeout(banterTimers[side]);
+        host.querySelector(`.taunt-p${side}`)?.remove();    // replace this side's bubble → fresh lifecycle
+        host.querySelectorAll('.taunt-latest').forEach(el => el.classList.remove('taunt-latest'));
+        host.insertAdjacentHTML('beforeend', tauntBubble(side === 1 ? m.p1 : m.p2, text, side));
+        banterTimers[side] = setTimeout(() => host.querySelector(`.taunt-p${side}`)?.remove(), TAUNT_LIFE_MS);
     }
-    // pass 2: build the bubbles, emphasizing the most-recent speaker
-    const bubble = (who, text, side) => {
-        if (!text) return '';
-        const cls = ['taunt', `taunt-p${side}`];
-        if (fresh[side]) cls.push('taunt-new');
-        if (side === lastSpoken) cls.push('taunt-latest');
-        return `<div class="${cls.join(' ')}">
-            <span class="taunt-who">${short(who)}</span>
-            <span class="taunt-say">${esc(text)}</span>
-        </div>`;
-    };
-    const l1 = bubble(m.p1, banter[1], 1);
-    const l2 = bubble(m.p2, banter[2], 2);
-    return (l1 || l2) ? `<div class="hero-banter">${l1}${l2}</div>` : '';
 }
 
 // ── Cinematic event scenes ───────────────────────────────────

@@ -49,10 +49,17 @@
     }
     .panel-label { font-size: 11px; letter-spacing: 2px; opacity: .5; margin-bottom: 10px; text-transform: uppercase; flex: none; }
 
-    /* Board mirror */
+    /* Board mirror — .board-stage is the positioned frame so the floated trash-talk
+       can overlay the board's bottom corners without being wiped when the board
+       re-renders (the canvas/versus-card lives in .board-wrap, which gets replaced). */
+    .board-stage { position: relative; flex: 1; min-height: 0; display: flex; }
     .board-wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
     #board-img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
     .board-empty { opacity: .35; font-size: 14px; }
+
+    /* Floated trash-talk: corner callouts over the live board (P1 lower-left, P2
+       lower-right). Overlay is click-through so the board's fighter-card taps pass. */
+    .board-taunts { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 
     /* Live hero card — its own card now (top-right on desktop, first on mobile) */
     .hero { min-height: 0; display: flex; flex-direction: column; justify-content: center; }
@@ -78,21 +85,21 @@
     .ck-ph-sim { color: #bfe0ff; background: rgba(120,200,255,.12); animation: sim-pulse 1.4s ease-in-out infinite; }
     @keyframes sim-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 
-    .cockpit { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 8px; margin-top: 12px; }
+    .cockpit { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 8px; margin-top: 8px; }
     .cockpit-vs { align-self: center; font-size: 13px; font-weight: 800; opacity: .35; letter-spacing: 1px; }
-    .pod { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 8px 4px; border-radius: 14px;
+    .pod { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 6px 4px; border-radius: 14px;
       transition: opacity .35s ease, background .35s ease; }
     .pod.dim { opacity: .4; }
     .pod.active { background: rgba(255,255,255,.05); }
     .pod-clickable { cursor: pointer; }
     .pod-clickable:hover .pod-avatar { box-shadow: inset 0 0 0 1px rgba(255,255,255,.08), 0 0 18px -4px rgba(255,255,255,.45); }
 
-    .pod-avwrap { position: relative; width: 116px; height: 116px; }
-    .pod-avatar { position: absolute; inset: 10px; border-radius: 50%; overflow: hidden;
+    .pod-avwrap { position: relative; width: 92px; height: 92px; }
+    .pod-avatar { position: absolute; inset: 8px; border-radius: 50%; overflow: hidden;
       background: linear-gradient(135deg, hsl(var(--bh,210),58%,56%), hsl(var(--bh,210),50%,40%));
       background-size: cover; background-position: center;
       display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: 30px; color: rgba(255,255,255,.92);
+      font-weight: 800; font-size: 24px; color: rgba(255,255,255,.92);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
     .pod-avatar.has-avatar { color: transparent; }
     /* The thinking clip fills the round portrait (cover-fit, clipped by overflow:hidden);
@@ -126,14 +133,25 @@
     .pod-rank.top3 { color: #0c0f14; background: linear-gradient(180deg, #ffe08a, #f5b73c);
       box-shadow: 0 0 14px -2px #f5b73c, 0 0 0 1px #f5b73c; }
 
-    .pod-name { margin-top: 11px; font-size: 17px; font-weight: 800; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pod-name { margin-top: 8px; font-size: 15px; font-weight: 800; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .pod-elo { font-size: 11px; opacity: .5; }
-    .pod-score { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .pod-score { font-size: 23px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 1px; }
     .pod-p1.lead .pod-score { color: #4fd1c5; }
     .pod-p2.lead .pod-score { color: #ff8c42; }
     .pod-state { font-size: 10px; font-weight: 800; letter-spacing: 1px; min-height: 14px; margin-top: 3px; text-transform: uppercase; }
     .pod-p1.active .pod-state { color: #4fd1c5; }
     .pod-p2.active .pod-state { color: #ff8c42; }
+
+    /* Species roster inside each pod — the same legend-plus-live-counts strip the
+       game shows (#aic-roster, built by js/biome-roster.js), reusing its .br-*
+       styling from style.css. Icons scale to the (narrow) pod column; counts pick
+       up each fighter's board hue. A species the player has none of stays dimmed. */
+    .pod-roster { width: 100%; margin-top: 8px; padding-top: 7px; gap: 3px;
+      border-top: 1px solid rgba(255,255,255,.07); }
+    .pod-roster .br-icon { width: 100% !important; height: auto !important; max-width: 26px; }
+    .pod-roster .br-count { font-size: 11px; }
+    .pod-p1 .pod-roster .br-count { color: #8be9df; }
+    .pod-p2 .pod-roster .br-count { color: #ffb585; }
     .dots { display: inline-flex; gap: 2px; margin-left: 5px; vertical-align: middle; }
     .dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .3; animation: dot 1.2s infinite; }
     .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
@@ -286,58 +304,64 @@
       .board-genesis, .si-card, .si-portrait, .si-card.warming .si-portrait, .si-card.warming .si-vs { animation: none; }
     }
 
-    /* Live trash-talk — fighting-game corner callouts. P1 fires from the left,
-       P2 from the right; the latest shot stays lit, and a new line slams in. */
-    .hero-banter { margin-top: 13px; display: flex; flex-direction: column; gap: 9px; }
+    /* Live trash-talk — fighting-game corner callouts floated over the board's
+       bottom corners (P1 left, P2 right). The latest shot stays lit; a new line
+       slams in. Dark glassy backing so the text stays legible over the hexes. */
     .taunt {
-      position: relative; max-width: 88%; padding: 8px 13px; border-radius: 13px;
-      font-size: 13px; line-height: 1.34;
-      background: rgba(255,255,255,.045);
-      border: 1px solid rgba(255,255,255,.09);
-      backdrop-filter: blur(2px);
+      position: absolute; bottom: 12px; max-width: 46%; padding: 8px 12px; border-radius: 13px;
+      font-size: 12.5px; line-height: 1.32;
+      background: rgba(8,12,18,.72);
+      border: 1px solid rgba(255,255,255,.1);
+      box-shadow: 0 8px 26px -10px rgba(0,0,0,.85);
+      backdrop-filter: blur(5px);
     }
-    .taunt-p1 { align-self: flex-start; border-left: 3px solid #4fd1c5; transform-origin: left bottom; }
-    .taunt-p2 { align-self: flex-end; text-align: right; border-right: 3px solid #ff8c42; transform-origin: right bottom; }
+    .taunt-p1 { left: 12px; border-left: 3px solid #4fd1c5; transform-origin: left bottom; }
+    .taunt-p2 { right: 12px; text-align: right; border-right: 3px solid #ff8c42; transform-origin: right bottom; }
+    /* clamp each callout to a few lines so a long line can't tower over the board */
+    .taunt-say { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
     .taunt-who { display: block; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 3px; }
     .taunt-p1 .taunt-who { color: #4fd1c5; }
     .taunt-p2 .taunt-who { color: #ff8c42; }
     .taunt-say { font-style: italic; opacity: .94; }
     .taunt-say::before { content: '“'; opacity: .5; }
     .taunt-say::after  { content: '”'; opacity: .5; }
-    /* speech-bubble tail pointing up toward the fighter */
-    .taunt::before { content: ''; position: absolute; top: -6px;
-      border-left: 6px solid transparent; border-right: 6px solid transparent;
-      border-bottom: 6px solid rgba(255,255,255,.07); }
-    .taunt-p1::before { left: 18px; }
-    .taunt-p2::before { right: 18px; }
-
     /* the most recent speaker: brighter + a hue-tinted glow so the eye tracks it */
-    .taunt-latest { background: rgba(255,255,255,.085); }
+    .taunt-latest { background: rgba(16,22,30,.82); }
     .taunt-latest.taunt-p1 { box-shadow: -5px 4px 22px -8px #4fd1c5; border-left-color: #6ee7db; }
     .taunt-latest.taunt-p2 { box-shadow: 5px 4px 22px -8px #ff8c42; border-right-color: #ffb27a; }
 
-    /* SLAM: only on a genuinely new line (class added by render diff) */
-    .taunt-new.taunt-p1 { animation: taunt-slam-l .42s cubic-bezier(.18,1.4,.4,1) both; }
-    .taunt-new.taunt-p2 { animation: taunt-slam-r .42s cubic-bezier(.18,1.4,.4,1) both; }
-    @keyframes taunt-slam-l {
-      0%   { opacity: 0; transform: translateX(-26px) scale(.82) rotate(-1.5deg); }
-      55%  { opacity: 1; transform: translateX(0) scale(1.05) rotate(.5deg); }
-      100% { transform: translateX(0) scale(1) rotate(0); }
+    /* Board-taunt lifecycle — applied ONCE on insert (JS mutates the overlay only on
+       a fresh line or a turn change, never on the steady poll), so it runs to the end:
+       slam in → hold at full for review → ease down to faint so the board underneath
+       isn't lost. A new turn removes the bubble entirely (handled in JS). */
+    .board-taunts .taunt-p1 { animation: taunt-life-l 15s both; }
+    .board-taunts .taunt-p2 { animation: taunt-life-r 15s both; }
+    @keyframes taunt-life-l {
+      0%   { opacity: 0; transform: translateX(-26px) scale(.82) rotate(-1.5deg); animation-timing-function: cubic-bezier(.18,1.4,.4,1); }
+      4%   { opacity: 1; transform: translateX(0) scale(1.05) rotate(.5deg); animation-timing-function: ease-out; }
+      7%   { transform: translateX(0) scale(1) rotate(0); }
+      42%  { opacity: 1; animation-timing-function: ease; }       /* review hold */
+      70%  { opacity: .16; animation-timing-function: ease-in; }  /* faint — board shows through */
+      100% { opacity: 0; }                                        /* gone, so the timed removal is invisible */
     }
-    @keyframes taunt-slam-r {
-      0%   { opacity: 0; transform: translateX(26px) scale(.82) rotate(1.5deg); }
-      55%  { opacity: 1; transform: translateX(0) scale(1.05) rotate(-.5deg); }
-      100% { transform: translateX(0) scale(1) rotate(0); }
+    @keyframes taunt-life-r {
+      0%   { opacity: 0; transform: translateX(26px) scale(.82) rotate(1.5deg); animation-timing-function: cubic-bezier(.18,1.4,.4,1); }
+      4%   { opacity: 1; transform: translateX(0) scale(1.05) rotate(-.5deg); animation-timing-function: ease-out; }
+      7%   { transform: translateX(0) scale(1) rotate(0); }
+      42%  { opacity: 1; animation-timing-function: ease; }
+      70%  { opacity: .16; animation-timing-function: ease-in; }
+      100% { opacity: 0; }
     }
-    /* impact flash ring on the slam */
-    .taunt-new::after { content: ''; position: absolute; inset: -1px; border-radius: 13px;
+    /* one-shot impact ring as each callout lands */
+    .board-taunts .taunt::after { content: ''; position: absolute; inset: -1px; border-radius: 13px;
       pointer-events: none; animation: taunt-flash .5s ease-out both; }
-    .taunt-new.taunt-p1::after { box-shadow: 0 0 0 2px #4fd1c5 inset, 0 0 18px 2px #4fd1c5; }
-    .taunt-new.taunt-p2::after { box-shadow: 0 0 0 2px #ff8c42 inset, 0 0 18px 2px #ff8c42; }
+    .board-taunts .taunt-p1::after { box-shadow: 0 0 0 2px #4fd1c5 inset, 0 0 18px 2px #4fd1c5; }
+    .board-taunts .taunt-p2::after { box-shadow: 0 0 0 2px #ff8c42 inset, 0 0 18px 2px #ff8c42; }
     @keyframes taunt-flash { 0% { opacity: .85; } 100% { opacity: 0; } }
     @media (prefers-reduced-motion: reduce) {
-      .taunt-new.taunt-p1, .taunt-new.taunt-p2 { animation: none; }
-      .taunt-new::after { animation: none; display: none; }
+      .board-taunts .taunt-p1, .board-taunts .taunt-p2 { animation: taunt-life-fade 15s both; }
+      @keyframes taunt-life-fade { 0%,42% { opacity: 1; } 70% { opacity: .16; } 100% { opacity: 0; } }
+      .board-taunts .taunt::after { animation: none; display: none; }
     }
 
     /* Bracket area is a "camera viewport": the tree is scaled/panned to fit. */
@@ -554,10 +578,11 @@
       .pod-score { font-size: 22px; }
       .cockpit-vs { font-size: 11px; }
 
-      /* Taunts read as a full-width duel on a phone — punchier text, more reach. */
-      .hero-banter { gap: 10px; }
-      .taunt { max-width: 92%; font-size: 14px; padding: 9px 14px; }
-      .taunt-who { font-size: 10.5px; }
+      /* Floated taunts stay in the board's corners on a phone — kept narrow and to
+         fewer lines so the two callouts don't collide in the middle of the board. */
+      .taunt { max-width: 49%; font-size: 12px; padding: 7px 11px; }
+      .taunt-who { font-size: 10px; }
+      .board-taunts .taunt-say { -webkit-line-clamp: 3; }
 
       /* Recent ticker swipes horizontally instead of clipping. */
       .spec-ticker { overflow: hidden; }

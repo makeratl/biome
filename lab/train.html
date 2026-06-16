@@ -18,6 +18,7 @@
             <button data-tab="generate">Generate</button>
             <button data-tab="curate">Curate</button>
             <button data-tab="export">Export</button>
+            <button data-tab="train">Train</button>
         </nav>
     </header>
 
@@ -110,9 +111,103 @@
             </label>
             <button id="purge-btn">Compact now</button>
             <pre class="manifest" id="purge-out"></pre>
-            <p class="muted small">Next: <code>python3 tools/train_biome.py</code> (see
-               <code>tools/README-training.md</code>) → LoRA-tune a student → <code>ollama create</code> →
-               enter it on the ladder.</p>
+            <p class="muted small">Or skip the shell: the <b>Train</b> tab runs the whole
+               distill → <code>ollama create</code> loop for you.</p>
+        </div>
+    </section>
+
+    <!-- TRAIN --------------------------------------------------------------->
+    <section class="view hidden" data-view="train">
+        <div class="card">
+            <h2>Train a new generation <span class="muted small">— one-click distill → <code>ollama create</code></span></h2>
+            <p class="muted">Pick a data tier and a student base, name the generation, and run it. The server
+               exports the tiered dataset, LoRA-tunes the student on those moves, and registers the result as a
+               structured <code>biome-&lt;family&gt;-&lt;size&gt;-&lt;tier&gt;&lt;version&gt;</code> model on the
+               ladder. Training is <b>GPU-exclusive</b> — gameplay/tournaments pause while a run is active.</p>
+
+            <h3 class="tr-h">1 · Data tier</h3>
+            <div class="train-tiers" id="train-tiers"><p class="muted small">loading tiers…</p></div>
+
+            <h3 class="tr-h">2 · Student &amp; generation</h3>
+            <label class="field"><span>Base&nbsp;(HF&nbsp;id)</span>
+                <select id="tr-base-sel">
+                    <optgroup label="Qwen2.5 (ChatML)">
+                        <option value="unsloth/Qwen2.5-0.5B-Instruct" data-family="qwen2.5" data-size="0.5b">Qwen2.5-0.5B (fastest)</option>
+                        <option value="unsloth/Qwen2.5-1.5B-Instruct" data-family="qwen2.5" data-size="1.5b">Qwen2.5-1.5B</option>
+                        <option value="unsloth/Qwen2.5-3B-Instruct" data-family="qwen2.5" data-size="3b">Qwen2.5-3B</option>
+                        <option value="unsloth/Qwen2.5-7B-Instruct" data-family="qwen2.5" data-size="7b" selected>Qwen2.5-7B</option>
+                        <option value="unsloth/Qwen2.5-14B-Instruct" data-family="qwen2.5" data-size="14b">Qwen2.5-14B</option>
+                        <option value="unsloth/Qwen2.5-32B-Instruct" data-family="qwen2.5" data-size="32b">Qwen2.5-32B (use 4-bit)</option>
+                    </optgroup>
+                    <optgroup label="Llama-3">
+                        <option value="unsloth/Llama-3.2-1B-Instruct" data-family="llama3.2" data-size="1b">Llama-3.2-1B</option>
+                        <option value="unsloth/Llama-3.2-3B-Instruct" data-family="llama3.2" data-size="3b">Llama-3.2-3B</option>
+                        <option value="unsloth/Llama-3.1-8B-Instruct" data-family="llama3.1" data-size="8b">Llama-3.1-8B</option>
+                    </optgroup>
+                    <optgroup label="Gemma-2">
+                        <option value="unsloth/gemma-2-2b-it" data-family="gemma2" data-size="2b">Gemma-2-2B</option>
+                        <option value="unsloth/gemma-2-9b-it" data-family="gemma2" data-size="9b">Gemma-2-9B</option>
+                    </optgroup>
+                    <optgroup label="Phi">
+                        <option value="unsloth/Phi-3.5-mini-instruct" data-family="phi3.5" data-size="3.8b">Phi-3.5-mini</option>
+                    </optgroup>
+                    <optgroup label="Mistral (experimental)">
+                        <option value="unsloth/Mistral-7B-Instruct-v0.3" data-family="mistral" data-size="7b">Mistral-7B-v0.3</option>
+                    </optgroup>
+                    <option value="__custom__">Other — enter an HF id…</option>
+                </select>
+            </label>
+            <label class="field hidden" id="tr-base-custom-wrap"><span>HF&nbsp;id</span>
+                <input id="tr-base" type="text" placeholder="org/Model-Name"></label>
+            <p class="muted small tr-base-warn">HuggingFace ids — the student weights to LoRA-tune (the result comes
+               back <em>as</em> an ollama model). The trainer auto-derives the chat-template markers per family and
+               runs a masking assertion before training, so Qwen/Llama/Gemma/Phi/Mistral all work. A custom base
+               must use one of those templates.</p>
+            <div class="tr-name">
+                <div class="tr-name-main">→ new model: <code id="tr-modelname">biome-…</code>
+                    <button type="button" id="tr-name-edit" class="ghost tiny">override</button></div>
+                <div class="tr-name-meta muted small" id="tr-name-meta"></div>
+                <label class="field hidden" id="tr-name-override-wrap"><span>Name</span>
+                    <input id="tr-name-override" type="text" placeholder="biome-… (blank = auto-name)" maxlength="70"></label>
+            </div>
+
+            <details class="tr-adv">
+                <summary>Advanced</summary>
+                <div class="row">
+                    <label class="field"><span>Epochs</span><input id="tr-epochs" type="number" value="2" min="0.1" step="0.1"></label>
+                    <label class="field"><span>LoRA r</span><input id="tr-lora-r" type="number" value="16" min="1"></label>
+                    <label class="field"><span>LoRA α</span><input id="tr-lora-alpha" type="number" value="32" min="1"></label>
+                    <label class="field"><span>GGUF quant</span><input id="tr-quant" type="text" value="q4_k_m"></label>
+                </div>
+                <label class="inline"><input type="checkbox" id="tr-4bit"> 4-bit (QLoRA — for ~32B students)</label>
+            </details>
+
+            <h3 class="tr-h">3 · Run</h3>
+            <div class="tr-toggles">
+                <label class="inline"><input type="checkbox" id="tr-dry"> dry-run <span class="muted small">(validate dataset + plan, no GPU stack)</span></label>
+                <label class="inline"><input type="checkbox" id="tr-freegpu"> free GPU first <span class="muted small">(evict resident ollama models)</span></label>
+                <label class="inline"><input type="checkbox" id="tr-offline"> offline <span class="muted small">(use cached weights, skip HuggingFace calls)</span></label>
+            </div>
+            <div class="preflight" id="tr-preflight"><p class="muted small">checking…</p></div>
+            <div class="tr-actions">
+                <button id="tr-start" class="primary" disabled>Start training</button>
+                <button id="tr-cancel" class="hidden">Cancel run</button>
+                <button id="tr-recheck" class="ghost">↻ re-check</button>
+            </div>
+        </div>
+
+        <div class="card hidden" id="tr-progress-card">
+            <h2>Run progress</h2>
+            <div class="tr-stepper" id="tr-stepper"></div>
+            <div class="tr-progmeta muted small" id="tr-progmeta"></div>
+            <div class="tr-progbar"><i id="tr-progbar-fill"></i></div>
+            <div class="tr-done hidden" id="tr-done"></div>
+            <pre class="manifest tr-log" id="tr-log"></pre>
+        </div>
+
+        <div class="card">
+            <h2>Past runs <span class="muted small">— this box's training ledger</span></h2>
+            <div id="tr-runs" class="tr-runs muted">—</div>
         </div>
     </section>
 

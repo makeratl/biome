@@ -321,7 +321,10 @@ def _scheduler_tick():
     if fired:
         _save_schedules()
     with _SCHED_LOCK:
-        job = _SCHED['queue'].pop(0) if (_SCHED['running'] is None and _SCHED['queue']) else None
+        # A training run is GPU-exclusive — never launch a tournament on top of one.
+        gpu_busy = _TRAIN['running'] is not None
+        job = (_SCHED['queue'].pop(0)
+               if (_SCHED['running'] is None and _SCHED['queue'] and not gpu_busy) else None)
     if job:
         _run_job(job)   # blocks until this tournament finishes (we run one at a time)
 
@@ -333,6 +336,407 @@ def _scheduler_loop():
         except Exception as e:
             sys.stderr.write('[sched] tick error: %s\n' % e)
         time.sleep(5)
+
+
+# ── Training Lab: managed LoRA training runs ────────────────────────────────
+# A run is GPU-EXCLUSIVE on this box — it claims the whole card, so ollama
+# inference can't share it. We keep ONE training job at a time, mutually
+# exclusive with the tournament scheduler (the cross-guard in _scheduler_tick
+# stops a tournament launching mid-train, and _handle_train_start refuses to
+# start while a tournament is active). Same subprocess shape as the tournament
+# runner: a session-leader child reaped as a group via _kill_proc.
+TRAINER = os.path.join(_HERE, 'tools', 'train_biome.py')
+# The Python that runs the trainer + holds the heavy stack (unsloth/trl). The
+# server itself runs on the system python3 (PEP-668 externally-managed), so the
+# training deps live in a separate interpreter: BIOME_TRAIN_PYTHON, else a
+# repo-local .venv-train, else fall back to the server's own python.
+def _resolve_train_python():
+    env = os.environ.get('BIOME_TRAIN_PYTHON')
+    if env and os.path.exists(env):
+        return env
+    venv_py = os.path.join(_HERE, '.venv-train', 'bin', 'python')
+    if os.path.exists(venv_py):
+        return venv_py
+    return sys.executable
+TRAIN_PYTHON = _resolve_train_python()
+RUNS_DIR = os.path.join(TRAINING_DIR, 'runs')
+LEDGER_FILE = os.path.join(RUNS_DIR, 'ledger.json')
+MIN_TRAIN_ROWS = 8          # below this a real LoRA run is pointless (dry-run is exempt)
+MIN_GPU_FREE_MB = 3000      # below this even a 0.5B LoRA can't load — preflight flags it
+_TRAIN_LOCK = threading.Lock()
+_TRAIN = {
+    'running': None,        # the active job dict (carries live 'progress' + 'log')
+    'proc': None,           # the running subprocess.Popen
+    'recent': collections.deque(maxlen=20),
+    'cancel': False,        # cancel asked for the running job
+}
+_train_seq = 0
+_TQDM_RE = re.compile(r'(\d+)/(\d+)\s*\[')           # tqdm "12/240 [..." → step/total
+_LOSS_RE = re.compile(r"'loss':\s*([0-9.eE+-]+)")    # TRL log dicts → latest loss
+
+def _tag_ok(tag):
+    return bool(re.match(r'^[A-Za-z0-9._-]{1,64}$', tag or ''))
+
+# ── structured naming + versioning ──────────────────────────────────────────
+# Model name = biome-<family>-<size>-<tiercode><version> (e.g. biome-qwen2.5-7b-c1).
+# The family slug carries the vendor token so js/model-identity.js still detects
+# the family for distilled models. version auto-increments per lineage.
+_TIER_CODE = {'champion': 'c', 'contender': 'n', 'player': 'p'}
+
+def _derive_family_size(base, family_hint=None, size_hint=None):
+    """(familyslug, size) for the name. Prefer UI-supplied hints; else parse the HF
+    id. familyslug = vendor+version (qwen2.5, llama3.1, gemma2, phi3.5, mistral)."""
+    fam = (family_hint or '').strip().lower()
+    size = (size_hint or '').strip().lower()
+    b = (base or '').lower()
+    if not size:
+        m = re.search(r'(\d+(?:\.\d+)?)\s*b\b', b)
+        size = (m.group(1) + 'b') if m else 'na'
+    if not fam:
+        vm = re.search(r'(qwen|llama|gemma|phi|mistral)', b)
+        if vm:
+            vendor = vm.group(1)
+            tail = b[vm.end():]
+            vv = re.match(r'[-_ ]?(\d+(?:\.\d+)?)', tail)
+            # version = digits right after the vendor, but NOT the size token (which
+            # is immediately followed by 'b', e.g. Mistral-7B → size 7b, no version).
+            ver = vv.group(1) if (vv and not tail[vv.end():].startswith('b')) else ''
+            fam = vendor + ver
+        else:
+            fam = b.split('/')[-1].split('-')[0] or 'model'
+    fam = re.sub(r'[^a-z0-9.]+', '', fam) or 'model'
+    size = re.sub(r'[^a-z0-9.]+', '', size) or 'na'
+    return fam, size
+
+def _lineage_rows(lineage):
+    """Successful (non-dry-run) ledger rows for a lineage, oldest→newest by version."""
+    rows = [r for r in _ledger_read()
+            if r.get('lineage') == lineage and r.get('status') == 'done'
+            and not r.get('dry_run') and isinstance(r.get('version'), int)]
+    return sorted(rows, key=lambda r: r['version'])
+
+def _next_version(lineage):
+    rows = _lineage_rows(lineage)
+    return (rows[-1]['version'] + 1) if rows else 1
+
+def _lineage_parent(lineage, base):
+    rows = _lineage_rows(lineage)
+    return rows[-1].get('model') if rows else base
+
+def _suggest_name(base, tier, family_hint=None, size_hint=None, version=None):
+    """Compute the structured name + lineage record for a (base, tier). version
+    auto-increments per lineage unless an explicit version is passed."""
+    fam, size = _derive_family_size(base, family_hint, size_hint)
+    code = _TIER_CODE.get(tier, 'c')
+    lineage = '%s-%s-%s' % (fam, size, tier)
+    ver = version if isinstance(version, int) and version > 0 else _next_version(lineage)
+    tag = '%s-%s-%s%d' % (fam, size, code, ver)
+    return {'name': 'biome-%s' % tag, 'tag': tag, 'family': fam, 'size': size,
+            'tier': tier, 'tiercode': code, 'lineage': lineage, 'version': ver,
+            'parent': _lineage_parent(lineage, base)}
+
+def _new_train_job(cfg):
+    global _train_seq
+    _train_seq += 1
+    return {'id': 'train-%d-%d' % (int(time.time()), _train_seq), 'status': 'queued',
+            'config': cfg, 'created': time.time(), 'started': None, 'finished': None,
+            'exit': None, 'model': None, 'rows': None, 'error': None, 'phase': 'queued',
+            'progress': {'step': 0, 'total': 0, 'loss': None}, 'log': ''}
+
+def _ledger_append(rec):
+    try:
+        os.makedirs(RUNS_DIR, exist_ok=True)
+        data = _ledger_read()
+        data.insert(0, rec)
+        with open(LEDGER_FILE, 'w') as f:
+            json.dump(data[:100], f, indent=2)
+    except Exception as e:
+        sys.stderr.write('[train] ledger write failed: %s\n' % e)
+
+def _ledger_read():
+    try:
+        with open(LEDGER_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def _gpu_free_mb():
+    """Free VRAM on GPU 0 via nvidia-smi, or None if it's unavailable."""
+    try:
+        out = subprocess.run(['nvidia-smi', '--query-gpu=memory.free',
+                              '--format=csv,noheader,nounits'],
+                             capture_output=True, text=True, timeout=8)
+        if out.returncode == 0 and out.stdout.strip():
+            return int(out.stdout.strip().splitlines()[0])
+    except Exception:
+        pass
+    return None
+
+def _gpu_top_process():
+    """The biggest non-ollama GPU compute app (name, used_mb) — e.g. a ComfyUI
+    instance squatting VRAM. ollama is excluded since free_gpu can evict it."""
+    try:
+        out = subprocess.run(['nvidia-smi', '--query-compute-apps=used_memory,process_name',
+                              '--format=csv,noheader,nounits'],
+                             capture_output=True, text=True, timeout=8)
+        if out.returncode != 0:
+            return None
+        best = None
+        for line in out.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 2:
+                continue
+            try:
+                mb = int(parts[0])
+            except ValueError:
+                continue
+            name = parts[1]
+            if 'ollama' in name.lower() or 'llama-server' in name.lower():
+                continue
+            if best is None or mb > best[1]:
+                best = (os.path.basename(name), mb)
+        return best
+    except Exception:
+        return None
+
+def _train_deps_missing():
+    """Which of the heavy training deps aren't importable. Probed in a subprocess
+    so the stack (and its CUDA init) never loads into the server process."""
+    # find_spec, not import — locating the modules is instant; actually importing
+    # unsloth runs its torch/CUDA patch (several seconds) and would stall every
+    # preflight poll. Batched into one subprocess so it's a single ~50ms probe.
+    code = ("import importlib.util as u;"
+            "mods=['unsloth','trl','datasets'];"
+            "print(','.join(m for m in mods if u.find_spec(m) is None))")
+    try:
+        r = subprocess.run([TRAIN_PYTHON, '-c', code],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return ['unsloth', 'trl', 'datasets']      # probe itself failed → treat as absent
+        return [m for m in r.stdout.strip().split(',') if m]
+    except Exception:
+        return ['unsloth', 'trl', 'datasets']
+
+def _resident_ollama_models():
+    """Models ollama is holding in VRAM right now — they'd contend with a run."""
+    try:
+        with urllib.request.urlopen('http://localhost:11434/api/ps', timeout=5) as r:
+            data = json.loads(r.read().decode('utf-8'))
+        return [m.get('name') for m in data.get('models', []) if m.get('name')]
+    except Exception:
+        return []
+
+def _unload_ollama_models(names):
+    """Evict resident models (keep_alive 0) to hand the GPU to the trainer."""
+    for name in names:
+        try:
+            body = json.dumps({'model': name, 'keep_alive': 0, 'prompt': '',
+                               'stream': False}).encode()
+            req = urllib.request.Request('http://localhost:11434/api/generate',
+                                         data=body, method='POST',
+                                         headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=15).read()
+        except Exception:
+            pass
+
+def _train_preflight():
+    """Everything the Train tab needs to decide if a run can start now."""
+    missing = _train_deps_missing()
+    tourney_running = bool(_SCHED['running']) or bool(_SCHED['queue'])
+    training_running = bool(_TRAIN['running'])
+    gpu_free = _gpu_free_mb()
+    holder = _gpu_top_process()                      # a non-ollama VRAM squatter (e.g. ComfyUI)
+    # Below this floor even the smallest 0.5B LoRA can't load — flag it so a run
+    # doesn't OOM confusingly when another process (not ollama) holds the card.
+    gpu_busy = gpu_free is not None and gpu_free < MIN_GPU_FREE_MB
+    reasons = []
+    if missing:
+        reasons.append('install training deps: ' + ', '.join(missing))
+    if tourney_running:
+        reasons.append('a tournament job is active — wait or cancel it first')
+    if training_running:
+        reasons.append('a training run is already in progress')
+    if gpu_busy:
+        h = (' — %s is using %.1f GB' % (holder[0], holder[1] / 1024)) if holder else ''
+        reasons.append('GPU busy: only %d MB free%s' % (gpu_free, h))
+    return {
+        'deps_ok': not missing,
+        'missing': missing,
+        'pip_cmd': (('%s -m pip install %s' % (TRAIN_PYTHON, ' '.join(missing)))
+                    if missing else None),
+        'train_python': TRAIN_PYTHON,
+        'gpu_free_mb': gpu_free,
+        'gpu_busy': gpu_busy,
+        'gpu_holder': ({'name': holder[0], 'used_mb': holder[1]} if holder else None),
+        'resident_models': _resident_ollama_models(),
+        'rows_by_tier': traj.dataset_counts_by_tier(),
+        'tiers': {k: list(v) for k, v in traj.TIERS.items()},
+        'min_rows': MIN_TRAIN_ROWS,
+        'tournament_running': tourney_running,
+        'training_running': training_running,
+        'ready': not missing and not tourney_running and not training_running and not gpu_busy,
+        'reasons': reasons,
+    }
+
+def _refresh_train_log(job, log_path):
+    """Tail the run log into the job + parse training progress (loss + step/total)."""
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError:
+        return
+    job['log'] = text[-8000:]
+    losses = _LOSS_RE.findall(text)
+    if losses:
+        job['progress']['loss'] = float(losses[-1])
+    steps = _TQDM_RE.findall(text)
+    if steps:
+        job['progress']['step'] = int(steps[-1][0])
+        job['progress']['total'] = int(steps[-1][1])
+    # Advance the coarse phase forward only (UI stepper): the trainer prints
+    # [export] once it leaves the training loop to merge + write the GGUF.
+    if job['phase'] == 'training' and '[export]' in text:
+        job['phase'] = 'packaging'
+
+def _run_training(job):
+    cfg = job['config']
+    tag = cfg['tag']
+    run_dir = os.path.join(RUNS_DIR, 'biome-%s' % tag)
+    ds_path = os.path.join(run_dir, 'dataset.jsonl')
+    log_path = os.path.join(run_dir, 'train.log')
+    with _TRAIN_LOCK:
+        job['status'] = 'running'
+        job['started'] = time.time()
+        job['phase'] = 'exporting'
+        _TRAIN['running'] = job
+    proc = None
+    logf = None
+    try:
+        if cfg.get('free_gpu'):
+            _unload_ollama_models(_resident_ollama_models())
+        # 1) Export this tier's dataset into the run's OWN dir (never clobbers the
+        #    shared training-data/dataset.jsonl).
+        os.makedirs(run_dir, exist_ok=True)
+        manifest = traj.write_dataset({'tier': cfg['tier']}, out_path=ds_path)
+        job['rows'] = manifest.get('rows', 0)
+        job['manifest'] = manifest
+        if not cfg.get('dry_run') and job['rows'] < MIN_TRAIN_ROWS:
+            job['status'] = 'failed'
+            job['error'] = ('only %d rows for tier %s (need >= %d) — capture/curate more'
+                            % (job['rows'], cfg['tier'], MIN_TRAIN_ROWS))
+            return
+        # 2) Spawn the offline trainer; merge stderr→stdout into a per-run log.
+        job['phase'] = 'training'
+        cmd = [TRAIN_PYTHON, TRAINER, '--dataset', ds_path, '--base', cfg['base'],
+               '--tag', tag, '--out', RUNS_DIR, '--epochs', str(cfg['epochs']),
+               '--lora-r', str(cfg['lora_r']), '--lora-alpha', str(cfg['lora_alpha']),
+               '--quant', cfg['quant']]
+        if cfg.get('load_4bit'):
+            cmd.append('--load-4bit')
+        if cfg.get('dry_run'):
+            cmd.append('--dry-run')
+        if cfg.get('offline'):
+            cmd.append('--offline')
+        logf = open(log_path, 'wb')
+        proc = subprocess.Popen(cmd, cwd=_HERE, stdout=logf, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        with _TRAIN_LOCK:
+            _TRAIN['proc'] = proc
+        t0 = time.time()
+        while proc.poll() is None:
+            if _TRAIN['cancel']:
+                _kill_proc(proc)
+                job['error'] = 'cancelled'
+                break
+            if time.time() - t0 > 12 * 3600:        # 12h outer backstop
+                _kill_proc(proc)
+                job['error'] = 'timed out'
+                break
+            _refresh_train_log(job, log_path)
+            time.sleep(2)
+        if logf:
+            logf.close()
+            logf = None
+        _refresh_train_log(job, log_path)
+        job['exit'] = proc.returncode
+        if job['error']:
+            job['status'] = 'failed'
+            return
+        if proc.returncode != 0:
+            job['status'] = 'failed'
+            job['error'] = 'trainer exited %s — see log' % proc.returncode
+            return
+        # 3) Dry-run validates the dataset + plan and exits before training — no
+        #    artifacts to register.
+        if cfg.get('dry_run'):
+            job['phase'] = 'done'
+            job['status'] = 'done'
+            return
+        # 4) Register the new generation on the ladder via ollama create.
+        # unsloth (>=2026.x) writes the GGUF + a correct Modelfile into a SIBLING
+        # "<run_dir>_gguf" dir (named after the base model), not run_dir — and
+        # train_biome's own run_dir Modelfile is a `FROM ./None` stub. Prefer the
+        # _gguf dir; fall back to run_dir for older unsloth layouts.
+        art_dir = None
+        for d in (run_dir + '_gguf', run_dir):
+            try:
+                has_gguf = os.path.isdir(d) and any(f.endswith('.gguf') for f in os.listdir(d))
+            except OSError:
+                has_gguf = False
+            if has_gguf and os.path.exists(os.path.join(d, 'Modelfile')):
+                art_dir = d
+                break
+        if not art_dir:
+            job['status'] = 'failed'
+            job['error'] = 'trainer finished but produced no GGUF/Modelfile'
+            return
+        job['phase'] = 'registering'
+        model_name = 'biome-%s' % tag
+        reg = subprocess.run(['ollama', 'create', model_name, '-f', 'Modelfile'],
+                             cwd=art_dir, capture_output=True, text=True, timeout=1800)
+        job['log'] = (job['log'] + '\n[register] ' + (reg.stdout or '')
+                      + (reg.stderr or ''))[-8000:]
+        if reg.returncode != 0:
+            job['status'] = 'failed'
+            job['error'] = ('ollama create failed: '
+                            + (reg.stderr or reg.stdout or 'unknown')[:300])
+            return
+        job['model'] = model_name
+        job['phase'] = 'done'
+        job['status'] = 'done'
+    except Exception as e:
+        job['status'] = 'failed'
+        job['error'] = str(e)
+        if proc:
+            _kill_proc(proc)
+    finally:
+        if logf:
+            try:
+                logf.close()
+            except Exception:
+                pass
+        job['finished'] = time.time()
+        mf = job.get('manifest') or {}
+        _ledger_append({
+            'id': job['id'], 'tag': cfg['tag'], 'base': cfg['base'], 'tier': cfg['tier'],
+            'family': cfg.get('family'), 'size': cfg.get('size'), 'lineage': cfg.get('lineage'),
+            'version': cfg.get('version'), 'parent': cfg.get('parent'),
+            'name_overridden': bool(cfg.get('name_overridden')),
+            'dataset_fingerprint': mf.get('fingerprint'), 'file_sha256': mf.get('file_sha256'),
+            'distinct_seeds': mf.get('distinct_seeds'), 'teacher_count': mf.get('teacher_count'),
+            'hparams': {'epochs': cfg.get('epochs'), 'lora_r': cfg.get('lora_r'),
+                        'lora_alpha': cfg.get('lora_alpha'), 'quant': cfg.get('quant'),
+                        'load_4bit': bool(cfg.get('load_4bit'))},
+            'rows': job.get('rows'), 'model': job.get('model'), 'status': job['status'],
+            'dry_run': bool(cfg.get('dry_run')), 'error': job.get('error'),
+            'started': job.get('started'), 'finished': job['finished'],
+        })
+        with _TRAIN_LOCK:
+            _TRAIN['running'] = None
+            _TRAIN['proc'] = None
+            _TRAIN['cancel'] = False
+            _TRAIN['recent'].appendleft(job)
 
 
 # --- Public exposure: trust by source IP, not a global flag ---
@@ -347,6 +751,13 @@ def _scheduler_loop():
 # A home router's DNAT preserves the real client IP, so client_address cleanly
 # distinguishes LAN from WAN. BIOME_PUBLIC remains as an optional override that
 # forces read-only even for LAN clients (useful for testing the public face).
+#
+# HARD DEPLOYMENT CONSTRAINT: this MUST sit behind a direct NAT port-forward and
+# NOTHING ELSE. Put any reverse proxy / tunnel in front (nginx, Cloudflare Tunnel,
+# ngrok, a load balancer) and every request arrives from 127.0.0.1 — so the whole
+# internet would be classed "trusted" and get full write + model-delete access.
+# We deliberately do NOT honor X-Forwarded-For (trusting it would be a spoofable
+# bypass), which is exactly why a proxy breaks the model open. Don't add one.
 PUBLIC_MODE = os.environ.get('BIOME_PUBLIC', '').lower() in ('1', 'true', 'yes')
 
 def _is_trusted_addr(host):
@@ -357,14 +768,15 @@ def _is_trusted_addr(host):
     except ValueError:
         return False
 
-# Exact GET endpoints a spectator needs (queries allowed via prefix match).
+# Exact GET endpoints a spectator needs. Matched EXACTLY (the query string is
+# stripped before the check), never by prefix: a loose prefix on '/tournament'
+# would also admit the LAN-only control plane '/tournament/jobs'. Each public
+# sub-path is therefore listed in full — including '/stats/model-tournaments',
+# the per-fighter dossier the spectator opens on a pod/portrait tap.
 _PUBLIC_GET_ENDPOINTS = (
     '/tournament/live/frames', '/tournament/live/board', '/tournament/live', '/tournament', '/tournaments',
     '/rankings', '/stats/matches', '/stats/dashboard',
-    # Per-fighter dossier the spectator opens on a pod/portrait tap. The '/stats/model'
-    # prefix also covers '/stats/model-tournaments'. Read-only stats, same nature as
-    # the rankings/dashboard already public here.
-    '/stats/model',
+    '/stats/model', '/stats/model-tournaments',
 )
 # Static asset path prefixes the spectator page pulls in (its JS/CSS/avatars).
 _PUBLIC_STATIC_PREFIXES = ('/js/', '/avatars/', '/assets/')
@@ -388,7 +800,7 @@ def _public_get_allowed(path):
     if any(clean.startswith(p) for p in _PUBLIC_STATIC_PREFIXES):
         # ...but never data files that happen to sit under an allowed prefix.
         return not clean.endswith(('.db', '.jsonl', '.json'))
-    return any(clean == e or clean.startswith(e) for e in _PUBLIC_GET_ENDPOINTS)
+    return clean in _PUBLIC_GET_ENDPOINTS
 
 def _load_manifest():
     try:
@@ -681,6 +1093,17 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
+    # HEAD must obey the same WAN gate as GET. The stock SimpleHTTPRequestHandler
+    # do_HEAD serves send_head() for ANY file under the root with no allowlist
+    # check, which would turn HEAD into an existence/size oracle for sensitive
+    # files (.env.local, biome.db, server.py). Apply the GET restriction here too;
+    # body is never sent for HEAD, so the rewrite-to-spectator branch is moot.
+    def do_HEAD(self):
+        if self._restricted() and not _public_get_allowed(self.path):
+            self.send_error(403, 'Forbidden')
+            return
+        super().do_HEAD()
+
     def do_GET(self):
         restricted = self._restricted()
         # A WAN visitor at the root gets the spectator page — the public entry
@@ -705,6 +1128,28 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         # Scheduler control plane (LAN-only — kept off _PUBLIC_GET_ENDPOINTS).
         if self.path.startswith('/tournament/jobs'):
             self._handle_jobs_get()
+            return
+        # Training Lab control plane (LAN-only — also off the public allowlist).
+        if self.path == '/training/preflight':
+            self._json_response(_train_preflight())
+            return
+        if self.path == '/training/status':
+            self._handle_train_status_get()
+            return
+        if self.path == '/training/runs':
+            self._json_response({'runs': _ledger_read()})
+            return
+        if self.path.startswith('/training/suggest-name'):
+            q = parse_qs(urlparse(self.path).query)
+            base = (q.get('base', [''])[0]).strip()
+            tier = q.get('tier', [traj.DEFAULT_TIER])[0]
+            if tier not in traj.TIERS:
+                tier = traj.DEFAULT_TIER
+            if not base:
+                self._json_response({'error': 'base required'}, 400)
+            else:
+                self._json_response(_suggest_name(
+                    base, tier, q.get('family', [''])[0] or None, q.get('size', [''])[0] or None))
             return
         # Proxy Ollama API calls
         if self.path.startswith('/ollama/'):
@@ -909,6 +1354,13 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if self.path == '/tournament/jobs/cancel':
             self._handle_jobs_cancel_post()
             return
+        # Training Lab control plane (LAN-only via the do_POST 403 gate above).
+        if self.path == '/training/start':
+            self._handle_train_start_post()
+            return
+        if self.path == '/training/cancel':
+            self._handle_train_cancel_post()
+            return
         # Proxy Ollama API calls (including /api/pull for model installation)
         if self.path.startswith('/ollama/'):
             is_pull = '/api/pull' in self.path
@@ -1054,6 +1506,89 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 removed = True
         _save_schedules()
         self._json_response({'ok': removed})
+
+    def _handle_train_status_get(self):
+        with _TRAIN_LOCK:
+            running = _TRAIN['running']
+            recent = list(_TRAIN['recent'])
+        slim = lambda j: {k: j.get(k) for k in
+                          ('id', 'status', 'phase', 'model', 'rows', 'error',
+                           'started', 'finished', 'config', 'progress', 'log')}
+        self._json_response({'running': running, 'recent': [slim(j) for j in recent]})
+
+    def _handle_train_start_post(self):
+        body = self._read_json_body()
+        if body is None:
+            self._json_response({'error': 'Invalid JSON'}, 400)
+            return
+        tier = body.get('tier', traj.DEFAULT_TIER)
+        if tier not in traj.TIERS:
+            self._json_response({'error': 'bad tier'}, 400)
+            return
+        base = (body.get('base') or '').strip()
+        if not base:
+            self._json_response({'error': 'base model required'}, 400)
+            return
+        # Name is computed server-side from base+tier (never trust a client-built
+        # name) unless an explicit override is passed. A leading biome- is stripped
+        # so the server's own prefix can't double up.
+        suggestion = _suggest_name(base, tier, body.get('family'), body.get('size'))
+        override = (body.get('name_override') or '').strip()
+        if override:
+            tag = override[len('biome-'):] if override.startswith('biome-') else override
+        else:
+            tag = suggestion['tag']
+        if not _tag_ok(tag):
+            self._json_response({'error': 'tag must be 1-64 chars of [A-Za-z0-9._-]'}, 400)
+            return
+        dry = bool(body.get('dry_run'))
+        # GPU-exclusivity + readiness guards (dry-run skips the heavy-dep gate).
+        if _SCHED['running'] or _SCHED['queue']:
+            self._json_response({'error': 'a tournament job is active — wait or cancel it'}, 409)
+            return
+        if not dry:
+            pf = _train_preflight()
+            if not pf['deps_ok']:
+                self._json_response({'error': 'training deps missing', 'preflight': pf}, 409)
+                return
+            if pf.get('gpu_busy'):
+                self._json_response({'error': '; '.join(pf['reasons']) or 'GPU busy',
+                                     'preflight': pf}, 409)
+                return
+        cfg = {
+            'tier': tier, 'base': base, 'tag': tag,
+            'family': suggestion['family'], 'size': suggestion['size'],
+            'lineage': suggestion['lineage'], 'version': suggestion['version'],
+            'parent': suggestion['parent'], 'name_overridden': bool(override),
+            'epochs': float(body.get('epochs', 2.0)),
+            'lora_r': int(body.get('lora_r', 16)),
+            'lora_alpha': int(body.get('lora_alpha', 32)),
+            'quant': str(body.get('quant', 'q4_k_m')),
+            'load_4bit': bool(body.get('load_4bit')),
+            'dry_run': dry,
+            'free_gpu': bool(body.get('free_gpu')),
+            'offline': bool(body.get('offline')),
+        }
+        job = _new_train_job(cfg)
+        with _TRAIN_LOCK:
+            if _TRAIN['running']:          # reserve the single slot under the lock
+                self._json_response({'error': 'a training run is already in progress'}, 409)
+                return
+            _TRAIN['running'] = job
+            _TRAIN['cancel'] = False
+        threading.Thread(target=_run_training, args=(job,), daemon=True).start()
+        self._json_response({'ok': True, 'id': job['id']})
+
+    def _handle_train_cancel_post(self):
+        body = self._read_json_body() or {}
+        jid = body.get('id')
+        with _TRAIN_LOCK:
+            running = _TRAIN['running']
+            if running and (jid is None or running['id'] == jid):
+                _TRAIN['cancel'] = True
+                self._json_response({'ok': True})
+                return
+        self._json_response({'ok': False})
 
     def _handle_trajectory(self, filename):
         # Fire-and-forget from the client; we just append and ack. Never 500 into

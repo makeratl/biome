@@ -194,7 +194,8 @@ export const TIER_ORDER = ['small', 'mid', 'large', 'cloud'];
 function baseName(name) {
     return (name || '')
         .split('/').pop()
-        .replace(/:.*$/, '');
+        .replace(/:.*$/, '')
+        .replace(/^biome-/, '');   // distilled models: read identity off family+size, not the prefix
 }
 
 // Parse a model name into a size tier. Cloud always wins (a hosted giant), then
@@ -299,6 +300,7 @@ export function modelInitials(model) {
 // Human-readable name (ported from game.js _prettyModelName).
 export function prettyModelName(model) {
     if (!model) return 'Human';
+    model = model.replace(/^biome-/, '');   // "Qwen2.5 7b C1", not "Biome Qwen2.5 7b C1"
     const [base, tag] = model.split(':');
     const niceBase = base.split(/[-_]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
     if (!tag) return niceBase;

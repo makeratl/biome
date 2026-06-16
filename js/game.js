@@ -2508,6 +2508,10 @@ class Game {
         const overlay = document.getElementById('game-over-overlay');
         if (overlay) overlay.style.display = 'flex';
 
+        // Stale-guard: the Ladder button stays disabled until THIS match's ranked
+        // result posts (the .then hook below re-enables it).
+        this._ladderResult = null;
+
         const s1 = scores[1], s2 = scores[2];
 
         const p1Label = this.aiPlayers[1] ? `P1 (${this.aiPlayers[1].model})` : 'Player 1';
@@ -2602,6 +2606,13 @@ class Game {
                     delete goDash.dataset.rendered;
                 }
             }
+            // Ladder hook: remember the posted result (exact winner name + fresh
+            // ranks) so the Ladder button can climb, and auto-continue an active
+            // ladder. Runs whether or not a ranked result landed.
+            this._ladderResult = res?.result || null;
+            const ladderBtn = document.getElementById('btn-play-ladder');
+            if (ladderBtn && !ladderBtn.hidden) ladderBtn.disabled = !this._ladderResult;
+            if (this._ladder?.active) this._advanceLadder();
         });
         overlay.querySelector('.final-score').innerHTML =
             breakdown(p1Label, s1, 'final-stmt-p1') + breakdown(p2Label, s2, 'final-stmt-p2');
@@ -2614,15 +2625,10 @@ class Game {
             }, 2500);
         }
 
-        document.getElementById('btn-play-again').addEventListener('click', () => {
-            overlay.style.display = 'none';
-            if (this._lastMatchConfig) {
-                this._startMatch(this._lastMatchConfig);
-            } else {
-                this._expandMatchSection();
-                this._openLauncherWelcome();
-            }
-        });
+        // Post-match actions. Watch (AI-vs-AI) matches get the Same / New / Ladder
+        // trio; solo human matches keep the single Play Again. Wired with onclick
+        // (not addEventListener) so replaying many matches never stacks handlers.
+        this._wireGameOverActions();
 
         // Request final statements from AI players (in parallel)
         const requests = [];
@@ -2644,6 +2650,165 @@ class Game {
             );
         }
         if (requests.length > 0) await Promise.all(requests);
+    }
+
+    // Wire the game-over action row. Watch (AI-vs-AI) matches expose the
+    // Same / New / Ladder trio; solo human matches keep a single Play Again.
+    // Idempotent (onclick, re-callable) so it doubles as "restore normal row"
+    // after a ladder is stopped.
+    _wireGameOverActions() {
+        const overlay = document.getElementById('game-over-overlay');
+        const $ = (id) => document.getElementById(id);
+        const isWatch = !!(this.aiPlayers[1] && this.aiPlayers[2]);
+        const again = $('btn-play-again'), neu = $('btn-play-new');
+        const ladder = $('btn-play-ladder'), stop = $('btn-ladder-stop');
+        const status = $('go-ladder-status');
+
+        if (status) { status.hidden = true; status.textContent = ''; }
+        if (stop) stop.hidden = true;
+        if (again) { again.hidden = false; again.textContent = isWatch ? 'Same players' : 'Play Again'; }
+        if (neu) neu.hidden = !isWatch;
+        if (ladder) { ladder.hidden = !isWatch; ladder.disabled = !this._ladderResult; ladder.textContent = 'Ladder ↑'; }
+
+        const close = () => { if (overlay) overlay.style.display = 'none'; };
+
+        if (again) again.onclick = () => {
+            this._ladder = null;
+            close();
+            if (this._lastMatchConfig) this._startMatch(this._lastMatchConfig);
+            else { this._expandMatchSection(); this._openLauncherWelcome(); }
+        };
+        if (neu) neu.onclick = () => {
+            this._ladder = null;
+            const names = (this._installedModels || []).map(m => m.name);
+            const pair = this._pickPairForTheme('random', names);
+            if (!pair) { this._ladderNote('Need at least 2 installed models for a new pair.'); return; }
+            this._startWatchPair(pair);
+        };
+        if (ladder) ladder.onclick = () => {
+            if (!this._ladderResult) return;   // disabled until a ranked result posts
+            this._ladder = { active: true };
+            this._advanceLadder();
+        };
+        if (stop) stop.onclick = () => {
+            clearTimeout(this._ladderTimer);
+            this._ladder = null;
+            this._wireGameOverActions();   // restore the normal button row
+        };
+    }
+
+    // Show a message in the ladder status line (and keep the normal actions up).
+    _ladderNote(msg) {
+        const status = document.getElementById('go-ladder-status');
+        if (status) { status.hidden = false; status.textContent = msg; }
+    }
+
+    // Start a fresh watch match between two named models, reusing the world
+    // settings of the match that seeded this session. Mirrors the headless
+    // gen-loop's hide-overlay → _startMatch handoff.
+    _startWatchPair([p1, p2]) {
+        const overlay = document.getElementById('game-over-overlay');
+        if (overlay) overlay.style.display = 'none';
+        const world = this._lastMatchConfig?.world || this._worldSettings();
+        this._startMatch({ mode: 'watch', p1Model: p1, p2Model: p2, world });
+    }
+
+    // True if a ranked model name is actually installed (exact or normalized
+    // match against the installed list) — so the ladder never targets a model
+    // that's ranked but not pulled/retired and so can't play.
+    _modelInstalled(name) {
+        const norm = (n) => (n || '').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
+        const want = norm(name);
+        return (this._installedModels || []).some(m => m.name === name || norm(m.name) === want);
+    }
+
+    // Find the climbing winner's next ladder opponent: the nearest *available*
+    // model ranked above it in the live standings. Returns {champion:true} when
+    // nobody installed sits above (top of the playable field).
+    async _ladderOpponent(winnerName) {
+        const r = await fetchRankings().catch(() => null);
+        if (!r) return null;
+        const norm = (n) => (n || '').replace(/:.*$/, '').split('/').pop().replace(/-cloud$/, '').replace(/-latest$/, '');
+        const ordered = Object.entries(r)
+            .map(([name, s]) => ({ name, elo: s.elo }))
+            .sort((a, b) => b.elo - a.elo || a.name.localeCompare(b.name));
+        const wk = norm(winnerName);
+        const idx = ordered.findIndex(e => norm(e.name) === wk);
+        if (idx < 0) return { champion: false, opponent: null, reason: 'unranked' };
+        for (let i = idx - 1; i >= 0; i--) {            // climb toward rank 1
+            if (norm(ordered[i].name) === wk) continue;
+            if (this._modelInstalled(ordered[i].name)) return { champion: false, opponent: ordered[i].name, rank: i + 1 };
+        }
+        return { champion: true, rank: idx + 1 };       // nobody available above
+    }
+
+    // One rung of an active ladder, driven off the last posted result. Either
+    // crowns a champion and stops, or auto-advances the winner against the model
+    // one rank above after a short countdown (cancellable via Stop ladder).
+    async _advanceLadder() {
+        const overlay = document.getElementById('game-over-overlay');
+        const $ = (id) => document.getElementById(id);
+        const result = this._ladderResult;
+
+        // No ELO winner (offline, or a tie has no ranked winner): pause the climb.
+        if (!result || !result.winner) {
+            this._ladder = null;
+            this._wireGameOverActions();
+            this._ladderNote('Ladder needs a winner — a tie can’t climb. Replay the pair to continue.');
+            return;
+        }
+
+        const winner = result.winner;
+        const next = await this._ladderOpponent(winner);
+
+        const again = $('btn-play-again'), neu = $('btn-play-new');
+        const ladder = $('btn-play-ladder'), stop = $('btn-ladder-stop');
+        const status = $('go-ladder-status');
+        const hide = (el) => { if (el) el.hidden = true; };
+
+        if (!next) {                                    // rankings unreachable
+            this._ladder = null;
+            this._wireGameOverActions();
+            this._ladderNote('Couldn’t read the standings — ladder paused.');
+            return;
+        }
+
+        if (next.champion) {
+            // Reached the top of the playable field: celebrate and stop.
+            this._ladder = null;
+            const card = overlay?.querySelector('.game-over-card');
+            card?.classList.add('t-tier-throne');
+            try { this._burstSparks(card, 'throne'); } catch (_) { /* optional */ }
+            try { this._playSound('champion'); } catch (_) { /* optional */ }
+            if (status) { status.hidden = false; status.textContent = `\u{1F451} ${this._shortName(winner)} tops the ladder — rank 1.`; }
+            // Offer Play again (the final pair) + New ladder (fresh random climb).
+            if (again) { again.hidden = false; again.textContent = 'Play again'; }
+            hide(neu); hide(stop);
+            if (ladder) {
+                ladder.hidden = false; ladder.disabled = false; ladder.textContent = 'New ladder';
+                ladder.onclick = () => {
+                    const names = (this._installedModels || []).map(m => m.name);
+                    const pair = this._pickPairForTheme('random', names);
+                    if (!pair) { this._ladderNote('Need at least 2 installed models for a new ladder.'); return; }
+                    this._ladder = { active: true };
+                    this._startWatchPair(pair);
+                };
+            }
+            return;
+        }
+
+        // Auto-advance: winner climbs against the model one rank above.
+        hide(again); hide(neu); hide(ladder);
+        if (stop) stop.hidden = false;
+        if (status) {
+            status.hidden = false;
+            status.textContent = `\u{1FA9C} Climbing to #${next.rank}: ${this._shortName(next.opponent)} — next match in 3s…`;
+        }
+        clearTimeout(this._ladderTimer);
+        this._ladderTimer = setTimeout(() => {
+            if (overlay) overlay.style.display = 'none';
+            this._startWatchPair([winner, next.opponent]);   // climber on the left
+        }, 3000);
     }
 
     // ── AI integration ───────────────────────────────────────

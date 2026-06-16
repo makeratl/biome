@@ -32,3 +32,5 @@ videos/
 
 # Training Lab capture (per-turn trajectories, round signals, outcomes, datasets)
 training-data/
+.venv-train/
+unsloth_compiled_cache/
