@@ -34,3 +34,9 @@ videos/
 training-data/
 .venv-train/
 unsloth_compiled_cache/
+
+# Local secrets — AWS/Bedrock credentials etc. Loaded into the server process
+# only (server.py:_load_dotenv_local); must never be committed or reach the browser.
+.env.local
+.env
+*.local
